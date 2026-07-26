@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Open rules for a 2-person household tool on a public URL.
+    // Tighten with a shared PIN check if you want light protection — see README.
+    match /expenses/{expenseId} {
+      allow read, write: if true;
+    }
+  }
+}

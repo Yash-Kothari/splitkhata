@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #24304A;
+  --color-paper: #F2ECDD;
+  --color-paper-card: #EDE4CE;
+  --color-stamp-red: #A63D40;
+  --color-ledger-green: #3D7068;
+  --color-mustard: #C98A2C;
+  --color-muted-text: #5C6478;
+
+  --font-display: "Fraunces", serif;
+  --font-body: "Inter", sans-serif;
+  --font-mono: "IBM Plex Mono", monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  min-height: 100dvh;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .entry-row {
+    transition: background-color 150ms ease;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entry-row {
+    transition: none;
+  }
+}
+
+.entry-row:hover,
+.entry-row:focus-within {
+  background-color: color-mix(in srgb, var(--color-paper-card) 70%, white);
+}
+
+.passbook-row {
+  position: relative;
+  padding-left: 1.25rem;
+  border-left: 2px dashed color-mix(in srgb, var(--color-ink) 25%, transparent);
+}
+
+.passbook-row::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--dot-color, var(--color-ink));
+}
+
+input,
+select,
+button {
+  font-family: inherit;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+.recharts-wrapper:focus,
+.recharts-surface:focus {
+  outline: none;
+}
