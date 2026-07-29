@@ -45,7 +45,7 @@ export default function AddEntryForm({ deviceName, onSaveError }) {
     'w-full min-h-11 px-3 py-2 rounded-lg border border-ink/15 bg-paper text-ink text-base focus:outline-none focus:ring-2 focus:ring-ledger-green/40';
 
   return (
-    <section className="rounded-xl bg-paper-card px-5 py-4 border border-ink/10">
+    <section className="panel-card px-5 py-4">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}

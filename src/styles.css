@@ -73,6 +73,21 @@ button {
   font-family: inherit;
 }
 
+.panel-card {
+  border: 1px solid color-mix(in srgb, var(--color-ink) 10%, transparent);
+  border-radius: 1rem;
+  background-color: var(--color-paper-card);
+  box-shadow: 0 10px 30px -20px rgba(36, 48, 74, 0.25);
+}
+
+.settings-panel {
+  border: 1px solid color-mix(in srgb, var(--color-ink) 10%, transparent);
+  border-radius: 1rem;
+  background-color: var(--color-paper);
+  padding: 1rem;
+  box-shadow: 0 10px 30px -20px rgba(36, 48, 74, 0.25);
+}
+
 .font-display {
   font-family: var(--font-display);
 }
