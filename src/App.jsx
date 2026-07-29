@@ -14,7 +14,6 @@ import {
   subscribeToCurrencies,
   subscribeToMembers,
   isFirebaseConfigured,
-  wipeAllExpenses,
 } from './firebase';
 import {
   DEFAULT_PERSONS as PERSONS,
@@ -113,9 +112,6 @@ export default function App() {
       (data) => setDbMembers(data),
       (err) => console.warn('Members sync warning:', err),
     );
-
-    // Wipe all sample data as requested
-    wipeAllExpenses().catch((err) => console.warn('Wipe warning:', err));
 
     return () => {
       unsubCurrencies();
