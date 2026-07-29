@@ -5,6 +5,7 @@ import {
   addDoc,
   deleteDoc,
   doc,
+  setDoc,
   getDocs,
   onSnapshot,
   serverTimestamp,
@@ -26,6 +27,8 @@ import {
   setStoredCurrencies,
   getStoredMembers,
   setStoredMembers,
+  getPinConfig,
+  setPinConfig,
   HOUSEHOLD_CATEGORIES_KEY,
   TRAVEL_CATEGORIES_KEY,
   CURRENCIES_KEY,
@@ -650,5 +653,51 @@ export async function seedSampleExpenses() {
     await addExpense(entry);
   }
 }
+
+export function subscribeToPinConfig(callback) {
+  if (dbInstance) {
+    const pinDocRef = doc(dbInstance, 'settings', 'pin_config');
+    return onSnapshot(
+      pinDocRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const config = {
+            pin: typeof data.pin === 'string' ? data.pin : '',
+            enabled: Boolean(data.enabled),
+          };
+          setPinConfig(config);
+          callback(config);
+        } else {
+          callback(getPinConfig());
+        }
+      },
+      (err) => {
+        console.warn('PIN config subscription error:', err);
+        callback(getPinConfig());
+      },
+    );
+  } else {
+    callback(getPinConfig());
+    return () => {};
+  }
+}
+
+export async function savePinConfigToDb(config) {
+  setPinConfig(config);
+  if (dbInstance) {
+    try {
+      const pinDocRef = doc(dbInstance, 'settings', 'pin_config');
+      await setDoc(pinDocRef, {
+        pin: config.pin || '',
+        enabled: Boolean(config.enabled),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error('Error saving PIN config to Firestore:', err);
+    }
+  }
+}
+
 
 

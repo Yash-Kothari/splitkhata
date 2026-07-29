@@ -491,6 +491,32 @@ export function setStoredMembers(members) {
   setItem(MEMBERS_KEY, JSON.stringify(members));
 }
 
+export const PIN_CONFIG_KEY = 'splitkhata_pin_config';
+
+export function getPinConfig() {
+  const raw = getItem(PIN_CONFIG_KEY);
+  if (!raw) return { pin: '', enabled: false };
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      pin: typeof parsed.pin === 'string' ? parsed.pin : '',
+      enabled: Boolean(parsed.enabled),
+    };
+  } catch {
+    return { pin: '', enabled: false };
+  }
+}
+
+export function setPinConfig(config) {
+  setItem(PIN_CONFIG_KEY, JSON.stringify(config));
+}
+
+export function verifyPin(inputPin) {
+  const { pin, enabled } = getPinConfig();
+  if (!enabled || !pin) return true;
+  return inputPin === pin;
+}
+
 export function getStoredCurrencies() {
   const raw = getItem(CURRENCIES_KEY);
   if (raw === null || raw === undefined) return DEFAULT_CURRENCIES;

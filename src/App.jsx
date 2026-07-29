@@ -8,11 +8,13 @@ import ConnectionState from './components/ConnectionState';
 import TravelManager from './components/TravelManager';
 import TravelSummaryCard from './components/TravelSummaryCard';
 import SettingsModal from './components/SettingsModal';
+import PinLockScreen from './components/PinLockScreen';
 import {
   subscribeToExpenses,
   subscribeToCategories,
   subscribeToCurrencies,
   subscribeToMembers,
+  subscribeToPinConfig,
   isFirebaseConfigured,
 } from './firebase';
 import {
@@ -22,6 +24,7 @@ import {
   setDeviceName,
   getAvailableMonths,
   getStoredTrips,
+  getPinConfig,
 } from './utils';
 
 function DeviceNamePicker({ onSelect, members = [] }) {
@@ -77,6 +80,10 @@ function SetupBanner({ onShowDetails }) {
 
 export default function App() {
   const [deviceName, setDeviceNameState] = useState(() => getDeviceName());
+  const [isLocked, setIsLocked] = useState(() => {
+    const cfg = getPinConfig();
+    return cfg.enabled && Boolean(cfg.pin);
+  });
   const [entries, setEntries] = useState([]);
   const [dbCategories, setDbCategories] = useState({ household: [], travel: [], rawDocs: [] });
   const [dbCurrencies, setDbCurrencies] = useState({ currencies: [], rawDocs: [] });
@@ -113,9 +120,19 @@ export default function App() {
       (err) => console.warn('Members sync warning:', err),
     );
 
+    const unsubPin = subscribeToPinConfig((cfg) => {
+      if (cfg.enabled && cfg.pin) {
+        setIsLocked(true);
+      } else {
+        setIsLocked(false);
+      }
+    });
+
+    // Real-time subscriptions initialized
     return () => {
       unsubCurrencies();
       unsubMembers();
+      unsubPin();
     };
   }, []);
 
@@ -171,6 +188,17 @@ export default function App() {
 
   const activeMembersList = dbMembers.members.length > 0 ? dbMembers.members : PERSONS;
   const activeCurrenciesList = dbCurrencies.currencies.length > 0 ? dbCurrencies.currencies : CURRENCIES;
+
+  const pinConfig = getPinConfig();
+
+  if (isLocked && pinConfig.enabled && pinConfig.pin) {
+    return (
+      <PinLockScreen
+        correctPin={pinConfig.pin}
+        onUnlock={() => setIsLocked(false)}
+      />
+    );
+  }
 
   if (!deviceName) {
     return (
@@ -231,6 +259,18 @@ export default function App() {
 
               {/* Actions & User Badge */}
               <div className="flex items-center gap-2 shrink-0">
+                {pinConfig.enabled && pinConfig.pin && (
+                  <button
+                    type="button"
+                    onClick={() => setIsLocked(true)}
+                    className="flex items-center gap-1.5 min-h-9 px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs"
+                    title="Lock App"
+                  >
+                    <span>🔒</span>
+                    <span className="hidden xs:inline sm:inline">Lock</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => setShowSettingsModal(true)}

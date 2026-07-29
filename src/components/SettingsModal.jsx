@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { getPinConfig } from '../utils';
 import {
   addCategoryToDb,
   deleteCategoryFromDb,
@@ -7,6 +8,7 @@ import {
   addMemberToDb,
   deleteMemberFromDb,
   isFirebaseConfigured,
+  savePinConfigToDb,
 } from '../firebase';
 
 export default function SettingsModal({
@@ -31,6 +33,25 @@ export default function SettingsModal({
 
   const [newMemberName, setNewMemberName] = useState('');
   const [addingMember, setAddingMember] = useState(false);
+
+  const [pinConfig, setPinConfigState] = useState(() => getPinConfig());
+  const [newPin, setNewPin] = useState(pinConfig.pin || '');
+  const [pinMessage, setPinMessage] = useState('');
+
+  async function handleSavePinConfig(enabledOverride = null) {
+    const enabled = enabledOverride !== null ? enabledOverride : pinConfig.enabled;
+    const cleanPin = newPin.trim();
+
+    if (enabled && cleanPin.length !== 4) {
+      setPinMessage('PIN must be exactly 4 digits.');
+      return;
+    }
+
+    const updated = { pin: cleanPin, enabled };
+    await savePinConfigToDb(updated);
+    setPinConfigState(updated);
+    setPinMessage(enabled ? 'Security PIN saved & synced to cloud!' : 'Security PIN disabled.');
+  }
 
   const categoriesList =
     categoryLedger === 'travel'
@@ -195,6 +216,17 @@ export default function SettingsModal({
             }`}
           >
             Cloud Status
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('security')}
+            className={`px-3 py-2 text-xs sm:text-sm font-semibold border-b-2 transition-colors shrink-0 whitespace-nowrap flex items-center min-h-[38px] ${
+              activeTab === 'security'
+                ? 'border-ledger-green text-ledger-green'
+                : 'border-transparent text-muted-text hover:text-ink'
+            }`}
+          >
+            🔒 Security PIN
           </button>
         </div>
 
@@ -437,6 +469,74 @@ export default function SettingsModal({
                   </ul>
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'security' && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-ink mb-0.5">
+                  App Passcode & Security PIN
+                </h3>
+                <p className="text-xs text-muted-text">
+                  Set a 4-digit security PIN to restrict access to your expense entries on this device.
+                </p>
+              </div>
+
+              {pinMessage && (
+                <div className="p-3 rounded-xl bg-ledger-green/10 border border-ledger-green/30 text-ledger-green text-xs font-semibold">
+                  {pinMessage}
+                </div>
+              )}
+
+              <div className="p-3.5 sm:p-4 rounded-xl border border-ink/15 bg-paper space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-bold text-ink text-sm">Require PIN Protection</p>
+                    <p className="text-xs text-muted-text">Prompt for 4-digit PIN upon entering Splitkhata</p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={pinConfig.enabled}
+                      onChange={(e) => {
+                        handleSavePinConfig(e.target.checked);
+                      }}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-ink/20 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-ledger-green"></div>
+                  </label>
+                </div>
+
+                <div className="pt-3 border-t border-ink/10 space-y-3">
+                  <label className="block text-xs font-bold text-ink">
+                    Set / Change 4-Digit Security PIN
+                  </label>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="password"
+                      maxLength={4}
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={newPin}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+                        setNewPin(val);
+                      }}
+                      placeholder="e.g. 1234"
+                      className="flex-1 min-h-11 px-3.5 py-2 rounded-xl border border-ink/15 bg-paper text-ink text-base font-mono font-bold tracking-widest focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleSavePinConfig()}
+                      disabled={newPin.length !== 4}
+                      className="min-h-11 px-5 py-2 rounded-xl bg-ledger-green text-white font-semibold text-sm hover:bg-ledger-green/90 disabled:opacity-50 transition-colors w-full sm:w-auto shrink-0"
+                    >
+                      Save PIN
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </div>
