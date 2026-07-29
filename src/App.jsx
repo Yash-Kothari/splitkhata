@@ -5,67 +5,73 @@ import MonthChart from './components/MonthChart';
 import CategoryChart from './components/CategoryChart';
 import EntryList from './components/EntryList';
 import ConnectionState from './components/ConnectionState';
+import TravelManager from './components/TravelManager';
+import TravelSummaryCard from './components/TravelSummaryCard';
+import SettingsModal from './components/SettingsModal';
 import {
   subscribeToExpenses,
+  subscribeToCategories,
+  subscribeToCurrencies,
+  subscribeToMembers,
   isFirebaseConfigured,
+  wipeAllExpenses,
 } from './firebase';
 import {
-  PERSONS,
+  DEFAULT_PERSONS as PERSONS,
+  DEFAULT_CURRENCIES as CURRENCIES,
   getDeviceName,
   setDeviceName,
   getAvailableMonths,
-} from './constants';
+  getStoredTrips,
+} from './utils';
 
-function DeviceNamePicker({ onSelect }) {
+function DeviceNamePicker({ onSelect, members = [] }) {
+  const memberList = members && members.length > 0 ? members : PERSONS;
   return (
-    <div className="min-h-dvh flex items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-xl bg-paper-card px-6 py-8 border border-ink/10 text-center">
-        <h1 className="font-display text-2xl font-bold text-ink mb-2">
-          Household Ledger
+    <div className="min-h-dvh flex items-center justify-center px-4 bg-paper">
+      <div className="w-full max-w-sm rounded-2xl bg-paper-card px-6 py-8 border border-ink/15 text-center shadow-xl">
+        <h1 className="font-display text-3xl font-bold text-ink mb-2">
+          Splitkhata
         </h1>
         <p className="text-muted-text text-sm mb-6">
-          Who&apos;s using this device?
+          Who is using this device?
         </p>
         <div className="flex flex-col gap-3">
-          {PERSONS.map((person) => (
+          {memberList.map((person) => (
             <button
               key={person}
               type="button"
               onClick={() => onSelect(person)}
-              className="min-h-11 px-4 py-2 rounded-lg border border-ink/15 bg-paper font-medium text-ink hover:bg-paper-card focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+              className="min-h-12 px-4 py-3 rounded-xl border border-ink/15 bg-paper font-semibold text-ink text-base hover:bg-ledger-green/10 hover:border-ledger-green hover:text-ledger-green transition-all shadow-2xs"
             >
               {person}
             </button>
           ))}
         </div>
-        <p className="text-xs text-muted-text mt-4">
-          Saved on this device only — no login needed
+        <p className="text-xs text-muted-text mt-5 font-medium">
+          Saved on this device only - no password needed
         </p>
       </div>
     </div>
   );
 }
 
-function SetupScreen() {
+function SetupBanner({ onShowDetails }) {
   return (
-    <div className="min-h-dvh flex items-center justify-center px-4">
-      <div className="w-full max-w-md rounded-xl bg-paper-card px-6 py-8 border border-ink/10">
-        <h1 className="font-display text-2xl font-bold text-ink mb-2">
-          Setup Required
-        </h1>
-        <p className="text-muted-text text-sm mb-4">
-          Firebase is not configured yet. Copy{' '}
-          <code className="font-mono text-xs bg-paper px-1 py-0.5 rounded">.env.example</code>{' '}
-          to <code className="font-mono text-xs bg-paper px-1 py-0.5 rounded">.env</code>{' '}
-          and add your Firebase project credentials.
-        </p>
-        <ol className="text-sm text-ink space-y-2 list-decimal list-inside">
-          <li>Create a Firebase project (Spark / free plan)</li>
-          <li>Enable Firestore Database</li>
-          <li>Add a web app and copy the config values</li>
-          <li>Set the <code className="font-mono text-xs">VITE_FIREBASE_*</code> env vars</li>
-        </ol>
+    <div className="bg-mustard/15 border-b border-mustard/30 px-4 py-2 text-xs sm:text-sm text-ink flex items-center justify-between max-w-5xl mx-auto rounded-b-lg">
+      <div className="flex items-center gap-2">
+        <span className="inline-block w-2 h-2 rounded-full bg-mustard"></span>
+        <span>
+          <strong>Local DB Mode:</strong> Expenses & categories stored in browser. Add Firebase keys in <code className="font-mono text-xs">.env</code> for cloud sync.
+        </span>
       </div>
+      <button
+        type="button"
+        onClick={onShowDetails}
+        className="underline font-semibold hover:text-ink shrink-0 ml-2"
+      >
+        Settings & Setup
+      </button>
     </div>
   );
 }
@@ -73,8 +79,19 @@ function SetupScreen() {
 export default function App() {
   const [deviceName, setDeviceNameState] = useState(() => getDeviceName());
   const [entries, setEntries] = useState([]);
+  const [dbCategories, setDbCategories] = useState({ household: [], travel: [], rawDocs: [] });
+  const [dbCurrencies, setDbCurrencies] = useState({ currencies: [], rawDocs: [] });
+  const [dbMembers, setDbMembers] = useState({ members: [], rawDocs: [] });
   const [connectionStatus, setConnectionStatus] = useState('ok');
   const [errorMessage, setErrorMessage] = useState('');
+  const [activeLedger, setActiveLedger] = useState('household');
+  const [selectedTrip, setSelectedTrip] = useState(() => {
+    const trips = getStoredTrips();
+    return trips[0]?.name || '';
+  });
+  const [currentCurrency, setCurrentCurrency] = useState('INR');
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -85,11 +102,32 @@ export default function App() {
     setErrorMessage(err?.message || 'Failed to save');
   }, []);
 
+  // Subscribe to real-time database collections
   useEffect(() => {
-    if (!isFirebaseConfigured() || !deviceName) return;
+    const unsubCurrencies = subscribeToCurrencies(
+      (data) => setDbCurrencies(data),
+      (err) => console.warn('Currencies sync warning:', err),
+    );
+
+    const unsubMembers = subscribeToMembers(
+      (data) => setDbMembers(data),
+      (err) => console.warn('Members sync warning:', err),
+    );
+
+    // Wipe all sample data as requested
+    wipeAllExpenses().catch((err) => console.warn('Wipe warning:', err));
+
+    return () => {
+      unsubCurrencies();
+      unsubMembers();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!deviceName) return;
 
     setConnectionStatus('syncing');
-    const unsubscribe = subscribeToExpenses(
+    const unsubExpenses = subscribeToExpenses(
       (data) => {
         setEntries(data);
         setConnectionStatus(navigator.onLine ? 'ok' : 'offline');
@@ -97,6 +135,15 @@ export default function App() {
       (err) => {
         setConnectionStatus('error');
         setErrorMessage(err?.message || 'Failed to load entries');
+      },
+    );
+
+    const unsubCategories = subscribeToCategories(
+      (catData) => {
+        setDbCategories(catData);
+      },
+      (err) => {
+        console.warn('Category sync warning:', err);
       },
     );
 
@@ -111,7 +158,8 @@ export default function App() {
     window.addEventListener('offline', handleOffline);
 
     return () => {
-      unsubscribe();
+      unsubExpenses();
+      unsubCategories();
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
@@ -125,10 +173,13 @@ export default function App() {
     }
   }, [availableMonths, selectedMonth]);
 
-  if (!isFirebaseConfigured()) return <SetupScreen />;
+  const activeMembersList = dbMembers.members.length > 0 ? dbMembers.members : PERSONS;
+  const activeCurrenciesList = dbCurrencies.currencies.length > 0 ? dbCurrencies.currencies : CURRENCIES;
+
   if (!deviceName) {
     return (
       <DeviceNamePicker
+        members={activeMembersList}
         onSelect={(name) => {
           setDeviceName(name);
           setDeviceNameState(name);
@@ -136,6 +187,11 @@ export default function App() {
       />
     );
   }
+
+  const hasFirebase = isFirebaseConfigured();
+  const currentDbCategories = activeLedger === 'travel'
+    ? dbCategories.travel
+    : dbCategories.household;
 
   return (
     <>
@@ -148,46 +204,117 @@ export default function App() {
         }}
       />
 
-      <div className={`min-h-dvh ${connectionStatus !== 'ok' ? 'pt-10' : ''}`}>
-        <header className="px-4 pt-6 pb-4 max-w-5xl mx-auto">
-          <div className="flex items-baseline justify-between gap-4">
-            <h1 className="font-display text-2xl font-bold text-ink">
-              Household Ledger
-            </h1>
-            <button
-              type="button"
-              onClick={() => {
-                setDeviceName('');
-                setDeviceNameState(null);
-              }}
-              className="text-xs text-muted-text underline min-h-11 flex items-center"
-            >
-              {deviceName}
-            </button>
+      {showSettingsModal && (
+        <SettingsModal
+          onClose={() => setShowSettingsModal(false)}
+          deviceName={deviceName}
+          onChangeDeviceName={(newName) => {
+            setDeviceName(newName);
+            setDeviceNameState(newName);
+          }}
+          dbCategories={dbCategories}
+          rawCategoryDocs={dbCategories.rawDocs}
+          dbCurrencies={activeCurrenciesList}
+          rawCurrencyDocs={dbCurrencies.rawDocs}
+          dbMembers={activeMembersList}
+          rawMemberDocs={dbMembers.rawDocs}
+          activeLedger={activeLedger}
+        />
+      )}
+
+      <div className={`min-h-dvh pb-10 ${connectionStatus !== 'ok' ? 'pt-10' : ''}`}>
+        {!hasFirebase && <SetupBanner onShowDetails={() => setShowSettingsModal(true)} />}
+
+        <header className="px-3 sm:px-4 pt-4 sm:pt-6 pb-4 max-w-5xl mx-auto border-b border-ink/10 mb-4 sm:mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+            {/* Top Bar on Mobile: Title + Actions */}
+            <div className="flex items-center justify-between w-full sm:w-auto gap-3">
+              <h1 className="font-display text-xl sm:text-2xl font-bold text-ink tracking-tight">
+                Splitkhata
+              </h1>
+
+              {/* Actions & User Badge */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsModal(true)}
+                  className="flex items-center gap-1.5 min-h-9 px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs"
+                  title="Open Settings"
+                >
+                  <span>⚙️</span>
+                  <span>Settings</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowSettingsModal(true)}
+                  className="text-xs font-medium text-muted-text bg-paper-card min-h-9 px-3 py-1.5 rounded-xl border border-ink/10 hover:border-ink/20 active:scale-95 transition-all"
+                >
+                  User: <strong className="text-ink">{deviceName}</strong>
+                </button>
+              </div>
+            </div>
+
+            {/* Active Ledger Title Badge */}
+            <div className="flex items-center gap-2">
+              <span className="px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-xs font-bold tracking-wide shadow-2xs">
+                Household Ledger
+              </span>
+            </div>
           </div>
         </header>
 
-        <main className="px-4 pb-8 max-w-5xl mx-auto space-y-5">
-          <BalanceStrip entries={entries} />
-          <AddEntryForm deviceName={deviceName} onSaveError={handleSaveError} />
+        <main className="px-3 sm:px-4 max-w-5xl mx-auto space-y-4 sm:space-y-6">
+          {activeLedger === 'travel' && (
+            <TravelManager
+              selectedTrip={selectedTrip}
+              onTripSelect={setSelectedTrip}
+              currentCurrency={currentCurrency}
+              onCurrencyChange={setCurrentCurrency}
+              dbCategories={dbCategories.travel}
+              rawCategoryDocs={dbCategories.rawDocs}
+              dbCurrencies={activeCurrenciesList}
+            />
+          )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <MonthChart entries={entries} />
+          <BalanceStrip entries={entries} ledger={activeLedger} dbMembers={activeMembersList} />
+
+          {activeLedger === 'travel' && (
+            <TravelSummaryCard entries={entries} ledger={activeLedger} />
+          )}
+
+          <AddEntryForm
+            deviceName={deviceName}
+            onSaveError={handleSaveError}
+            ledger={activeLedger}
+            tripName={selectedTrip}
+            dbCategories={currentDbCategories}
+            dbMembers={activeMembersList}
+            currentCurrency={currentCurrency}
+          />
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <MonthChart entries={entries} ledger={activeLedger} />
             <CategoryChart
               entries={entries}
               selectedMonth={selectedMonth}
               onMonthChange={setSelectedMonth}
               availableMonths={availableMonths}
+              ledger={activeLedger}
             />
           </div>
 
           <EntryList
             entries={entries}
             selectedMonth={selectedMonth}
+            onMonthChange={setSelectedMonth}
+            availableMonths={availableMonths}
             onDeleteError={handleSaveError}
+            ledger={activeLedger}
           />
         </main>
       </div>
     </>
   );
 }
+

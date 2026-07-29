@@ -1,0 +1,8 @@
+{
+  "name": "Splitkhata",
+  "description": "A shared household and travel expense ledger for splitting bills, tracking passbook entries, and managing trip budgets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

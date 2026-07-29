@@ -1,15 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
+import { addCategoryToDb, deleteCategoryFromDb } from '../firebase';
 import {
-  CURRENCIES,
+  DEFAULT_CURRENCIES as CURRENCIES,
   getStoredCashMovements,
   getStoredTravelCategories,
   getStoredTrips,
   setStoredCashMovements,
   setStoredTravelCategories,
   setStoredTrips,
-} from '../constants';
+} from '../utils';
 
-export default function TravelManager({ onTripSelect, selectedTrip, currentCurrency, onCurrencyChange }) {
+export default function TravelManager({
+  onTripSelect,
+  selectedTrip,
+  currentCurrency,
+  onCurrencyChange,
+  dbCategories = [],
+  rawCategoryDocs = [],
+  dbCurrencies = [],
+}) {
   const [trips, setTrips] = useState(() => getStoredTrips());
   const [tripName, setTripName] = useState('');
   const [tripCurrency, setTripCurrency] = useState('INR');
@@ -19,6 +28,9 @@ export default function TravelManager({ onTripSelect, selectedTrip, currentCurre
   const [openingCash, setOpeningCash] = useState('');
   const [withdrawalAmount, setWithdrawalAmount] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+
+  const displayCategories = dbCategories && dbCategories.length > 0 ? dbCategories : customCategories;
+  const currenciesList = dbCurrencies && dbCurrencies.length > 0 ? dbCurrencies : CURRENCIES;
 
   useEffect(() => {
     setStoredTrips(trips);
@@ -55,13 +67,28 @@ export default function TravelManager({ onTripSelect, selectedTrip, currentCurre
     setShowSettings(true);
   }
 
-  function handleAddCategory(event) {
+  async function handleAddCategory(event) {
     event.preventDefault();
     const normalized = categoryDraft.trim();
     if (!normalized) return;
-    if (customCategories.includes(normalized)) return;
-    setCustomCategories([...customCategories, normalized]);
-    setCategoryDraft('');
+    try {
+      await addCategoryToDb('travel', normalized, rawCategoryDocs);
+      setCustomCategories((prev) =>
+        prev.includes(normalized) ? prev : [...prev, normalized],
+      );
+      setCategoryDraft('');
+    } catch (err) {
+      console.error('Failed to add category:', err);
+    }
+  }
+
+  async function handleDeleteCategory(categoryName) {
+    try {
+      await deleteCategoryFromDb('travel', categoryName, rawCategoryDocs);
+      setCustomCategories((prev) => prev.filter((c) => c !== categoryName));
+    } catch (err) {
+      console.error('Failed to delete category:', err);
+    }
   }
 
   function handleSaveCash(event) {
@@ -90,41 +117,47 @@ export default function TravelManager({ onTripSelect, selectedTrip, currentCurre
     }
   }
 
+  const inputClass =
+    'w-full h-11 px-3.5 text-sm rounded-xl border border-ink/15 bg-paper text-ink font-medium focus:outline-none focus:ring-2 focus:ring-ledger-green/40 shadow-2xs flex items-center';
+
+  const selectClass =
+    `${inputClass} appearance-none bg-[url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2324304A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")] bg-[length:1.1rem_1.1rem] bg-[right_0.75rem_center] bg-no-repeat pr-9`;
+
   if (!availableTrips.length) {
     return (
       <section className="panel-card px-5 py-4 space-y-4">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-display text-lg font-medium text-ink">Create your first trip</h2>
-          <span className="text-xs rounded-full border border-ink/10 bg-paper px-3 py-1 text-muted-text">
-            Travel mode
+          <h2 className="font-display text-lg font-bold text-ink">Create Your First Trip</h2>
+          <span className="text-xs rounded-full border border-ink/10 bg-paper px-3 py-1 font-medium text-muted-text">
+            Travel Workspace
           </span>
         </div>
-        <p className="text-sm text-muted-text">Create a trip first so you can add transactions, manage cash, and keep trip-level settings together.</p>
+        <p className="text-sm text-muted-text">Create a trip to organize transactions, track cash balances, and manage trip currency.</p>
         <form onSubmit={handleAddTrip} className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="block text-sm font-medium text-muted-text mb-1">Trip name</label>
+            <label className="block text-sm font-medium text-muted-text mb-1">Trip Name</label>
             <input
               value={tripName}
               onChange={(e) => setTripName(e.target.value)}
-              className="w-full min-h-11 px-3 py-2 rounded-lg border border-ink/15 bg-paper text-ink focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
-              placeholder="Taiwan 2026"
+              className={inputClass}
+              placeholder="e.g., Taiwan 2026"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-muted-text mb-1">Default currency</label>
+            <label className="block text-sm font-medium text-muted-text mb-1">Default Currency</label>
             <select
               value={tripCurrency}
               onChange={(e) => setTripCurrency(e.target.value)}
-              className="w-full min-h-11 px-3 py-2 rounded-lg border border-ink/15 bg-paper text-ink focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+              className={selectClass}
             >
-              {CURRENCIES.map((currency) => (
+              {currenciesList.map((currency) => (
                 <option key={currency} value={currency}>{currency}</option>
               ))}
             </select>
           </div>
           <div className="sm:col-span-2">
-            <button type="submit" className="w-full min-h-11 rounded-lg bg-ledger-green text-white font-medium">
-              Create trip
+            <button type="submit" className="w-full min-h-11 rounded-lg bg-ledger-green text-white font-semibold text-sm hover:bg-ledger-green/90 transition-colors shadow-xs">
+              Create Trip
             </button>
           </div>
         </form>
@@ -136,16 +169,16 @@ export default function TravelManager({ onTripSelect, selectedTrip, currentCurre
     <section className="panel-card px-5 py-4 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="font-display text-lg font-medium text-ink">Trip workspace</h2>
-          <p className="text-sm text-muted-text">Manage your active trip, cash, and trip-level settings from one place.</p>
+          <h2 className="font-display text-lg font-bold text-ink">Trip Workspace</h2>
+          <p className="text-xs text-muted-text">Manage your active trip, cash balances, and trip options.</p>
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setShowSettings((value) => !value)}
-            className="min-h-10 rounded-full border border-ink/15 bg-paper px-3 py-2 text-sm text-ink"
+            className="min-h-10 rounded-lg border border-ink/15 bg-paper px-3.5 py-2 text-xs font-semibold text-ink hover:bg-paper-card transition-colors shadow-2xs"
           >
-            {showSettings ? 'Hide settings' : 'Trip settings'}
+            {showSettings ? 'Hide Trip Settings' : 'Trip Settings'}
           </button>
           <button
             type="button"
@@ -154,9 +187,9 @@ export default function TravelManager({ onTripSelect, selectedTrip, currentCurre
               setTripCurrency('INR');
               setShowSettings(false);
             }}
-            className="min-h-10 rounded-full border border-ink/15 bg-paper px-3 py-2 text-sm text-ink"
+            className="min-h-10 rounded-lg border border-ink/15 bg-paper px-3.5 py-2 text-xs font-semibold text-ink hover:bg-paper-card transition-colors shadow-2xs"
           >
-            Add trip
+            + Add Trip
           </button>
         </div>
       </div>
@@ -173,7 +206,11 @@ export default function TravelManager({ onTripSelect, selectedTrip, currentCurre
                   onTripSelect?.(trip.name);
                   onCurrencyChange?.(trip.currency || 'INR');
                 }}
-                className={`min-h-10 rounded-full px-3 py-2 text-sm border ${active ? 'bg-ledger-green text-white border-ledger-green' : 'border-ink/15 bg-paper text-ink'}`}
+                className={`min-h-10 rounded-lg px-3.5 py-2 text-xs font-semibold border transition-all ${
+                  active
+                    ? 'bg-ledger-green text-white border-ledger-green shadow-2xs'
+                    : 'border-ink/15 bg-paper text-ink hover:bg-paper-card'
+                }`}
               >
                 {trip.name}
               </button>
@@ -181,91 +218,103 @@ export default function TravelManager({ onTripSelect, selectedTrip, currentCurre
           })}
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-ink/10 bg-paper-card px-3 py-3">
-            <p className="text-xs uppercase tracking-wide text-muted-text">Trip</p>
-            <p className="font-medium text-ink mt-1">{selectedTrip || 'No trip selected'}</p>
+          <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
+            <p className="text-2xs uppercase font-bold tracking-wider text-muted-text">Active Trip</p>
+            <p className="font-bold text-ink mt-0.5 text-sm">{selectedTrip || 'None Selected'}</p>
           </div>
-          <div className="rounded-lg border border-ink/10 bg-paper-card px-3 py-3">
-            <p className="text-xs uppercase tracking-wide text-muted-text">Currency</p>
-            <p className="font-medium text-ink mt-1">{currentCurrency || 'INR'}</p>
+          <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
+            <p className="text-2xs uppercase font-bold tracking-wider text-muted-text">Currency</p>
+            <p className="font-bold text-ink mt-0.5 text-sm">{currentCurrency || 'INR'}</p>
           </div>
-          <div className="rounded-lg border border-ink/10 bg-paper-card px-3 py-3">
-            <p className="text-xs uppercase tracking-wide text-muted-text">Cash left</p>
-            <p className="font-medium text-ink mt-1">{selectedTrip ? `${selectedTripCash.toFixed(2)} ${currentCurrency || 'INR'}` : 'None yet'}</p>
+          <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
+            <p className="text-2xs uppercase font-bold tracking-wider text-muted-text">Cash Balance</p>
+            <p className="font-mono font-bold text-ink mt-0.5 text-sm">
+              {selectedTrip ? `${selectedTripCash.toFixed(2)} ${currentCurrency || 'INR'}` : '0'}
+            </p>
           </div>
         </div>
       </div>
 
-      {showSettings ? (
-        <div className="settings-panel space-y-4" data-panel="settings">
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-ink">Trip settings</p>
-            <form onSubmit={handleSaveCash} className="grid gap-2 sm:grid-cols-2">
-              <div>
-                <label className="block text-sm font-medium text-muted-text mb-1">Starting cash</label>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="any"
-                  value={openingCash}
-                  onChange={(e) => setOpeningCash(e.target.value)}
-                  className="w-full min-h-11 px-3 py-2 rounded-lg border border-ink/15 bg-paper text-ink focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
-                  placeholder="0"
-                />
-              </div>
-              <div className="flex items-end">
-                <button type="submit" className="w-full min-h-11 rounded-lg bg-ledger-green text-white font-medium">
-                  Save start cash
-                </button>
-              </div>
-            </form>
+      {showSettings && (
+        <div className="rounded-xl border border-ink/15 bg-paper/80 p-4 space-y-4">
+          <p className="text-xs font-bold uppercase tracking-wider text-ink">Trip Management & Cash</p>
 
-            <form onSubmit={handleAddWithdrawal} className="grid gap-2 sm:grid-cols-2">
-              <div>
-                <label className="block text-sm font-medium text-muted-text mb-1">ATM withdrawal</label>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="any"
-                  value={withdrawalAmount}
-                  onChange={(e) => setWithdrawalAmount(e.target.value)}
-                  className="w-full min-h-11 px-3 py-2 rounded-lg border border-ink/15 bg-paper text-ink focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
-                  placeholder="0"
-                />
-              </div>
-              <div className="flex items-end">
-                <button type="submit" className="w-full min-h-11 rounded-lg border border-ink/15 bg-paper px-4 py-2 text-ink">
-                  Add withdrawal
-                </button>
-              </div>
-            </form>
-          </div>
+          <form onSubmit={handleSaveCash} className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-medium text-muted-text mb-1">Starting Cash</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="any"
+                value={openingCash}
+                onChange={(e) => setOpeningCash(e.target.value)}
+                className={inputClass}
+                placeholder="0"
+              />
+            </div>
+            <div className="flex items-end">
+              <button type="submit" className="w-full min-h-11 rounded-lg bg-ledger-green text-white font-semibold text-xs hover:bg-ledger-green/90 transition-colors">
+                Save Starting Cash
+              </button>
+            </div>
+          </form>
 
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-ink">Custom travel categories</p>
-            <form onSubmit={handleAddCategory} className="flex flex-col gap-2 sm:flex-row">
+          <form onSubmit={handleAddWithdrawal} className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs font-medium text-muted-text mb-1">ATM Cash Withdrawal</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="any"
+                value={withdrawalAmount}
+                onChange={(e) => setWithdrawalAmount(e.target.value)}
+                className={inputClass}
+                placeholder="0"
+              />
+            </div>
+            <div className="flex items-end">
+              <button type="submit" className="w-full min-h-11 rounded-lg border border-ink/15 bg-paper font-semibold text-xs text-ink hover:bg-paper-card transition-colors">
+                Record Withdrawal
+              </button>
+            </div>
+          </form>
+
+          <div className="space-y-2 pt-2 border-t border-ink/10">
+            <p className="text-xs font-medium text-ink">Travel Categories</p>
+            <form onSubmit={handleAddCategory} className="flex gap-2">
               <input
                 value={categoryDraft}
                 onChange={(e) => setCategoryDraft(e.target.value)}
-                className="flex-1 min-h-11 px-3 py-2 rounded-lg border border-ink/15 bg-paper text-ink focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
-                placeholder="Add a category"
+                className="flex-1 min-h-10 px-3 py-1.5 rounded-lg border border-ink/15 bg-paper text-ink text-xs focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                placeholder="Add travel category"
               />
-              <button type="submit" className="min-h-11 rounded-lg border border-ink/15 bg-paper px-4 py-2 text-ink">
-                Add
+              <button type="submit" className="min-h-10 rounded-lg border border-ink/15 bg-paper px-3 py-1.5 font-semibold text-xs text-ink hover:bg-paper-card transition-colors">
+                Add Category
               </button>
             </form>
-            <div className="flex flex-wrap gap-2">
-              {customCategories.map((category) => (
-                <span key={category} className="rounded-full border border-ink/10 bg-paper px-3 py-1 text-sm text-ink">
-                  {category}
+            <div className="flex flex-wrap gap-1.5">
+              {displayCategories.map((category) => (
+                <span
+                  key={category}
+                  className="inline-flex items-center gap-1 rounded-md border border-ink/10 bg-paper px-2.5 py-1 text-xs text-ink font-medium shadow-2xs"
+                >
+                  <span>{category}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteCategory(category)}
+                    className="text-muted-text hover:text-stamp-red text-xs font-bold px-1 py-0.2 rounded hover:bg-stamp-red/10 transition-colors"
+                    title={`Remove ${category}`}
+                  >
+                    ✕
+                  </button>
                 </span>
               ))}
             </div>
           </div>
         </div>
-      ) : null}
+      )}
     </section>
   );
 }

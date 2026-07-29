@@ -5,59 +5,35 @@ import {
   addDoc,
   deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
   serverTimestamp,
   query,
+  where,
   orderBy,
   enableIndexedDbPersistence,
 } from 'firebase/firestore';
+import {
+  DEFAULT_CATEGORIES as CATEGORIES,
+  DEFAULT_TRAVEL_CATEGORIES as TRAVEL_CATEGORIES,
+  DEFAULT_CURRENCIES as CURRENCIES,
+  DEFAULT_PERSONS as PERSONS,
+  getStoredHouseholdCategories,
+  setStoredHouseholdCategories,
+  getStoredTravelCategories,
+  setStoredTravelCategories,
+  getStoredCurrencies,
+  setStoredCurrencies,
+  getStoredMembers,
+  setStoredMembers,
+  HOUSEHOLD_CATEGORIES_KEY,
+  TRAVEL_CATEGORIES_KEY,
+  CURRENCIES_KEY,
+  MEMBERS_KEY,
+} from './utils';
 
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-};
-
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
-
-enableIndexedDbPersistence(db).catch((err) => {
-  if (err.code !== 'failed-precondition' && err.code !== 'unimplemented') {
-    console.warn('Firestore persistence error:', err);
-  }
-});
-
-const expensesRef = collection(db, 'expenses');
-
-export function subscribeToExpenses(onData, onError) {
-  const q = query(expensesRef, orderBy('createdAt', 'desc'));
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const entries = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-        createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? null,
-      }));
-      onData(entries);
-    },
-    onError,
-  );
-}
-
-export async function addExpense(entry) {
-  await addDoc(expensesRef, {
-    ...entry,
-    createdAt: serverTimestamp(),
-  });
-}
-
-export async function deleteExpense(id) {
-  await deleteDoc(doc(db, 'expenses', id));
-}
+const LOCAL_EXPENSES_KEY = 'splitkhata_expenses_fallback';
+const LOCAL_CATEGORIES_KEY = 'splitkhata_categories_fallback';
 
 export function isFirebaseConfigured() {
   return Boolean(
@@ -65,3 +41,614 @@ export function isFirebaseConfigured() {
       import.meta.env.VITE_FIREBASE_PROJECT_ID,
   );
 }
+
+let dbInstance = null;
+let expensesRef = null;
+let categoriesRef = null;
+let currenciesRef = null;
+let membersRef = null;
+
+if (isFirebaseConfigured()) {
+  try {
+    const firebaseConfig = {
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+      appId: import.meta.env.VITE_FIREBASE_APP_ID,
+    };
+    const app = initializeApp(firebaseConfig);
+    dbInstance = getFirestore(app);
+    enableIndexedDbPersistence(dbInstance).catch((err) => {
+      if (err.code !== 'failed-precondition' && err.code !== 'unimplemented') {
+        console.warn('Firestore persistence error:', err);
+      }
+    });
+    expensesRef = collection(dbInstance, 'expenses');
+    categoriesRef = collection(dbInstance, 'categories');
+    currenciesRef = collection(dbInstance, 'currencies');
+    membersRef = collection(dbInstance, 'members');
+  } catch (err) {
+    console.warn('Firebase initialization failed, falling back to local database:', err);
+  }
+}
+
+export const db = dbInstance;
+
+// Local storage event listeners for reactive multi-tab updates when in fallback mode
+const expenseListeners = new Set();
+const categoryListeners = new Set();
+const currencyListeners = new Set();
+const memberListeners = new Set();
+
+let categoriesSeededFlag = false;
+
+function getLocalExpenses() {
+  try {
+    const raw = localStorage.getItem(LOCAL_EXPENSES_KEY);
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalExpenses(data) {
+  try {
+    localStorage.setItem(LOCAL_EXPENSES_KEY, JSON.stringify(data));
+    expenseListeners.forEach((fn) => fn(data));
+  } catch (err) {
+    console.error('Failed to save expenses to local database:', err);
+  }
+}
+
+function getLocalCategories() {
+  return {
+    household: getStoredHouseholdCategories(),
+    travel: getStoredTravelCategories(),
+  };
+}
+
+function saveLocalCategories(data) {
+  try {
+    if (data.household) setStoredHouseholdCategories(data.household);
+    if (data.travel) setStoredTravelCategories(data.travel);
+    localStorage.setItem(LOCAL_CATEGORIES_KEY, JSON.stringify(data));
+    categoryListeners.forEach((fn) => fn(getLocalCategories()));
+  } catch (err) {
+    console.error('Failed to save categories to local database:', err);
+  }
+}
+
+// Subscriptions
+export function subscribeToExpenses(onData, onError) {
+  if (expensesRef) {
+    const q = query(expensesRef, orderBy('createdAt', 'desc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const entries = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+          createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? null,
+        }));
+        onData(entries);
+      },
+      onError,
+    );
+  } else {
+    const handler = (data) => onData(data);
+    expenseListeners.add(handler);
+    onData(getLocalExpenses());
+
+    const storageListener = (e) => {
+      if (e.key === LOCAL_EXPENSES_KEY) {
+        onData(getLocalExpenses());
+      }
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      expenseListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+export function subscribeToCategories(onData, onError) {
+  if (categoriesRef) {
+    const q = query(categoriesRef, orderBy('createdAt', 'asc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        if (snapshot.empty && !categoriesSeededFlag) {
+          categoriesSeededFlag = true;
+          // Seed database with defaults once if empty
+          seedDefaultCategories().catch(() => {});
+          onData({ household: [...CATEGORIES], travel: [...TRAVEL_CATEGORIES], rawDocs: [] });
+          return;
+        }
+
+        const household = [];
+        const travel = [];
+        const categoryDocs = [];
+
+        snapshot.docs.forEach((docSnap) => {
+          const item = { id: docSnap.id, ...docSnap.data() };
+          categoryDocs.push(item);
+          if (item.ledger === 'travel') {
+            if (item.name) travel.push(item.name);
+          } else {
+            if (item.name) household.push(item.name);
+          }
+        });
+
+        onData({
+          household: categoriesSeededFlag && snapshot.empty ? [] : household,
+          travel: categoriesSeededFlag && snapshot.empty ? [] : travel,
+          rawDocs: categoryDocs,
+        });
+      },
+      onError,
+    );
+  } else {
+    const handler = (data) => onData(data);
+    categoryListeners.add(handler);
+    onData(getLocalCategories());
+
+    const storageListener = (e) => {
+      if (
+        e.key === HOUSEHOLD_CATEGORIES_KEY ||
+        e.key === TRAVEL_CATEGORIES_KEY ||
+        e.key === LOCAL_CATEGORIES_KEY
+      ) {
+        onData(getLocalCategories());
+      }
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      categoryListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+async function seedDefaultCategories() {
+  if (!categoriesRef) return;
+  for (const cat of CATEGORIES) {
+    await addDoc(categoriesRef, {
+      name: cat,
+      ledger: 'household',
+      createdAt: serverTimestamp(),
+    });
+  }
+  for (const cat of TRAVEL_CATEGORIES) {
+    await addDoc(categoriesRef, {
+      name: cat,
+      ledger: 'travel',
+      createdAt: serverTimestamp(),
+    });
+  }
+}
+
+// Currencies Subscription & Actions
+let currenciesSeededFlag = false;
+
+export function subscribeToCurrencies(onData, onError) {
+  if (currenciesRef) {
+    const q = query(currenciesRef, orderBy('createdAt', 'asc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        if (snapshot.empty && !currenciesSeededFlag) {
+          currenciesSeededFlag = true;
+          seedDefaultCurrencies().catch(() => {});
+          onData({ currencies: [...CURRENCIES], rawDocs: [] });
+          return;
+        }
+        const currenciesList = [];
+        const rawDocs = [];
+        snapshot.docs.forEach((d) => {
+          const item = { id: d.id, ...d.data() };
+          rawDocs.push(item);
+          if (item.name) currenciesList.push(item.name);
+        });
+        onData({
+          currencies: currenciesList,
+          rawDocs,
+        });
+      },
+      onError,
+    );
+  } else {
+    const handler = (data) => onData(data);
+    currencyListeners.add(handler);
+    onData({ currencies: getStoredCurrencies(), rawDocs: [] });
+
+    const storageListener = (e) => {
+      if (e.key === CURRENCIES_KEY) {
+        onData({ currencies: getStoredCurrencies(), rawDocs: [] });
+      }
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      currencyListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+async function seedDefaultCurrencies() {
+  if (!currenciesRef) return;
+  for (const cur of CURRENCIES) {
+    await addDoc(currenciesRef, {
+      name: cur,
+      createdAt: serverTimestamp(),
+    });
+  }
+}
+
+export async function addCurrencyToDb(name, existingRawDocs = []) {
+  const trimmed = name.trim().toUpperCase();
+  if (!trimmed) return;
+
+  if (currenciesRef) {
+    const exists = existingRawDocs.some(
+      (d) => d.name && d.name.trim().toUpperCase() === trimmed,
+    );
+    if (!exists) {
+      await addDoc(currenciesRef, {
+        name: trimmed,
+        createdAt: serverTimestamp(),
+      });
+    }
+  }
+
+  const current = getStoredCurrencies();
+  if (!current.includes(trimmed)) {
+    const updated = [...current, trimmed];
+    setStoredCurrencies(updated);
+    currencyListeners.forEach((fn) => fn({ currencies: updated, rawDocs: [] }));
+  }
+}
+
+export async function deleteCurrencyFromDb(name, rawDocs = []) {
+  const trimmed = name.trim().toUpperCase();
+  if (!trimmed) return;
+
+  if (currenciesRef) {
+    const docToDelete = rawDocs.find(
+      (d) => d.name && d.name.trim().toUpperCase() === trimmed,
+    );
+    if (docToDelete?.id) {
+      await deleteDoc(doc(dbInstance, 'currencies', docToDelete.id));
+    } else {
+      try {
+        const q = query(currenciesRef, where('name', '==', trimmed));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const promises = snap.docs.map((d) => deleteDoc(doc(dbInstance, 'currencies', d.id)));
+          await Promise.all(promises);
+        } else {
+          // If Firestore had no docs for defaults, seed remaining defaults
+          const current = getStoredCurrencies();
+          const remaining = current.filter((c) => c.toUpperCase() !== trimmed);
+          for (const c of remaining) {
+            await addDoc(currenciesRef, { name: c, createdAt: serverTimestamp() });
+          }
+        }
+      } catch (err) {
+        console.error('Error deleting currency from Firestore:', err);
+      }
+    }
+  }
+
+  const current = getStoredCurrencies();
+  const updated = current.filter((c) => c.toUpperCase() !== trimmed);
+  setStoredCurrencies(updated);
+  currencyListeners.forEach((fn) => fn({ currencies: updated, rawDocs: [] }));
+}
+
+// Members Subscription & Actions
+let membersSeededFlag = false;
+
+export function subscribeToMembers(onData, onError) {
+  if (membersRef) {
+    const q = query(membersRef, orderBy('createdAt', 'asc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        if (snapshot.empty && !membersSeededFlag) {
+          membersSeededFlag = true;
+          seedDefaultMembers().catch(() => {});
+          onData({ members: [...PERSONS], rawDocs: [] });
+          return;
+        }
+        const membersList = [];
+        const rawDocs = [];
+        snapshot.docs.forEach((d) => {
+          const item = { id: d.id, ...d.data() };
+          rawDocs.push(item);
+          if (item.name) membersList.push(item.name);
+        });
+        onData({
+          members: membersList,
+          rawDocs,
+        });
+      },
+      onError,
+    );
+  } else {
+    const handler = (data) => onData(data);
+    memberListeners.add(handler);
+    onData({ members: getStoredMembers(), rawDocs: [] });
+
+    const storageListener = (e) => {
+      if (e.key === MEMBERS_KEY) {
+        onData({ members: getStoredMembers(), rawDocs: [] });
+      }
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      memberListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+async function seedDefaultMembers() {
+  if (!membersRef) return;
+  for (const p of PERSONS) {
+    await addDoc(membersRef, {
+      name: p,
+      createdAt: serverTimestamp(),
+    });
+  }
+}
+
+export async function addMemberToDb(name, existingRawDocs = []) {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+
+  if (membersRef) {
+    const exists = existingRawDocs.some(
+      (d) => d.name && d.name.trim().toLowerCase() === trimmed.toLowerCase(),
+    );
+    if (!exists) {
+      await addDoc(membersRef, {
+        name: trimmed,
+        createdAt: serverTimestamp(),
+      });
+    }
+  }
+
+  const current = getStoredMembers();
+  if (!current.some((m) => m.toLowerCase() === trimmed.toLowerCase())) {
+    const updated = [...current, trimmed];
+    setStoredMembers(updated);
+    memberListeners.forEach((fn) => fn({ members: updated, rawDocs: [] }));
+  }
+}
+
+export async function deleteMemberFromDb(name, rawDocs = []) {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+
+  if (membersRef) {
+    const docToDelete = rawDocs.find(
+      (d) => d.name && d.name.trim().toLowerCase() === trimmed.toLowerCase(),
+    );
+    if (docToDelete?.id) {
+      await deleteDoc(doc(dbInstance, 'members', docToDelete.id));
+    } else {
+      try {
+        const q = query(membersRef, where('name', '==', trimmed));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const promises = snap.docs.map((d) => deleteDoc(doc(dbInstance, 'members', d.id)));
+          await Promise.all(promises);
+        } else {
+          const current = getStoredMembers();
+          const remaining = current.filter((m) => m.toLowerCase() !== trimmed.toLowerCase());
+          for (const m of remaining) {
+            await addDoc(membersRef, { name: m, createdAt: serverTimestamp() });
+          }
+        }
+      } catch (err) {
+        console.error('Error deleting member from Firestore:', err);
+      }
+    }
+  }
+
+  const current = getStoredMembers();
+  const updated = current.filter((m) => m.toLowerCase() !== trimmed.toLowerCase());
+  setStoredMembers(updated);
+  memberListeners.forEach((fn) => fn({ members: updated, rawDocs: [] }));
+}
+
+// Database Actions
+export async function addExpense(entry) {
+  if (expensesRef) {
+    await addDoc(expensesRef, {
+      ...entry,
+      createdAt: serverTimestamp(),
+    });
+  } else {
+    const current = getLocalExpenses();
+    const newEntry = {
+      id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      ...entry,
+      createdAt: new Date().toISOString(),
+    };
+    saveLocalExpenses([newEntry, ...current]);
+  }
+}
+
+export async function deleteExpense(id) {
+  if (expensesRef) {
+    await deleteDoc(doc(dbInstance, 'expenses', id));
+  } else {
+    const current = getLocalExpenses();
+    const filtered = current.filter((item) => item.id !== id);
+    saveLocalExpenses(filtered);
+  }
+}
+
+export async function addCategoryToDb(ledger, name, existingRawDocs = []) {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+
+  const targetKey = ledger === 'travel' ? 'travel' : 'household';
+
+  if (categoriesRef) {
+    // Check if duplicate exists
+    const exists = existingRawDocs.some(
+      (d) =>
+        d.name &&
+        d.name.trim().toLowerCase() === trimmed.toLowerCase() &&
+        (d.ledger === targetKey || (!d.ledger && targetKey === 'household')),
+    );
+    if (!exists) {
+      await addDoc(categoriesRef, {
+        name: trimmed,
+        ledger: targetKey,
+        createdAt: serverTimestamp(),
+      });
+    }
+  }
+
+  const current = getLocalCategories();
+  const list = current[targetKey] || (targetKey === 'travel' ? TRAVEL_CATEGORIES : CATEGORIES);
+  if (!list.some((c) => c.trim().toLowerCase() === trimmed.toLowerCase())) {
+    const next = { ...current, [targetKey]: [...list, trimmed] };
+    saveLocalCategories(next);
+  }
+}
+
+export async function deleteCategoryFromDb(ledger, categoryName, rawDocs = []) {
+  const trimmed = categoryName.trim();
+  if (!trimmed) return;
+
+  const targetKey = ledger === 'travel' ? 'travel' : 'household';
+
+  if (categoriesRef) {
+    const docToDelete = rawDocs.find(
+      (d) =>
+        d.name &&
+        d.name.trim().toLowerCase() === trimmed.toLowerCase() &&
+        (d.ledger === targetKey || (!d.ledger && targetKey === 'household')),
+    );
+    if (docToDelete?.id) {
+      await deleteDoc(doc(dbInstance, 'categories', docToDelete.id));
+    } else {
+      try {
+        const q = query(categoriesRef, where('name', '==', trimmed));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const deletePromises = snap.docs.map((d) => deleteDoc(doc(dbInstance, 'categories', d.id)));
+          await Promise.all(deletePromises);
+        } else {
+          // Seed remaining defaults if no Firestore docs existed for defaults
+          const defaultList = targetKey === 'travel' ? TRAVEL_CATEGORIES : CATEGORIES;
+          const remainingDefaults = defaultList.filter(
+            (c) => c.trim().toLowerCase() !== trimmed.toLowerCase(),
+          );
+          for (const cat of remainingDefaults) {
+            await addDoc(categoriesRef, {
+              name: cat,
+              ledger: targetKey,
+              createdAt: serverTimestamp(),
+            });
+          }
+        }
+      } catch (err) {
+        console.error('Error deleting category doc from Firestore:', err);
+      }
+    }
+  }
+
+  const current = getLocalCategories();
+  const list = current[targetKey] || (targetKey === 'travel' ? TRAVEL_CATEGORIES : CATEGORIES);
+  const updatedList = list.filter((c) => c.trim().toLowerCase() !== trimmed.toLowerCase());
+  
+  saveLocalCategories({
+    ...current,
+    [targetKey]: updatedList,
+  });
+}
+
+export async function wipeAllExpenses() {
+  if (expensesRef) {
+    try {
+      const snap = await getDocs(expensesRef);
+      const deletePromises = snap.docs.map((d) => deleteDoc(doc(dbInstance, 'expenses', d.id)));
+      await Promise.all(deletePromises);
+    } catch (err) {
+      console.error('Error wiping expenses in Firestore:', err);
+    }
+  }
+  saveLocalExpenses([]);
+}
+
+export async function seedSampleExpenses() {
+  const SAMPLE_ENTRIES = [
+    // July 2026
+    { amount: 3800, category: 'Groceries', payer: 'Yash', split: true, ledger: 'household', date: '2026-07-04', note: 'Weekly supermarket shop', deviceName: 'Yash' },
+    { amount: 2200, category: 'Utilities', payer: 'Kruti', split: true, ledger: 'household', date: '2026-07-08', note: 'Electricity bill', deviceName: 'Kruti' },
+    { amount: 1950, category: 'Eating Out', payer: 'Yash', split: true, ledger: 'household', date: '2026-07-12', note: 'Weekend dinner', deviceName: 'Yash' },
+    { amount: 18000, category: 'Rent', payer: 'Yash', split: true, ledger: 'household', date: '2026-07-01', note: 'Monthly apartment rent', deviceName: 'Yash' },
+    { amount: 1400, category: 'Health', payer: 'Kruti', split: true, ledger: 'household', date: '2026-07-19', note: 'Pharmacy refills', deviceName: 'Kruti' },
+
+    // June 2026
+    { amount: 4200, category: 'Groceries', payer: 'Kruti', split: true, ledger: 'household', date: '2026-06-05', note: 'Organic market', deviceName: 'Kruti' },
+    { amount: 2100, category: 'Utilities', payer: 'Yash', split: true, ledger: 'household', date: '2026-06-09', note: 'Water & wifi bill', deviceName: 'Yash' },
+    { amount: 18000, category: 'Rent', payer: 'Yash', split: true, ledger: 'household', date: '2026-06-01', note: 'Monthly apartment rent', deviceName: 'Yash' },
+    { amount: 3100, category: 'Eating Out', payer: 'Kruti', split: true, ledger: 'household', date: '2026-06-15', note: 'Celebration lunch', deviceName: 'Kruti' },
+    { amount: 1600, category: 'Transport', payer: 'Yash', split: true, ledger: 'household', date: '2026-06-20', note: 'Fuel refill', deviceName: 'Yash' },
+    { amount: 2500, category: 'Entertainment', payer: 'Yash', split: true, ledger: 'household', date: '2026-06-24', note: 'Concert tickets', deviceName: 'Yash' },
+
+    // May 2026
+    { amount: 3100, category: 'Groceries', payer: 'Yash', split: true, ledger: 'household', date: '2026-05-03', note: 'Pantry restocking', deviceName: 'Yash' },
+    { amount: 1900, category: 'Utilities', payer: 'Kruti', split: true, ledger: 'household', date: '2026-05-10', note: 'Electricity', deviceName: 'Kruti' },
+    { amount: 18000, category: 'Rent', payer: 'Yash', split: true, ledger: 'household', date: '2026-05-01', note: 'Monthly apartment rent', deviceName: 'Yash' },
+    { amount: 2800, category: 'Health', payer: 'Yash', split: true, ledger: 'household', date: '2026-05-18', note: 'Dental checkup', deviceName: 'Yash' },
+    { amount: 1200, category: 'Transport', payer: 'Kruti', split: true, ledger: 'household', date: '2026-05-22', note: 'Cab passes', deviceName: 'Kruti' },
+
+    // April 2026
+    { amount: 3900, category: 'Groceries', payer: 'Kruti', split: true, ledger: 'household', date: '2026-04-06', note: 'Monthly groceries', deviceName: 'Kruti' },
+    { amount: 2400, category: 'Utilities', payer: 'Yash', split: true, ledger: 'household', date: '2026-04-11', note: 'Maintenance fee', deviceName: 'Yash' },
+    { amount: 18000, category: 'Rent', payer: 'Yash', split: true, ledger: 'household', date: '2026-04-01', note: 'Monthly apartment rent', deviceName: 'Yash' },
+    { amount: 2200, category: 'Eating Out', payer: 'Yash', split: true, ledger: 'household', date: '2026-04-17', note: 'Pizza night', deviceName: 'Yash' },
+    { amount: 4500, category: 'Household', payer: 'Kruti', split: true, ledger: 'household', date: '2026-04-25', note: 'Kitchen appliances', deviceName: 'Kruti' },
+
+    // March 2026
+    { amount: 2900, category: 'Groceries', payer: 'Yash', split: true, ledger: 'household', date: '2026-03-05', note: 'Weekly produce', deviceName: 'Yash' },
+    { amount: 1800, category: 'Utilities', payer: 'Kruti', split: true, ledger: 'household', date: '2026-03-09', note: 'Internet & power', deviceName: 'Kruti' },
+    { amount: 18000, category: 'Rent', payer: 'Yash', split: true, ledger: 'household', date: '2026-03-01', note: 'Monthly apartment rent', deviceName: 'Yash' },
+    { amount: 1100, category: 'Transport', payer: 'Yash', split: true, ledger: 'household', date: '2026-03-14', note: 'Metro card topup', deviceName: 'Yash' },
+    { amount: 1800, category: 'Entertainment', payer: 'Kruti', split: true, ledger: 'household', date: '2026-03-22', note: 'Movie & snacks', deviceName: 'Kruti' },
+
+    // February 2026
+    { amount: 3200, category: 'Groceries', payer: 'Kruti', split: true, ledger: 'household', date: '2026-02-04', note: 'Supermarket', deviceName: 'Kruti' },
+    { amount: 2000, category: 'Utilities', payer: 'Yash', split: true, ledger: 'household', date: '2026-02-08', note: 'Power bill', deviceName: 'Yash' },
+    { amount: 18000, category: 'Rent', payer: 'Yash', split: true, ledger: 'household', date: '2026-02-01', note: 'Monthly apartment rent', deviceName: 'Yash' },
+    { amount: 2800, category: 'Eating Out', payer: 'Kruti', split: true, ledger: 'household', date: '2026-02-14', note: 'Valentine dinner', deviceName: 'Kruti' },
+    { amount: 900, category: 'Health', payer: 'Yash', split: true, ledger: 'household', date: '2026-02-21', note: 'Vitamins', deviceName: 'Yash' },
+
+    // Travel ledger entries
+    { amount: 14500, category: 'Flight', payer: 'Yash', split: true, ledger: 'travel', trip: "Japan Summer '26", date: '2026-06-02', note: 'Tokyo round trip', deviceName: 'Yash' },
+    { amount: 22000, category: 'Hotel', payer: 'Kruti', split: true, ledger: 'travel', trip: "Japan Summer '26", date: '2026-06-04', note: 'Shinjuku stay 4 nights', deviceName: 'Kruti' },
+    { amount: 4800, category: 'Food', payer: 'Yash', split: true, ledger: 'travel', trip: "Japan Summer '26", date: '2026-06-06', note: 'Ramen & Izakaya', deviceName: 'Yash' },
+    { amount: 1900, category: 'Commute', payer: 'Kruti', split: true, ledger: 'travel', trip: "Japan Summer '26", date: '2026-06-07', note: 'JR Pass card', deviceName: 'Kruti' },
+  ];
+
+  for (const entry of SAMPLE_ENTRIES) {
+    await addExpense(entry);
+  }
+}
+
+

@@ -8,22 +8,22 @@ export default function ConnectionState({ status, message, onDismiss }) {
   };
 
   const labels = {
-    offline: 'Offline — changes will sync when you reconnect',
+    offline: 'Offline - changes will sync when you reconnect',
     error: message || 'Something went wrong saving',
-    syncing: 'Syncing…',
+    syncing: 'Syncing with database...',
   };
 
   return (
     <div
       role="status"
-      className={`fixed top-0 inset-x-0 z-50 px-4 py-2.5 text-sm text-center border-b ${styles[status] ?? styles.error}`}
+      className={`fixed top-0 inset-x-0 z-50 px-4 py-2 text-sm text-center border-b font-medium shadow-xs ${styles[status] ?? styles.error}`}
     >
       <span>{labels[status] ?? message}</span>
       {onDismiss && status === 'error' && (
         <button
           type="button"
           onClick={onDismiss}
-          className="ml-3 underline text-sm"
+          className="ml-3 underline text-sm font-semibold hover:opacity-80"
         >
           Dismiss
         </button>
