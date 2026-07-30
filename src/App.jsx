@@ -119,6 +119,7 @@ export default function App() {
   });
   const [currentCurrency, setCurrentCurrency] = useState('INR');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
 
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
@@ -341,26 +342,41 @@ export default function App() {
                   <span>⚙️</span>
                   <span className="hidden sm:inline">Settings</span>
                 </button>
-                {hasFirebase && (
+                <div className="relative">
                   <button
                     type="button"
-                    onClick={() => signOutUser()}
-                    className="flex items-center justify-center gap-1.5 min-w-9 min-h-9 px-2 sm:px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card"
-                    title="Sign out"
-                    aria-label="Sign out"
+                    onClick={() => setShowAccountMenu((open) => !open)}
+                    className="text-xs font-medium text-muted-text bg-paper-card min-w-9 min-h-9 max-w-24 sm:max-w-none px-2 sm:px-3 py-1.5 rounded-xl border border-ink/10 hover:border-ink/20 active:scale-95 transition-all truncate"
+                    aria-expanded={showAccountMenu}
+                    aria-haspopup="menu"
                   >
-                    <span aria-hidden="true">↪</span>
-                    <span className="hidden sm:inline">Sign out</span>
+                    <span className="hidden sm:inline">User: </span><strong className="text-ink">{deviceName}</strong>
                   </button>
-                )}
 
-                <button
-                  type="button"
-                  onClick={() => setShowSettingsModal(true)}
-                  className="text-xs font-medium text-muted-text bg-paper-card min-w-9 min-h-9 max-w-24 sm:max-w-none px-2 sm:px-3 py-1.5 rounded-xl border border-ink/10 hover:border-ink/20 active:scale-95 transition-all truncate"
-                >
-                  <span className="hidden sm:inline">User: </span><strong className="text-ink">{deviceName}</strong>
-                </button>
+                  {showAccountMenu && (
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-full z-30 mt-2 w-56 rounded-xl border border-ink/15 bg-paper-card p-2 shadow-xl"
+                    >
+                      {hasFirebase && currentUser?.email && (
+                        <p className="px-2 py-1.5 text-xs text-muted-text truncate" title={currentUser.email}>
+                          {currentUser.email}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={async () => {
+                          setShowAccountMenu(false);
+                          await signOutUser();
+                        }}
+                        className="w-full min-h-10 rounded-lg px-3 py-2 text-left text-sm font-semibold text-stamp-red hover:bg-stamp-red/10"
+                      >
+                        Sign out
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
             <div className="hidden sm:flex items-center gap-2">
