@@ -198,7 +198,7 @@ export default function AddEntryForm({
                 required
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className={`${inputClass} appearance-none`}
+                className={`${inputClass} date-input appearance-none lg:h-12 lg:px-4`}
               />
             </div>
 

@@ -134,7 +134,7 @@ export default function PinLockScreen({ onUnlock, correctPin }) {
           <button
             type="button"
             onClick={handleBackspace}
-            className="w-16 h-16 rounded-full border border-ink/10 bg-paper/50 text-muted-text font-semibold hover:text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs mx-auto flex items-center justify-center text-sm"
+            className="w-16 h-16 rounded-full border border-ink/10 bg-paper/50 text-muted-text font-semibold hover:text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs mx-auto flex items-center justify-center text-3xl"
             aria-label="Backspace"
           >
             ⌫
