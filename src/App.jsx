@@ -310,29 +310,18 @@ export default function App() {
         {!hasFirebase && <SetupBanner onShowDetails={() => setShowSettingsModal(true)} />}
 
         <header className="px-3 sm:px-4 pt-4 sm:pt-6 pb-4 max-w-5xl mx-auto border-b border-ink/10 mb-4 sm:mb-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-            <div className="flex items-center justify-between w-full min-w-0 sm:w-auto gap-2">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
+            <div className="min-w-0">
               <h1 className="font-display text-xl sm:text-2xl font-bold text-ink tracking-tight">
                 Splitkhata
               </h1>
-              <span className="sm:hidden px-3 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-xs font-bold tracking-wide shadow-2xs whitespace-nowrap">
-                Household Ledger
-              </span>
             </div>
 
-              <div className="flex items-center justify-end gap-1 shrink-0 flex-wrap sm:order-none">
-                {pinConfig.enabled && pinConfig.pin && (
-                  <button
-                    type="button"
-                    onClick={() => setIsLocked(true)}
-                    className="flex items-center justify-center gap-1.5 min-w-9 min-h-9 px-2 sm:px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs"
-                    title="Lock App"
-                  >
-                    <span>🔒</span>
-                    <span className="hidden sm:inline">Lock</span>
-                  </button>
-                )}
+            <span className="px-2.5 sm:px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-[11px] sm:text-xs font-bold tracking-wide shadow-2xs whitespace-nowrap">
+              Household Ledger
+            </span>
 
+              <div className="flex items-center justify-end gap-1 min-w-0">
                 <button
                   type="button"
                   onClick={() => setShowSettingsModal(true)}
@@ -363,6 +352,19 @@ export default function App() {
                           {currentUser.email}
                         </p>
                       )}
+                      {pinConfig.enabled && pinConfig.pin && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setShowAccountMenu(false);
+                            setIsLocked(true);
+                          }}
+                          className="w-full min-h-10 rounded-lg px-3 py-2 text-left text-sm font-semibold text-ink hover:bg-paper"
+                        >
+                          Lock app
+                        </button>
+                      )}
                       <button
                         type="button"
                         role="menuitem"
@@ -378,12 +380,6 @@ export default function App() {
                   )}
                 </div>
               </div>
-
-            <div className="hidden sm:flex items-center gap-2">
-              <span className="px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-xs font-bold tracking-wide shadow-2xs">
-                Household Ledger
-              </span>
-            </div>
           </div>
         </header>
 
