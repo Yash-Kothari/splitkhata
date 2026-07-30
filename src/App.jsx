@@ -311,51 +311,53 @@ export default function App() {
         <header className="px-3 sm:px-4 pt-4 sm:pt-6 pb-4 max-w-5xl mx-auto border-b border-ink/10 mb-4 sm:mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
             {/* Top Bar on Mobile: Title + Actions */}
-            <div className="flex items-center justify-between w-full sm:w-auto gap-3">
+            <div className="flex items-center justify-between w-full min-w-0 sm:w-auto gap-2">
               <h1 className="font-display text-xl sm:text-2xl font-bold text-ink tracking-tight">
                 Splitkhata
               </h1>
 
               {/* Actions & User Badge */}
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-1 shrink-0">
                 {pinConfig.enabled && pinConfig.pin && (
                   <button
                     type="button"
                     onClick={() => setIsLocked(true)}
-                    className="flex items-center gap-1.5 min-h-9 px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs"
+                    className="flex items-center justify-center gap-1.5 min-w-9 min-h-9 px-2 sm:px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs"
                     title="Lock App"
                   >
                     <span>🔒</span>
-                    <span className="hidden xs:inline sm:inline">Lock</span>
+                    <span className="hidden sm:inline">Lock</span>
                   </button>
                 )}
 
                 <button
                   type="button"
                   onClick={() => setShowSettingsModal(true)}
-                  className="flex items-center gap-1.5 min-h-9 px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs"
+                  className="flex items-center justify-center gap-1.5 min-w-9 min-h-9 px-2 sm:px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs"
                   title="Open Settings"
                 >
                   <span>⚙️</span>
-                  <span>Settings</span>
+                  <span className="hidden sm:inline">Settings</span>
                 </button>
                 {hasFirebase && (
                   <button
                     type="button"
                     onClick={() => signOutUser()}
-                    className="min-h-9 px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card"
+                    className="flex items-center justify-center gap-1.5 min-w-9 min-h-9 px-2 sm:px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card"
                     title="Sign out"
+                    aria-label="Sign out"
                   >
-                    Sign out
+                    <span aria-hidden="true">↪</span>
+                    <span className="hidden sm:inline">Sign out</span>
                   </button>
                 )}
 
                 <button
                   type="button"
                   onClick={() => setShowSettingsModal(true)}
-                  className="text-xs font-medium text-muted-text bg-paper-card min-h-9 px-3 py-1.5 rounded-xl border border-ink/10 hover:border-ink/20 active:scale-95 transition-all"
+                  className="text-xs font-medium text-muted-text bg-paper-card min-w-9 min-h-9 max-w-24 sm:max-w-none px-2 sm:px-3 py-1.5 rounded-xl border border-ink/10 hover:border-ink/20 active:scale-95 transition-all truncate"
                 >
-                  User: <strong className="text-ink">{deviceName}</strong>
+                  <span className="hidden sm:inline">User: </span><strong className="text-ink">{deviceName}</strong>
                 </button>
               </div>
             </div>
