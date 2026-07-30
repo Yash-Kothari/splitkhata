@@ -104,35 +104,39 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
   const members = dynamicMembers && dynamicMembers.length > 0 ? dynamicMembers : DEFAULT_PERSONS;
   const targetLedger = ledger ? normalizeLedger(ledger) : null;
 
-  const paidBy = {};
-  members.forEach((m) => {
-    paidBy[m] = 0;
-  });
+  const netByMember = Object.fromEntries(members.map((member) => [member, 0]));
+  const resolveMember = (name) => {
+    if (members.includes(name)) return name;
+    if (name === 'Husband') return members[0];
+    if (name === 'Wife') return members[1];
+    return members[0];
+  };
 
   for (const entry of entries) {
     if (!entry || !entry.split) continue;
     if (targetLedger && normalizeLedger(entry.ledger) !== targetLedger) continue;
 
-    const payer = entry.payer;
+    const payer = resolveMember(entry.payer);
     const amount = Number(entry.amount || 0);
 
-    if (payer && paidBy[payer] !== undefined) {
-      paidBy[payer] += amount;
-    } else if (payer === 'Husband' && paidBy[members[0]] !== undefined) {
-      paidBy[members[0]] += amount;
-    } else if (payer === 'Wife' && paidBy[members[1]] !== undefined) {
-      paidBy[members[1]] += amount;
-    } else if (members[0]) {
-      paidBy[members[0]] += amount;
+    if (!amount || !payer) continue;
+    netByMember[payer] += amount;
+
+    if (entry.splitType === 'owed' && entry.owedBy) {
+      const debtor = resolveMember(entry.owedBy);
+      if (debtor && debtor !== payer) netByMember[debtor] -= amount;
+      continue;
     }
+
+    const eachShare = amount / members.length;
+    members.forEach((member) => {
+      netByMember[member] -= eachShare;
+    });
   }
 
-  const totalSplit = Object.values(paidBy).reduce((a, b) => a + b, 0);
-  const eachShare = members.length > 0 ? totalSplit / members.length : 0;
-
   if (members.length === 2) {
-    const p0Net = paidBy[members[0]] - eachShare;
-    const p1Net = paidBy[members[1]] - eachShare;
+    const p0Net = netByMember[members[0]];
+    const p1Net = netByMember[members[1]];
 
     if (Math.abs(p0Net) < 0.01 && Math.abs(p1Net) < 0.01) {
       return { status: 'settled', amount: 0, debtor: null, creditor: null };
@@ -160,7 +164,7 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
   let maxOwed = 0;
 
   for (const m of members) {
-    const net = paidBy[m] - eachShare;
+    const net = netByMember[m];
     if (net > maxOwed) {
       maxOwed = net;
       maxCreditor = m;
@@ -169,7 +173,7 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
 
   let minNet = 0;
   for (const m of members) {
-    const net = paidBy[m] - eachShare;
+    const net = netByMember[m];
     if (net < minNet) {
       minNet = net;
       maxDebtor = m;

@@ -20,7 +20,8 @@ export default function AddEntryForm({
   const [amount, setAmount] = useState('');
   const [payer, setPayer] = useState(deviceName || membersList[0]);
   const [category, setCategory] = useState(categories[0] || 'Groceries');
-  const [split, setSplit] = useState(true);
+  const [splitType, setSplitType] = useState('shared');
+  const [owedBy, setOwedBy] = useState(() => membersList.find((person) => person !== (deviceName || membersList[0])) || '');
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -40,6 +41,12 @@ export default function AddEntryForm({
     }
   }, [deviceName, membersList, payer]);
 
+  useEffect(() => {
+    if (!owedBy || owedBy === payer || !membersList.includes(owedBy)) {
+      setOwedBy(membersList.find((person) => person !== payer) || '');
+    }
+  }, [membersList, owedBy, payer]);
+
   async function handleSubmit(e) {
     e.preventDefault();
     const parsed = parseFloat(amount);
@@ -51,7 +58,9 @@ export default function AddEntryForm({
         amount: parsed,
         payer,
         category,
-        split,
+        split: splitType !== 'personal',
+        splitType,
+        owedBy: splitType === 'owed' ? owedBy : null,
         note: note.trim(),
         date,
         ledger,
@@ -118,12 +127,13 @@ export default function AddEntryForm({
               </label>
               <select
                 id="split"
-                value={split ? 'yes' : 'no'}
-                onChange={(e) => setSplit(e.target.value === 'yes')}
+                value={splitType}
+                onChange={(e) => setSplitType(e.target.value)}
                 className={selectClass}
               >
-                <option value="yes">Split</option>
-                <option value="no">Personal</option>
+                <option value="shared">Split</option>
+                <option value="owed">Owed</option>
+                <option value="personal">Personal</option>
               </select>
             </div>
 
@@ -142,6 +152,25 @@ export default function AddEntryForm({
                 ))}
               </select>
             </div>
+
+            {splitType === 'owed' && (
+              <div>
+                <label htmlFor="owedBy" className={labelClass}>
+                  Who Owes the Full Amount
+                </label>
+                <select
+                  id="owedBy"
+                  value={owedBy}
+                  onChange={(e) => setOwedBy(e.target.value)}
+                  className={selectClass}
+                  required
+                >
+                  {membersList.filter((person) => person !== payer).map((person) => (
+                    <option key={person} value={person}>{person}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div>
               <label htmlFor="category" className={labelClass}>
@@ -202,4 +231,3 @@ export default function AddEntryForm({
     </section>
   );
 }
-

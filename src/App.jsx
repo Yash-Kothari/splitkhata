@@ -310,14 +310,16 @@ export default function App() {
 
         <header className="px-3 sm:px-4 pt-4 sm:pt-6 pb-4 max-w-5xl mx-auto border-b border-ink/10 mb-4 sm:mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
-            {/* Top Bar on Mobile: Title + Actions */}
             <div className="flex items-center justify-between w-full min-w-0 sm:w-auto gap-2">
               <h1 className="font-display text-xl sm:text-2xl font-bold text-ink tracking-tight">
                 Splitkhata
               </h1>
+              <span className="sm:hidden px-3 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-xs font-bold tracking-wide shadow-2xs whitespace-nowrap">
+                Household Ledger
+              </span>
+            </div>
 
-              {/* Actions & User Badge */}
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="flex items-center justify-end gap-1 shrink-0 flex-wrap sm:order-none">
                 {pinConfig.enabled && pinConfig.pin && (
                   <button
                     type="button"
@@ -360,10 +362,8 @@ export default function App() {
                   <span className="hidden sm:inline">User: </span><strong className="text-ink">{deviceName}</strong>
                 </button>
               </div>
-            </div>
 
-            {/* Active Ledger Title Badge */}
-            <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2">
               <span className="px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-xs font-bold tracking-wide shadow-2xs">
                 Household Ledger
               </span>

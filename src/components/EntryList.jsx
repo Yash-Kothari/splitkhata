@@ -135,6 +135,11 @@ export default function EntryList({
                       Personal
                     </span>
                   )}
+                  {entry.splitType === 'owed' && entry.owedBy && (
+                    <span className="px-1.5 py-0.2 rounded bg-ledger-green/15 text-ledger-green font-medium">
+                      {entry.owedBy} owes full amount
+                    </span>
+                  )}
                   {entry.note && (
                     <span className="text-muted-text truncate max-w-xs">
                       - {entry.note}
