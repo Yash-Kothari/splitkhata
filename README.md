@@ -23,6 +23,7 @@ A shared expense tracker for two people. Log an expense, say who paid, split it 
 
 1. **Create a Firebase project** (Spark / free plan)
    - Enable **Firestore Database** (start in production mode)
+   - In **Authentication → Sign-in method**, enable **Google** sign-in. Only the Google accounts listed in `firestore.rules` can access the shared ledger.
    - Deploy the security rules from `firestore.rules`:
      ```bash
      firebase deploy --only firestore:rules

@@ -1,5 +1,12 @@
 import { initializeApp } from 'firebase/app';
 import {
+  getAuth,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+} from 'firebase/auth';
+import {
   getFirestore,
   collection,
   addDoc,
@@ -37,6 +44,10 @@ import {
 
 const LOCAL_EXPENSES_KEY = 'splitkhata_expenses_fallback';
 const LOCAL_CATEGORIES_KEY = 'splitkhata_categories_fallback';
+const ALLOWED_EMAILS = new Set([
+  'yash.sk.kothari@gmail.com',
+  'kruti.v.sheth@gmail.com',
+]);
 
 export function isFirebaseConfigured() {
   return Boolean(
@@ -50,6 +61,7 @@ let expensesRef = null;
 let categoriesRef = null;
 let currenciesRef = null;
 let membersRef = null;
+let authInstance = null;
 
 if (isFirebaseConfigured()) {
   try {
@@ -62,6 +74,7 @@ if (isFirebaseConfigured()) {
       appId: import.meta.env.VITE_FIREBASE_APP_ID,
     };
     const app = initializeApp(firebaseConfig);
+    authInstance = getAuth(app);
     dbInstance = getFirestore(app);
     enableIndexedDbPersistence(dbInstance).catch((err) => {
       if (err.code !== 'failed-precondition' && err.code !== 'unimplemented') {
@@ -78,6 +91,29 @@ if (isFirebaseConfigured()) {
 }
 
 export const db = dbInstance;
+
+export function isAllowedUser(user) {
+  return Boolean(user?.email && user.emailVerified && ALLOWED_EMAILS.has(user.email.toLowerCase()));
+}
+
+export function subscribeToAuth(callback) {
+  if (!authInstance) {
+    callback(null);
+    return () => {};
+  }
+  return onAuthStateChanged(authInstance, callback);
+}
+
+export async function signInWithGoogle() {
+  if (!authInstance) throw new Error('Firebase is not configured.');
+  const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  return signInWithPopup(authInstance, provider);
+}
+
+export async function signOutUser() {
+  if (authInstance) await signOut(authInstance);
+}
 
 // Local storage event listeners for reactive multi-tab updates when in fallback mode
 const expenseListeners = new Set();
@@ -698,6 +734,4 @@ export async function savePinConfigToDb(config) {
     }
   }
 }
-
-
 

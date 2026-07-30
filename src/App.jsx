@@ -16,6 +16,10 @@ import {
   subscribeToMembers,
   subscribeToPinConfig,
   isFirebaseConfigured,
+  subscribeToAuth,
+  signInWithGoogle,
+  signOutUser,
+  isAllowedUser,
 } from './firebase';
 import {
   DEFAULT_PERSONS as PERSONS,
@@ -78,7 +82,25 @@ function SetupBanner({ onShowDetails }) {
   );
 }
 
+function GoogleSignIn({ error, onSignIn }) {
+  return (
+    <div className="min-h-dvh flex items-center justify-center px-4 bg-paper">
+      <div className="w-full max-w-sm rounded-2xl bg-paper-card px-6 py-8 border border-ink/15 text-center shadow-xl">
+        <h1 className="font-display text-3xl font-bold text-ink mb-2">Splitkhata</h1>
+        <p className="text-muted-text text-sm mb-6">Sign in with an approved Google account to access the shared ledger.</p>
+        {error && <p className="mb-4 text-sm text-red-700">{error}</p>}
+        <button type="button" onClick={onSignIn} className="w-full min-h-12 rounded-xl bg-ledger-green px-4 py-3 font-semibold text-white hover:opacity-90">
+          Continue with Google
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  const [authLoading, setAuthLoading] = useState(() => isFirebaseConfigured());
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authError, setAuthError] = useState('');
   const [deviceName, setDeviceNameState] = useState(() => getDeviceName());
   const [isLocked, setIsLocked] = useState(() => {
     const cfg = getPinConfig();
@@ -103,6 +125,14 @@ export default function App() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
+  useEffect(() => {
+    if (!isFirebaseConfigured()) return undefined;
+    return subscribeToAuth((user) => {
+      setCurrentUser(user);
+      setAuthLoading(false);
+    });
+  }, []);
+
   const handleSaveError = useCallback((err) => {
     setConnectionStatus('error');
     setErrorMessage(err?.message || 'Failed to save');
@@ -110,6 +140,7 @@ export default function App() {
 
   // Subscribe to real-time database collections
   useEffect(() => {
+    if (isFirebaseConfigured() && !isAllowedUser(currentUser)) return undefined;
     const unsubCurrencies = subscribeToCurrencies(
       (data) => setDbCurrencies(data),
       (err) => console.warn('Currencies sync warning:', err),
@@ -134,10 +165,10 @@ export default function App() {
       unsubMembers();
       unsubPin();
     };
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
-    if (!deviceName) return;
+    if (!deviceName || (isFirebaseConfigured() && !isAllowedUser(currentUser))) return undefined;
 
     setConnectionStatus('syncing');
     const unsubExpenses = subscribeToExpenses(
@@ -176,7 +207,7 @@ export default function App() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [deviceName]);
+  }, [deviceName, currentUser]);
 
   const availableMonths = getAvailableMonths(entries);
 
@@ -190,6 +221,34 @@ export default function App() {
   const activeCurrenciesList = dbCurrencies.currencies.length > 0 ? dbCurrencies.currencies : CURRENCIES;
 
   const pinConfig = getPinConfig();
+
+  if (authLoading) {
+    return (
+      <div className="min-h-dvh flex items-center justify-center px-4 bg-paper text-muted-text">
+        Checking sign-in…
+      </div>
+    );
+  }
+
+  if (isFirebaseConfigured() && !isAllowedUser(currentUser)) {
+    return (
+      <GoogleSignIn
+        error={authError}
+        onSignIn={async () => {
+          setAuthError('');
+          try {
+            const result = await signInWithGoogle();
+            if (!isAllowedUser(result.user)) {
+              await signOutUser();
+              setAuthError('This Google account is not allowed to access this ledger.');
+            }
+          } catch (err) {
+            setAuthError(err?.message || 'Google sign-in failed. Please try again.');
+          }
+        }}
+      />
+    );
+  }
 
   if (isLocked && pinConfig.enabled && pinConfig.pin) {
     return (
@@ -280,6 +339,16 @@ export default function App() {
                   <span>⚙️</span>
                   <span>Settings</span>
                 </button>
+                {hasFirebase && (
+                  <button
+                    type="button"
+                    onClick={() => signOutUser()}
+                    className="min-h-9 px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card"
+                    title="Sign out"
+                  >
+                    Sign out
+                  </button>
+                )}
 
                 <button
                   type="button"
@@ -353,4 +422,3 @@ export default function App() {
     </>
   );
 }
-
