@@ -11,6 +11,7 @@ import {
   collection,
   addDoc,
   deleteDoc,
+  updateDoc,
   doc,
   setDoc,
   getDocs,
@@ -534,6 +535,16 @@ export async function deleteExpense(id) {
     const current = getLocalExpenses();
     const filtered = current.filter((item) => item.id !== id);
     saveLocalExpenses(filtered);
+  }
+}
+
+export async function updateExpense(id, updates) {
+  if (expensesRef) {
+    await updateDoc(doc(dbInstance, 'expenses', id), updates);
+  } else {
+    const current = getLocalExpenses();
+    const updated = current.map((item) => (item.id === id ? { ...item, ...updates } : item));
+    saveLocalExpenses(updated);
   }
 }
 

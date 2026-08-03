@@ -1,6 +1,12 @@
 import { useState, useEffect } from 'react';
 import { addExpense } from '../firebase';
-import { getLedgerCategories, DEFAULT_PERSONS as PERSONS, todayISO } from '../utils';
+import {
+  getLedgerCategories,
+  DEFAULT_PERSONS as PERSONS,
+  todayISO,
+  addMonthsToDateISO,
+  splitAmountEvenly,
+} from '../utils';
 
 export default function AddEntryForm({
   deviceName,
@@ -26,6 +32,8 @@ export default function AddEntryForm({
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState(true);
+  const [splitAcrossMonths, setSplitAcrossMonths] = useState(false);
+  const [monthsCount, setMonthsCount] = useState(6);
 
   useEffect(() => {
     if (categories.length && !categories.includes(category)) {
@@ -33,13 +41,17 @@ export default function AddEntryForm({
     }
   }, [ledger, categories, category]);
 
+  // Default the payer to this device's identity, but only when the identity
+  // itself changes (or the member list changes) — not on every payer edit,
+  // otherwise manually picking a different payer gets immediately overwritten.
   useEffect(() => {
-    if (deviceName) {
+    if (deviceName && membersList.includes(deviceName)) {
       setPayer(deviceName);
-    } else if (membersList.length && !membersList.includes(payer)) {
-      setPayer(membersList[0]);
+    } else {
+      setPayer((prev) => (membersList.includes(prev) ? prev : membersList[0]));
     }
-  }, [deviceName, membersList, payer]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deviceName, membersList]);
 
   useEffect(() => {
     if (!owedBy || owedBy === payer || !membersList.includes(owedBy)) {
@@ -52,23 +64,46 @@ export default function AddEntryForm({
     const parsed = parseFloat(amount);
     if (!parsed || parsed <= 0) return;
 
+    const trimmedNote = note.trim();
+    const months = splitAcrossMonths ? Math.max(2, Math.min(36, Math.round(monthsCount) || 2)) : 1;
+
     setSaving(true);
     try {
-      await addExpense({
-        amount: parsed,
-        payer,
-        category,
-        split: splitType !== 'personal',
-        splitType,
-        owedBy: splitType === 'owed' ? owedBy : null,
-        note: note.trim(),
-        date,
-        ledger,
-        tripName: ledger === 'travel' ? tripName : '',
-      });
+      if (months > 1) {
+        const installmentAmounts = splitAmountEvenly(parsed, months);
+        for (let i = 0; i < months; i++) {
+          await addExpense({
+            amount: installmentAmounts[i],
+            payer,
+            category,
+            split: splitType !== 'personal',
+            splitType,
+            owedBy: splitType === 'owed' ? owedBy : null,
+            note: trimmedNote ? `${trimmedNote} (${i + 1}/${months})` : `Installment ${i + 1}/${months}`,
+            date: addMonthsToDateISO(date, i),
+            ledger,
+            tripName: ledger === 'travel' ? tripName : '',
+          });
+        }
+      } else {
+        await addExpense({
+          amount: parsed,
+          payer,
+          category,
+          split: splitType !== 'personal',
+          splitType,
+          owedBy: splitType === 'owed' ? owedBy : null,
+          note: trimmedNote,
+          date,
+          ledger,
+          tripName: ledger === 'travel' ? tripName : '',
+        });
+      }
       setAmount('');
       setNote('');
       setDate(todayISO());
+      setSplitAcrossMonths(false);
+      setMonthsCount(6);
     } catch (err) {
       onSaveError?.(err);
     } finally {
@@ -215,6 +250,47 @@ export default function AddEntryForm({
                 placeholder="What was this for?"
               />
             </div>
+          </div>
+
+          <div className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3">
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={splitAcrossMonths}
+                onChange={(e) => setSplitAcrossMonths(e.target.checked)}
+                className="h-4 w-4 rounded border-ink/30 text-ledger-green focus:ring-ledger-green/40"
+              />
+              <span className="text-sm font-semibold text-ink">
+                Split across multiple months
+              </span>
+            </label>
+            <p className="text-xs text-muted-text mt-1 ml-6">
+              For lump-sum payments that cover several months (e.g. 6 months of WiFi) - spreads the amount evenly across one entry per month instead of inflating a single month.
+            </p>
+
+            {splitAcrossMonths && (
+              <div className="mt-3 ml-6 max-w-[10rem]">
+                <label htmlFor="monthsCount" className={labelClass}>
+                  Number of Months
+                </label>
+                <input
+                  id="monthsCount"
+                  type="number"
+                  inputMode="numeric"
+                  min="2"
+                  max="36"
+                  step="1"
+                  value={monthsCount}
+                  onChange={(e) => setMonthsCount(e.target.value)}
+                  className={inputClass}
+                />
+                {amount && parseFloat(amount) > 0 && (
+                  <p className="text-xs text-muted-text mt-1.5">
+                    ~₹{(parseFloat(amount) / Math.max(2, Math.min(36, Math.round(monthsCount) || 2))).toFixed(2)} / month
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="sticky bottom-0 -mx-4 sm:-mx-5 px-4 sm:px-5 py-3 bg-paper-card/95 backdrop-blur-xs border-t border-ink/10 sm:static sm:border-0 sm:p-0 sm:bg-transparent sm:backdrop-blur-none z-10">

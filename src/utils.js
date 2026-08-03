@@ -87,8 +87,10 @@ const CURRENCY_SYMBOLS = {
 };
 
 export function formatCurrency(amount, currencyCode = 'INR') {
-  const rounded = Math.round(Number(amount || 0));
-  const formattedNum = rounded.toLocaleString('en-IN');
+  const formattedNum = Number(amount || 0).toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
   const symbol = CURRENCY_SYMBOLS[currencyCode] || `${currencyCode} `;
   return `${symbol}${formattedNum}`;
 }
@@ -211,6 +213,30 @@ export function getAvailableMonths(entries = []) {
   const current = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   if (!sorted.includes(current)) sorted.unshift(current);
   return sorted;
+}
+
+// Adds `months` calendar months to an ISO date string, clamping the day to
+// the target month's length (e.g. Jan 31 + 1 month -> Feb 28/29, not Mar 3).
+export function addMonthsToDateISO(dateStr, months) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const totalMonths = (m - 1) + months;
+  const targetYear = y + Math.floor(totalMonths / 12);
+  const targetMonth = ((totalMonths % 12) + 12) % 12;
+  const daysInTargetMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+  const targetDay = Math.min(d, daysInTargetMonth);
+  const mm = String(targetMonth + 1).padStart(2, '0');
+  const dd = String(targetDay).padStart(2, '0');
+  return `${targetYear}-${mm}-${dd}`;
+}
+
+// Splits `total` into `count` amounts (rounded to paise/cents) that sum
+// exactly back to `total`, distributing the leftover paise across the
+// first few installments instead of inflating a single one.
+export function splitAmountEvenly(total, count) {
+  const totalCents = Math.round(total * 100);
+  const base = Math.floor(totalCents / count);
+  const remainder = totalCents - base * count;
+  return Array.from({ length: count }, (_, i) => (base + (i < remainder ? 1 : 0)) / 100);
 }
 
 export function todayISO() {

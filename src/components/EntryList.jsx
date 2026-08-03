@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { deleteExpense } from '../firebase';
+import EditEntryRow from './EditEntryRow';
 import {
   formatCurrency,
   formatMonthLabel,
@@ -19,11 +20,16 @@ export default function EntryList({
   onMonthChange,
   availableMonths = [],
   onDeleteError,
+  onSaveError,
   ledger,
+  dbCategories = [],
+  dbMembers = [],
+  currentCurrency = 'INR',
 }) {
   const [deletingId, setDeletingId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [editingId, setEditingId] = useState(null);
 
   const filtered = entries
     .filter((e) => {
@@ -108,61 +114,86 @@ export default function EntryList({
         </div>
       ) : (
         <ul className="divide-y divide-ink/10">
-          {filtered.map((entry) => (
-            <li
-              key={entry.id}
-              className="entry-row passbook-row py-3.5 pr-2 flex items-center justify-between gap-3 rounded-md transition-colors"
-              style={{ '--dot-color': PERSON_COLORS[entry.payer] || '#3D7068' }}
-            >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-baseline justify-between gap-2">
-                  <span className="font-mono font-bold text-ink text-base">
-                    {formatCurrency(entry.amount)}
-                  </span>
-                  <span className="text-xs text-muted-text shrink-0 font-medium bg-paper px-2 py-0.5 rounded border border-ink/10">
-                    {formatDate(entry.date)}
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5 mt-1 text-xs">
-                  <span className="font-semibold text-ink bg-paper-card px-2 py-0.5 rounded border border-ink/10">
-                    {entry.category}
-                  </span>
-                  <span className="text-muted-text">
-                    Paid by <strong className="text-ink">{entry.payer}</strong>
-                  </span>
-                  {!entry.split && (
-                    <span className="px-1.5 py-0.2 rounded bg-mustard/20 text-mustard font-medium">
-                      Personal
-                    </span>
-                  )}
-                  {entry.splitType === 'owed' && entry.owedBy && (
-                    <span className="px-1.5 py-0.2 rounded bg-ledger-green/15 text-ledger-green font-medium">
-                      {entry.owedBy} owes full amount
-                    </span>
-                  )}
-                  {entry.note && (
-                    <span className="text-muted-text truncate max-w-xs">
-                      - {entry.note}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => handleDelete(entry.id)}
-                disabled={deletingId === entry.id}
-                className={`shrink-0 min-h-8 min-w-8 px-2 py-1 flex items-center justify-center rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 ${
-                  confirmDeleteId === entry.id
-                    ? 'bg-stamp-red text-white hover:bg-stamp-red/90'
-                    : 'text-stamp-red/70 hover:text-stamp-red hover:bg-stamp-red/10'
-                }`}
-                aria-label="Delete entry"
-                title={confirmDeleteId === entry.id ? 'Click again to confirm delete' : 'Delete transaction'}
+          {filtered.map((entry) =>
+            editingId === entry.id ? (
+              <EditEntryRow
+                key={entry.id}
+                entry={entry}
+                dbCategories={dbCategories}
+                dbMembers={dbMembers}
+                ledger={ledger}
+                currentCurrency={currentCurrency}
+                onCancel={() => setEditingId(null)}
+                onSaved={() => setEditingId(null)}
+                onSaveError={onSaveError}
+              />
+            ) : (
+              <li
+                key={entry.id}
+                className="entry-row passbook-row py-3.5 pr-2 flex items-center justify-between gap-3 rounded-md transition-colors"
+                style={{ '--dot-color': PERSON_COLORS[entry.payer] || '#3D7068' }}
               >
-                {confirmDeleteId === entry.id ? 'Delete?' : '✕'}
-              </button>
-            </li>
-          ))}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-mono font-bold text-ink text-base">
+                      {formatCurrency(entry.amount)}
+                    </span>
+                    <span className="text-xs text-muted-text shrink-0 font-medium bg-paper px-2 py-0.5 rounded border border-ink/10">
+                      {formatDate(entry.date)}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1 text-xs">
+                    <span className="font-semibold text-ink bg-paper-card px-2 py-0.5 rounded border border-ink/10">
+                      {entry.category}
+                    </span>
+                    <span className="text-muted-text">
+                      Paid by <strong className="text-ink">{entry.payer}</strong>
+                    </span>
+                    {!entry.split && (
+                      <span className="px-1.5 py-0.2 rounded bg-mustard/20 text-mustard font-medium">
+                        Personal
+                      </span>
+                    )}
+                    {entry.splitType === 'owed' && entry.owedBy && (
+                      <span className="px-1.5 py-0.2 rounded bg-ledger-green/15 text-ledger-green font-medium">
+                        {entry.owedBy} owes full amount
+                      </span>
+                    )}
+                  </div>
+                  {entry.note && (
+                    <div className="mt-1 text-xs text-muted-text truncate">
+                      {entry.note}
+                    </div>
+                  )}
+                </div>
+                <div className="shrink-0 flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(entry.id)}
+                    className="min-h-8 min-w-8 px-2 py-1 flex items-center justify-center rounded-lg text-xs font-semibold text-muted-text hover:text-ink hover:bg-ink/5 transition-colors"
+                    aria-label="Edit entry"
+                    title="Edit transaction"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(entry.id)}
+                    disabled={deletingId === entry.id}
+                    className={`min-h-8 min-w-8 px-2 py-1 flex items-center justify-center rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 ${
+                      confirmDeleteId === entry.id
+                        ? 'bg-stamp-red text-white hover:bg-stamp-red/90'
+                        : 'text-stamp-red/70 hover:text-stamp-red hover:bg-stamp-red/10'
+                    }`}
+                    aria-label="Delete entry"
+                    title={confirmDeleteId === entry.id ? 'Click again to confirm delete' : 'Delete transaction'}
+                  >
+                    {confirmDeleteId === entry.id ? 'Delete?' : '✕'}
+                  </button>
+                </div>
+              </li>
+            )
+          )}
         </ul>
       )}
     </section>

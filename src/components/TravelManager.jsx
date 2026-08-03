@@ -229,7 +229,7 @@ export default function TravelManager({
           <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
             <p className="text-2xs uppercase font-bold tracking-wider text-muted-text">Cash Balance</p>
             <p className="font-mono font-bold text-ink mt-0.5 text-sm">
-              {selectedTrip ? `${selectedTripCash.toFixed(2)} ${currentCurrency || 'INR'}` : '0'}
+              {selectedTrip ? `${selectedTripCash.toFixed(2)} ${currentCurrency || 'INR'}` : '0.00'}
             </p>
           </div>
         </div>

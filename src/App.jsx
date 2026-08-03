@@ -429,7 +429,11 @@ export default function App() {
             onMonthChange={setSelectedMonth}
             availableMonths={availableMonths}
             onDeleteError={handleSaveError}
+            onSaveError={handleSaveError}
             ledger={activeLedger}
+            dbCategories={currentDbCategories}
+            dbMembers={activeMembersList}
+            currentCurrency={currentCurrency}
           />
         </main>
       </div>
