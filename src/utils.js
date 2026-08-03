@@ -274,11 +274,7 @@ export function getLast6MonthsData(entries = [], ledger) {
   }
 
   const now = new Date();
-  const currentKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const allKeys = Object.keys(monthTotals).concat(currentKey).sort();
-  const latestKey = allKeys[allKeys.length - 1];
-
-  const [latestYear, latestMonth] = latestKey.split('-').map(Number);
+  const [latestYear, latestMonth] = [now.getFullYear(), now.getMonth() + 1];
   const last6Keys = [];
 
   for (let i = 5; i >= 0; i--) {
