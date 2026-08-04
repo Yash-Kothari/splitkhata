@@ -145,7 +145,7 @@ export default function EntryList({
                   <div className="flex flex-wrap items-center gap-1.5 mt-1 text-xs">
                     {entry.splitType === 'settlement' ? (
                       <span className="px-1.5 py-0.2 rounded bg-ledger-green/15 text-ledger-green font-medium">
-                        ⇄ {entry.payer} settled up with {entry.owedBy}
+                        ⇄ {entry.payer} paid {entry.owedBy}
                       </span>
                     ) : (
                       <>

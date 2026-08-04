@@ -23,6 +23,9 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
     setSettling(true);
   }
 
+  const parsedAmount = parseFloat(amount) || 0;
+  const remaining = balance.status !== 'settled' ? balance.amount - parsedAmount : 0;
+
   async function handleConfirm(e) {
     e.preventDefault();
     const parsed = parseFloat(amount);
@@ -82,7 +85,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
               onClick={startSettling}
               className="h-9 px-3.5 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm hover:bg-ledger-green/90 transition-colors"
             >
-              Settle Up
+              Record Payment
             </button>
           )}
           <div className="text-xs text-muted-text bg-paper px-3 py-2 rounded-lg border border-ink/10">
@@ -94,9 +97,10 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
       {settling && (
         <form onSubmit={handleConfirm} className="mt-4 pt-4 border-t border-ink/10 space-y-3">
           <p className="text-sm text-ink">
-            Recording <span className="font-semibold text-stamp-red">{balance.debtor}</span>
-            {' paying '}
-            <span className="font-semibold text-ledger-green">{balance.creditor}</span> to settle up.
+            Recording a payment from <span className="font-semibold text-stamp-red">{balance.debtor}</span>
+            {' to '}
+            <span className="font-semibold text-ledger-green">{balance.creditor}</span>.
+            {' '}Doesn't have to be the full amount - partial payments are fine.
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div>
@@ -136,13 +140,34 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
               />
             </div>
           </div>
+
+          {parsedAmount > 0 && (
+            <p className="text-xs text-muted-text">
+              {Math.abs(remaining) < 0.01 ? (
+                <span className="text-ledger-green font-semibold">This fully settles the balance.</span>
+              ) : remaining > 0 ? (
+                <>
+                  After this, <span className="font-semibold text-ink">{balance.debtor}</span> will still owe{' '}
+                  <span className="font-semibold text-ink">{balance.creditor}</span>{' '}
+                  <span className="font-mono font-semibold text-ink">{formatCurrency(remaining)}</span>.
+                </>
+              ) : (
+                <>
+                  This overpays by {formatCurrency(-remaining)} - <span className="font-semibold text-ink">{balance.creditor}</span>{' '}
+                  will end up owing <span className="font-semibold text-ink">{balance.debtor}</span>{' '}
+                  <span className="font-mono font-semibold text-ink">{formatCurrency(-remaining)}</span>.
+                </>
+              )}
+            </p>
+          )}
+
           <div className="flex items-center gap-2">
             <button
               type="submit"
               disabled={saving || !amount}
               className="h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
             >
-              {saving ? 'Saving...' : 'Confirm Settlement'}
+              {saving ? 'Saving...' : 'Record Payment'}
             </button>
             <button
               type="button"

@@ -76,7 +76,7 @@ export default function EditEntryRow({
         <form onSubmit={handleSave} className="space-y-3">
           <p className="text-sm text-ink">
             <span className="font-semibold text-stamp-red">{entry.payer}</span>
-            {' settled with '}
+            {' paid '}
             <span className="font-semibold text-ledger-green">{entry.owedBy}</span>
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
