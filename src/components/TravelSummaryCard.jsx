@@ -9,6 +9,7 @@ export default function TravelSummaryCard({ entries, ledger }) {
 
   const trips = entries.reduce((acc, entry) => {
     if (normalizeLedger(entry?.ledger) !== 'travel') return acc;
+    if (entry.splitType === 'settlement') return acc;
     const tripName = formatTripKey(entry.tripName);
     if (!acc[tripName]) {
       acc[tripName] = { name: tripName, total: 0, count: 0 };

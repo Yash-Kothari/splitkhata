@@ -28,6 +28,8 @@ export default function EditEntryRow({
   const [note, setNote] = useState(entry.note || '');
   const [saving, setSaving] = useState(false);
 
+  const isSettlement = entry.splitType === 'settlement';
+
   const inputClass =
     'w-full h-10 px-3 text-sm rounded-lg border border-ink/15 bg-paper text-ink font-medium focus:outline-none focus:ring-2 focus:ring-ledger-green/40';
   const selectClass = `${inputClass} appearance-none`;
@@ -40,22 +42,106 @@ export default function EditEntryRow({
 
     setSaving(true);
     try {
-      await updateExpense(entry.id, {
-        amount: parsed,
-        payer,
-        category,
-        split: splitType !== 'personal',
-        splitType,
-        owedBy: splitType === 'owed' ? owedBy : null,
-        note: note.trim(),
-        date,
-      });
+      if (isSettlement) {
+        // Settlements only allow correcting amount/date/note - who paid whom
+        // and the splitType are fixed by how the settlement was recorded.
+        await updateExpense(entry.id, {
+          amount: parsed,
+          note: note.trim(),
+          date,
+        });
+      } else {
+        await updateExpense(entry.id, {
+          amount: parsed,
+          payer,
+          category,
+          split: splitType !== 'personal',
+          splitType,
+          owedBy: splitType === 'owed' ? owedBy : null,
+          note: note.trim(),
+          date,
+        });
+      }
       onSaved?.();
     } catch (err) {
       onSaveError?.(err);
     } finally {
       setSaving(false);
     }
+  }
+
+  if (isSettlement) {
+    return (
+      <li className="py-3.5 px-2 rounded-md bg-paper/60 border border-ledger-green/30">
+        <form onSubmit={handleSave} className="space-y-3">
+          <p className="text-sm text-ink">
+            <span className="font-semibold text-stamp-red">{entry.payer}</span>
+            {' settled with '}
+            <span className="font-semibold text-ledger-green">{entry.owedBy}</span>
+          </p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div>
+              <label htmlFor={`edit-amount-${entry.id}`} className={labelClass}>
+                Amount ({ledger === 'travel' ? currentCurrency : '₹'})
+              </label>
+              <input
+                id={`edit-amount-${entry.id}`}
+                type="number"
+                inputMode="decimal"
+                min="0.01"
+                step="any"
+                required
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className={`${inputClass} font-mono font-bold`}
+              />
+            </div>
+            <div>
+              <label htmlFor={`edit-date-${entry.id}`} className={labelClass}>
+                Date
+              </label>
+              <input
+                id={`edit-date-${entry.id}`}
+                type="date"
+                required
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className={`${inputClass} date-input appearance-none`}
+              />
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <label htmlFor={`edit-note-${entry.id}`} className={labelClass}>
+                Note (optional)
+              </label>
+              <input
+                id={`edit-note-${entry.id}`}
+                type="text"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              disabled={saving || !amount}
+              className="h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
+            >
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={saving}
+              className="h-9 px-4 rounded-lg border border-ink/15 text-ink font-semibold text-xs sm:text-sm hover:bg-ink/5 transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </li>
+    );
   }
 
   return (

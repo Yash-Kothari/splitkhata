@@ -143,21 +143,29 @@ export default function EntryList({
                     </span>
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 mt-1 text-xs">
-                    <span className="font-semibold text-ink bg-paper-card px-2 py-0.5 rounded border border-ink/10">
-                      {entry.category}
-                    </span>
-                    <span className="text-muted-text">
-                      Paid by <strong className="text-ink">{entry.payer}</strong>
-                    </span>
-                    {!entry.split && (
-                      <span className="px-1.5 py-0.2 rounded bg-mustard/20 text-mustard font-medium">
-                        Personal
-                      </span>
-                    )}
-                    {entry.splitType === 'owed' && entry.owedBy && (
+                    {entry.splitType === 'settlement' ? (
                       <span className="px-1.5 py-0.2 rounded bg-ledger-green/15 text-ledger-green font-medium">
-                        {entry.owedBy} owes full amount
+                        ⇄ {entry.payer} settled up with {entry.owedBy}
                       </span>
+                    ) : (
+                      <>
+                        <span className="font-semibold text-ink bg-paper-card px-2 py-0.5 rounded border border-ink/10">
+                          {entry.category}
+                        </span>
+                        <span className="text-muted-text">
+                          Paid by <strong className="text-ink">{entry.payer}</strong>
+                        </span>
+                        {!entry.split && (
+                          <span className="px-1.5 py-0.2 rounded bg-mustard/20 text-mustard font-medium">
+                            Personal
+                          </span>
+                        )}
+                        {entry.splitType === 'owed' && entry.owedBy && (
+                          <span className="px-1.5 py-0.2 rounded bg-ledger-green/15 text-ledger-green font-medium">
+                            {entry.owedBy} owes full amount
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                   {entry.note && (

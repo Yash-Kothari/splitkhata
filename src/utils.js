@@ -124,7 +124,7 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
     if (!amount || !payer) continue;
     netByMember[payer] += amount;
 
-    if (entry.splitType === 'owed' && entry.owedBy) {
+    if ((entry.splitType === 'owed' || entry.splitType === 'settlement') && entry.owedBy) {
       const debtor = resolveMember(entry.owedBy);
       if (debtor && debtor !== payer) netByMember[debtor] -= amount;
       continue;
@@ -263,6 +263,7 @@ export function getLast6MonthsData(entries = [], ledger) {
   const targetLedger = ledger ? normalizeLedger(ledger) : null;
   const filtered = entries.filter((e) => {
     if (targetLedger && normalizeLedger(e.ledger) !== targetLedger) return false;
+    if (e.splitType === 'settlement') return false;
     return true;
   });
 
@@ -343,6 +344,7 @@ export function groupByMonth(entries = [], dynamicMembers = DEFAULT_PERSONS) {
   const groups = {};
 
   for (const entry of entries) {
+    if (entry.splitType === 'settlement') continue;
     const key = getMonthKey(entry.date);
     if (!key) continue;
     if (!groups[key]) {
@@ -367,6 +369,7 @@ export function groupByCategory(entries = [], monthKey, ledger, customCategories
   const filtered = entries.filter((e) => {
     if (monthKey && getMonthKey(e.date) !== monthKey) return false;
     if (targetLedger && normalizeLedger(e.ledger) !== targetLedger) return false;
+    if (e.splitType === 'settlement') return false;
     return true;
   });
 

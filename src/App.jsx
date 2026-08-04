@@ -396,7 +396,13 @@ export default function App() {
             />
           )}
 
-          <BalanceStrip entries={entries} ledger={activeLedger} dbMembers={activeMembersList} />
+          <BalanceStrip
+            entries={entries}
+            ledger={activeLedger}
+            dbMembers={activeMembersList}
+            tripName={selectedTrip}
+            onSaveError={handleSaveError}
+          />
 
           {activeLedger === 'travel' && (
             <TravelSummaryCard entries={entries} ledger={activeLedger} />
