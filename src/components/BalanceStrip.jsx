@@ -78,17 +78,17 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
           {balance.status !== 'settled' && !settling && (
             <button
               type="button"
               onClick={startSettling}
-              className="h-9 px-3.5 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm hover:bg-ledger-green/90 transition-colors"
+              className="w-full sm:w-auto h-9 px-3.5 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm hover:bg-ledger-green/90 transition-colors whitespace-nowrap"
             >
               Record Payment
             </button>
           )}
-          <div className="text-xs text-muted-text bg-paper px-3 py-2 rounded-lg border border-ink/10">
+          <div className="text-xs text-muted-text bg-paper px-3 py-2 rounded-lg border border-ink/10 text-center sm:text-left">
             Calculated across {ledgerLabel.toLowerCase()} entries
           </div>
         </div>
@@ -165,7 +165,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
             <button
               type="submit"
               disabled={saving || !amount}
-              className="h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
+              className="flex-1 sm:flex-none h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
             >
               {saving ? 'Saving...' : 'Record Payment'}
             </button>
@@ -173,7 +173,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
               type="button"
               onClick={() => setSettling(false)}
               disabled={saving}
-              className="h-9 px-4 rounded-lg border border-ink/15 text-ink font-semibold text-xs sm:text-sm hover:bg-ink/5 transition-colors disabled:opacity-50"
+              className="flex-1 sm:flex-none h-9 px-4 rounded-lg border border-ink/15 text-ink font-semibold text-xs sm:text-sm hover:bg-ink/5 transition-colors disabled:opacity-50"
             >
               Cancel
             </button>

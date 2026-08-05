@@ -126,7 +126,7 @@ export default function EditEntryRow({
             <button
               type="submit"
               disabled={saving || !amount}
-              className="h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
+              className="flex-1 sm:flex-none h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
             >
               {saving ? 'Saving...' : 'Save'}
             </button>
@@ -134,7 +134,7 @@ export default function EditEntryRow({
               type="button"
               onClick={onCancel}
               disabled={saving}
-              className="h-9 px-4 rounded-lg border border-ink/15 text-ink font-semibold text-xs sm:text-sm hover:bg-ink/5 transition-colors disabled:opacity-50"
+              className="flex-1 sm:flex-none h-9 px-4 rounded-lg border border-ink/15 text-ink font-semibold text-xs sm:text-sm hover:bg-ink/5 transition-colors disabled:opacity-50"
             >
               Cancel
             </button>
@@ -265,7 +265,7 @@ export default function EditEntryRow({
           <button
             type="submit"
             disabled={saving || !amount}
-            className="h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
+            className="flex-1 sm:flex-none h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
           >
             {saving ? 'Saving...' : 'Save'}
           </button>
@@ -273,7 +273,7 @@ export default function EditEntryRow({
             type="button"
             onClick={onCancel}
             disabled={saving}
-            className="h-9 px-4 rounded-lg border border-ink/15 text-ink font-semibold text-xs sm:text-sm hover:bg-ink/5 transition-colors disabled:opacity-50"
+            className="flex-1 sm:flex-none h-9 px-4 rounded-lg border border-ink/15 text-ink font-semibold text-xs sm:text-sm hover:bg-ink/5 transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
