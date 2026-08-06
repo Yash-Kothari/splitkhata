@@ -88,7 +88,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
               Record Payment
             </button>
           )}
-          <div className="text-xs text-muted-text text-center sm:text-left sm:bg-paper sm:px-3 sm:py-2 sm:rounded-lg sm:border sm:border-ink/10">
+          <div className="text-xs text-muted-text text-center sm:text-left sm:h-9 sm:flex sm:items-center sm:bg-paper sm:px-3 sm:rounded-lg sm:border sm:border-ink/10">
             Calculated across {ledgerLabel.toLowerCase()} entries
           </div>
         </div>
