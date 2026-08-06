@@ -20,6 +20,7 @@ import {
   query,
   where,
   orderBy,
+  writeBatch,
   enableIndexedDbPersistence,
 } from 'firebase/firestore';
 import {
@@ -37,11 +38,23 @@ import {
   setStoredMembers,
   getPinConfig,
   setPinConfig,
+  normalizeLedger,
   HOUSEHOLD_CATEGORIES_KEY,
   TRAVEL_CATEGORIES_KEY,
   CURRENCIES_KEY,
   MEMBERS_KEY,
 } from './utils';
+
+// Firestore write batches are capped at 500 operations.
+const BATCH_LIMIT = 500;
+
+function chunk(items, size) {
+  const chunks = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
 
 const LOCAL_EXPENSES_KEY = 'splitkhata_expenses_fallback';
 const LOCAL_CATEGORIES_KEY = 'splitkhata_categories_fallback';
@@ -162,9 +175,15 @@ function saveLocalCategories(data) {
 }
 
 // Subscriptions
-export function subscribeToExpenses(onData, onError) {
+export function subscribeToExpenses(ledger, onData, onError) {
+  const targetLedger = normalizeLedger(ledger);
+
   if (expensesRef) {
-    const q = query(expensesRef, orderBy('createdAt', 'desc'));
+    // Scoped to the active ledger so a client never downloads the other
+    // ledger's history. Ordered server-side by `date` (what the UI actually
+    // sorts by) rather than `createdAt`, and doubles as the cursor field if
+    // pagination is added later. Requires a composite index on (ledger, date).
+    const q = query(expensesRef, where('ledger', '==', targetLedger), orderBy('date', 'desc'));
     return onSnapshot(
       q,
       (snapshot) => {
@@ -178,13 +197,13 @@ export function subscribeToExpenses(onData, onError) {
       onError,
     );
   } else {
-    const handler = (data) => onData(data);
+    const handler = (data) => onData(data.filter((e) => normalizeLedger(e.ledger) === targetLedger));
     expenseListeners.add(handler);
-    onData(getLocalExpenses());
+    onData(getLocalExpenses().filter((e) => normalizeLedger(e.ledger) === targetLedger));
 
     const storageListener = (e) => {
       if (e.key === LOCAL_EXPENSES_KEY) {
-        onData(getLocalExpenses());
+        onData(getLocalExpenses().filter((entry) => normalizeLedger(entry.ledger) === targetLedger));
       }
     };
     window.addEventListener('storage', storageListener);
@@ -257,20 +276,14 @@ export function subscribeToCategories(onData, onError) {
 
 async function seedDefaultCategories() {
   if (!categoriesRef) return;
+  const batch = writeBatch(dbInstance);
   for (const cat of CATEGORIES) {
-    await addDoc(categoriesRef, {
-      name: cat,
-      ledger: 'household',
-      createdAt: serverTimestamp(),
-    });
+    batch.set(doc(categoriesRef), { name: cat, ledger: 'household', createdAt: serverTimestamp() });
   }
   for (const cat of TRAVEL_CATEGORIES) {
-    await addDoc(categoriesRef, {
-      name: cat,
-      ledger: 'travel',
-      createdAt: serverTimestamp(),
-    });
+    batch.set(doc(categoriesRef), { name: cat, ledger: 'travel', createdAt: serverTimestamp() });
   }
+  await batch.commit();
 }
 
 // Currencies Subscription & Actions
@@ -323,12 +336,11 @@ export function subscribeToCurrencies(onData, onError) {
 
 async function seedDefaultCurrencies() {
   if (!currenciesRef) return;
+  const batch = writeBatch(dbInstance);
   for (const cur of CURRENCIES) {
-    await addDoc(currenciesRef, {
-      name: cur,
-      createdAt: serverTimestamp(),
-    });
+    batch.set(doc(currenciesRef), { name: cur, createdAt: serverTimestamp() });
   }
+  await batch.commit();
 }
 
 export async function addCurrencyToDb(name, existingRawDocs = []) {
@@ -442,12 +454,11 @@ export function subscribeToMembers(onData, onError) {
 
 async function seedDefaultMembers() {
   if (!membersRef) return;
+  const batch = writeBatch(dbInstance);
   for (const p of PERSONS) {
-    await addDoc(membersRef, {
-      name: p,
-      createdAt: serverTimestamp(),
-    });
+    batch.set(doc(membersRef), { name: p, createdAt: serverTimestamp() });
   }
+  await batch.commit();
 }
 
 export async function addMemberToDb(name, existingRawDocs = []) {
@@ -525,6 +536,31 @@ export async function addExpense(entry) {
       createdAt: new Date().toISOString(),
     };
     saveLocalExpenses([newEntry, ...current]);
+  }
+}
+
+// Writes multiple expenses as one atomic operation (chunked at Firestore's
+// 500-op batch limit) instead of N sequential round-trips - used for the
+// multi-month split, where a single "Add Entry" submit can create a dozen+ docs.
+export async function addExpensesBatch(entries) {
+  if (!entries.length) return;
+
+  if (expensesRef) {
+    for (const group of chunk(entries, BATCH_LIMIT)) {
+      const batch = writeBatch(dbInstance);
+      for (const entry of group) {
+        batch.set(doc(expensesRef), { ...entry, createdAt: serverTimestamp() });
+      }
+      await batch.commit();
+    }
+  } else {
+    const current = getLocalExpenses();
+    const newEntries = entries.map((entry, i) => ({
+      id: 'local_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2, 7),
+      ...entry,
+      createdAt: new Date().toISOString(),
+    }));
+    saveLocalExpenses([...newEntries, ...current]);
   }
 }
 
@@ -635,8 +671,13 @@ export async function wipeAllExpenses() {
   if (expensesRef) {
     try {
       const snap = await getDocs(expensesRef);
-      const deletePromises = snap.docs.map((d) => deleteDoc(doc(dbInstance, 'expenses', d.id)));
-      await Promise.all(deletePromises);
+      for (const group of chunk(snap.docs, BATCH_LIMIT)) {
+        const batch = writeBatch(dbInstance);
+        for (const d of group) {
+          batch.delete(doc(dbInstance, 'expenses', d.id));
+        }
+        await batch.commit();
+      }
     } catch (err) {
       console.error('Error wiping expenses in Firestore:', err);
     }
@@ -696,9 +737,7 @@ export async function seedSampleExpenses() {
     { amount: 1900, category: 'Commute', payer: 'Kruti', split: true, ledger: 'travel', trip: "Japan Summer '26", date: '2026-06-07', note: 'JR Pass card', deviceName: 'Kruti' },
   ];
 
-  for (const entry of SAMPLE_ENTRIES) {
-    await addExpense(entry);
-  }
+  await addExpensesBatch(SAMPLE_ENTRIES);
 }
 
 export function subscribeToPinConfig(callback) {

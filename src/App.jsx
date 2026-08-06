@@ -1,8 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import BalanceStrip from './components/BalanceStrip';
 import AddEntryForm from './components/AddEntryForm';
-import MonthChart from './components/MonthChart';
-import CategoryChart from './components/CategoryChart';
 import EntryList from './components/EntryList';
 import ConnectionState from './components/ConnectionState';
 import TravelManager from './components/TravelManager';
@@ -30,6 +28,21 @@ import {
   getStoredTrips,
   getPinConfig,
 } from './utils';
+
+// recharts pulls in a lot of weight for content that's below the fold on
+// first paint - load it as its own chunk instead of the main bundle.
+const MonthChart = lazy(() => import('./components/MonthChart'));
+const CategoryChart = lazy(() => import('./components/CategoryChart'));
+
+function ChartSkeleton() {
+  return (
+    <div className="panel-card px-4 sm:px-5 py-4 h-72 animate-pulse">
+      <div className="h-4 w-32 bg-ink/10 rounded mb-2" />
+      <div className="h-3 w-48 bg-ink/10 rounded mb-6" />
+      <div className="h-40 bg-ink/5 rounded" />
+    </div>
+  );
+}
 
 function DeviceNamePicker({ onSelect, members = [] }) {
   const memberList = members && members.length > 0 ? members : PERSONS;
@@ -173,6 +186,7 @@ export default function App() {
 
     setConnectionStatus('syncing');
     const unsubExpenses = subscribeToExpenses(
+      activeLedger,
       (data) => {
         setEntries(data);
         setConnectionStatus(navigator.onLine ? 'ok' : 'offline');
@@ -208,7 +222,7 @@ export default function App() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [deviceName, currentUser]);
+  }, [deviceName, currentUser, activeLedger]);
 
   const availableMonths = getAvailableMonths(entries);
 
@@ -419,14 +433,18 @@ export default function App() {
           />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <MonthChart entries={entries} ledger={activeLedger} />
-            <CategoryChart
-              entries={entries}
-              selectedMonth={selectedMonth}
-              onMonthChange={setSelectedMonth}
-              availableMonths={availableMonths}
-              ledger={activeLedger}
-            />
+            <Suspense fallback={<ChartSkeleton />}>
+              <MonthChart entries={entries} ledger={activeLedger} />
+            </Suspense>
+            <Suspense fallback={<ChartSkeleton />}>
+              <CategoryChart
+                entries={entries}
+                selectedMonth={selectedMonth}
+                onMonthChange={setSelectedMonth}
+                availableMonths={availableMonths}
+                ledger={activeLedger}
+              />
+            </Suspense>
           </div>
 
           <EntryList

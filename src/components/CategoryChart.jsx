@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   getCategoryMoMComparison,
@@ -31,8 +32,11 @@ function DonutTooltip({ active, payload }) {
 }
 
 export default function CategoryChart({ entries, selectedMonth, onMonthChange, availableMonths, ledger }) {
-  const data = getCategoryMoMComparison(entries, selectedMonth, ledger);
-  const total = data.reduce((sum, d) => sum + d.amount, 0);
+  const data = useMemo(
+    () => getCategoryMoMComparison(entries, selectedMonth, ledger),
+    [entries, selectedMonth, ledger],
+  );
+  const total = useMemo(() => data.reduce((sum, d) => sum + d.amount, 0), [data]);
 
   return (
     <section className="panel-card px-4 sm:px-5 py-4">

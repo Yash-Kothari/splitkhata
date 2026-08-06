@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { addExpense } from '../firebase';
 import { formatCurrency, computeBalance, todayISO } from '../utils';
 
 export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName = '', onSaveError }) {
-  const balance = computeBalance(entries, ledger, dbMembers);
+  const balance = useMemo(() => computeBalance(entries, ledger, dbMembers), [entries, ledger, dbMembers]);
   const ledgerLabel = ledger === 'travel' ? 'Travel' : 'Household';
 
   const [settling, setSettling] = useState(false);

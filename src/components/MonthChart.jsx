@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
   BarChart,
   Bar,
@@ -48,7 +49,7 @@ function ChartTooltip({ active, payload }) {
 }
 
 export default function MonthChart({ entries, ledger }) {
-  const data = getLast6MonthsData(entries, ledger);
+  const data = useMemo(() => getLast6MonthsData(entries, ledger), [entries, ledger]);
   const latestMonth = data[data.length - 1];
   const hasSpend = data.some((d) => d.total > 0);
 

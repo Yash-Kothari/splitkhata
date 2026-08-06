@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { addExpense } from '../firebase';
+import { addExpense, addExpensesBatch } from '../firebase';
 import {
   getLedgerCategories,
   DEFAULT_PERSONS as PERSONS,
@@ -71,20 +71,19 @@ export default function AddEntryForm({
     try {
       if (months > 1) {
         const installmentAmounts = splitAmountEvenly(parsed, months);
-        for (let i = 0; i < months; i++) {
-          await addExpense({
-            amount: installmentAmounts[i],
-            payer,
-            category,
-            split: splitType !== 'personal',
-            splitType,
-            owedBy: splitType === 'owed' ? owedBy : null,
-            note: trimmedNote ? `${trimmedNote} (${i + 1}/${months})` : `Installment ${i + 1}/${months}`,
-            date: addMonthsToDateISO(date, i),
-            ledger,
-            tripName: ledger === 'travel' ? tripName : '',
-          });
-        }
+        const installments = Array.from({ length: months }, (_, i) => ({
+          amount: installmentAmounts[i],
+          payer,
+          category,
+          split: splitType !== 'personal',
+          splitType,
+          owedBy: splitType === 'owed' ? owedBy : null,
+          note: trimmedNote ? `${trimmedNote} (${i + 1}/${months})` : `Installment ${i + 1}/${months}`,
+          date: addMonthsToDateISO(date, i),
+          ledger,
+          tripName: ledger === 'travel' ? tripName : '',
+        }));
+        await addExpensesBatch(installments);
       } else {
         await addExpense({
           amount: parsed,
