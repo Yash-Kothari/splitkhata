@@ -31,6 +31,7 @@ export default function AddEntryForm({
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const [slowSave, setSlowSave] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [splitAcrossMonths, setSplitAcrossMonths] = useState(false);
   const [monthsCount, setMonthsCount] = useState(6);
@@ -68,6 +69,12 @@ export default function AddEntryForm({
     const months = splitAcrossMonths ? Math.max(2, Math.min(36, Math.round(monthsCount) || 2)) : 1;
 
     setSaving(true);
+    // Firestore write promises only resolve once the server acknowledges
+    // the write, which can take a while on a slow/flaky connection even
+    // though the entry already appears locally via the realtime listener.
+    // Escalate the button text after a couple seconds so it reads as "still
+    // working on a slow network", not "frozen".
+    const slowTimer = setTimeout(() => setSlowSave(true), 2500);
     try {
       if (months > 1) {
         const installmentAmounts = splitAmountEvenly(parsed, months);
@@ -106,7 +113,9 @@ export default function AddEntryForm({
     } catch (err) {
       onSaveError?.(err);
     } finally {
+      clearTimeout(slowTimer);
       setSaving(false);
+      setSlowSave(false);
     }
   }
 
@@ -298,7 +307,7 @@ export default function AddEntryForm({
               disabled={saving || !amount}
               className="w-full h-11 px-4 py-2.5 rounded-xl bg-ledger-green text-white font-semibold text-sm sm:text-base shadow-xs disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-ledger-green/50 transition-all flex items-center justify-center gap-2"
             >
-              <span>{saving ? 'Saving...' : 'Add to Ledger'}</span>
+              <span>{saving ? (slowSave ? 'Still saving (slow connection)…' : 'Saving...') : 'Add to Ledger'}</span>
             </button>
           </div>
         </form>

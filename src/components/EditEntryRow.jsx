@@ -27,6 +27,7 @@ export default function EditEntryRow({
   const [date, setDate] = useState(entry.date || '');
   const [note, setNote] = useState(entry.note || '');
   const [saving, setSaving] = useState(false);
+  const [slowSave, setSlowSave] = useState(false);
 
   const isSettlement = entry.splitType === 'settlement';
 
@@ -41,6 +42,9 @@ export default function EditEntryRow({
     if (!parsed || parsed <= 0) return;
 
     setSaving(true);
+    // Same reasoning as AddEntryForm - the write can outlast a quick tap on
+    // a slow connection even though the change already applied locally.
+    const slowTimer = setTimeout(() => setSlowSave(true), 2500);
     try {
       if (isSettlement) {
         // Settlements only allow correcting amount/date/note - who paid whom
@@ -66,7 +70,9 @@ export default function EditEntryRow({
     } catch (err) {
       onSaveError?.(err);
     } finally {
+      clearTimeout(slowTimer);
       setSaving(false);
+      setSlowSave(false);
     }
   }
 
@@ -128,7 +134,7 @@ export default function EditEntryRow({
               disabled={saving || !amount}
               className="flex-1 sm:flex-none h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
             >
-              {saving ? 'Saving...' : 'Save'}
+              {saving ? (slowSave ? 'Still saving…' : 'Saving...') : 'Save'}
             </button>
             <button
               type="button"
@@ -267,7 +273,7 @@ export default function EditEntryRow({
             disabled={saving || !amount}
             className="flex-1 sm:flex-none h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
           >
-            {saving ? 'Saving...' : 'Save'}
+            {saving ? (slowSave ? 'Still saving…' : 'Saving...') : 'Save'}
           </button>
           <button
             type="button"
