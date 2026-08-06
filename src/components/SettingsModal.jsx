@@ -9,6 +9,8 @@ import {
   deleteMemberFromDb,
   isFirebaseConfigured,
   savePinConfigToDb,
+  seedSampleExpenses,
+  wipeAllExpenses,
 } from '../firebase';
 
 export default function SettingsModal({
@@ -37,6 +39,37 @@ export default function SettingsModal({
   const [pinConfig, setPinConfigState] = useState(() => getPinConfig());
   const [newPin, setNewPin] = useState(pinConfig.pin || '');
   const [pinMessage, setPinMessage] = useState('');
+
+  const [seeding, setSeeding] = useState(false);
+  const [wiping, setWiping] = useState(false);
+  const [sampleDataMessage, setSampleDataMessage] = useState('');
+
+  async function handleSeedSampleData() {
+    setSeeding(true);
+    setSampleDataMessage('');
+    try {
+      await seedSampleExpenses();
+      setSampleDataMessage('Sample data loaded - a few months of household spend plus a Japan trip.');
+    } catch (err) {
+      setSampleDataMessage(`Failed to load sample data: ${err?.message || err}`);
+    } finally {
+      setSeeding(false);
+    }
+  }
+
+  async function handleWipeAllData() {
+    if (!window.confirm('Delete every expense entry? This cannot be undone.')) return;
+    setWiping(true);
+    setSampleDataMessage('');
+    try {
+      await wipeAllExpenses();
+      setSampleDataMessage('All expense entries deleted.');
+    } catch (err) {
+      setSampleDataMessage(`Failed to wipe data: ${err?.message || err}`);
+    } finally {
+      setWiping(false);
+    }
+  }
 
   async function handleSavePinConfig(enabledOverride = null) {
     const enabled = enabledOverride !== null ? enabledOverride : pinConfig.enabled;
@@ -467,6 +500,37 @@ export default function SettingsModal({
                     <li>VITE_FIREBASE_PROJECT_ID</li>
                     <li>VITE_FIREBASE_AUTH_DOMAIN</li>
                   </ul>
+                </div>
+              )}
+
+              {!hasFirebase && (
+                <div className="p-3.5 sm:p-4 rounded-xl border border-ink/15 bg-paper space-y-2.5">
+                  <p className="font-bold text-ink text-sm">Sample Data (local DB mode only)</p>
+                  <p className="text-xs text-muted-text leading-relaxed">
+                    Only available here because there's no real cloud data to accidentally touch. Loads a
+                    few months of household spend plus a Japan trip - handy for testing without typing entries by hand.
+                  </p>
+                  <div className="flex flex-wrap gap-2 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={handleSeedSampleData}
+                      disabled={seeding || wiping}
+                      className="min-h-10 rounded-lg bg-ledger-green px-3.5 py-2 text-xs font-semibold text-white hover:bg-ledger-green/90 transition-colors disabled:opacity-50"
+                    >
+                      {seeding ? 'Loading…' : 'Load Sample Data'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleWipeAllData}
+                      disabled={seeding || wiping}
+                      className="min-h-10 rounded-lg border border-stamp-red/30 bg-paper px-3.5 py-2 text-xs font-semibold text-stamp-red hover:bg-stamp-red/10 transition-colors disabled:opacity-50"
+                    >
+                      {wiping ? 'Wiping…' : 'Wipe All Data'}
+                    </button>
+                  </div>
+                  {sampleDataMessage && (
+                    <p className="text-xs text-muted-text">{sampleDataMessage}</p>
+                  )}
                 </div>
               )}
             </div>
