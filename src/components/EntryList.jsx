@@ -28,6 +28,7 @@ export default function EntryList({
   dbPaymentMethods = [],
 }) {
   const displayCurrency = ledger === 'travel' ? currentCurrency : 'INR';
+  const isTravel = ledger === 'travel';
   const [deletingId, setDeletingId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -35,7 +36,9 @@ export default function EntryList({
 
   const filtered = entries
     .filter((e) => {
-      if (selectedMonth !== 'all' && getMonthKey(e.date) !== selectedMonth) return false;
+      // A trip is usually days, not months - only apply the month filter
+      // for the household ledger, where it actually helps.
+      if (!isTravel && selectedMonth !== 'all' && getMonthKey(e.date) !== selectedMonth) return false;
       if (ledger && normalizeLedger(e.ledger) !== normalizeLedger(ledger)) return false;
       if (searchTerm) {
         const term = searchTerm.toLowerCase();
@@ -74,7 +77,7 @@ export default function EntryList({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h2 className="font-display text-lg font-bold text-ink">
-            Passbook Entries {selectedMonth === 'all' ? '(All Months)' : `(${formatMonthLabel(selectedMonth)})`}
+            Passbook Entries {!isTravel && (selectedMonth === 'all' ? '(All Months)' : `(${formatMonthLabel(selectedMonth)})`)}
           </h2>
           <p className="text-xs text-muted-text">
             {filtered.length} {filtered.length === 1 ? 'transaction' : 'transactions'} recorded
@@ -82,7 +85,7 @@ export default function EntryList({
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-          {availableMonths.length > 0 && onMonthChange && (
+          {!isTravel && availableMonths.length > 0 && onMonthChange && (
             <select
               value={selectedMonth}
               onChange={(e) => onMonthChange(e.target.value)}
@@ -112,7 +115,9 @@ export default function EntryList({
         <div className="border-2 border-dashed border-ink/20 rounded-xl py-12 px-4 text-center text-muted-text text-sm bg-paper/50">
           {entries.length === 0
             ? 'No entries recorded yet. Add your first expense above!'
-            : `No matching entries in ${formatMonthLabel(selectedMonth)}.`}
+            : isTravel
+              ? 'No entries match your search.'
+              : `No matching entries in ${formatMonthLabel(selectedMonth)}.`}
         </div>
       ) : (
         <ul className="divide-y divide-ink/10">

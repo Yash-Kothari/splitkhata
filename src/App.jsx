@@ -280,6 +280,15 @@ export default function App() {
   const activeCurrenciesList = dbCurrencies.currencies.length > 0 ? dbCurrencies.currencies : CURRENCIES;
   const activePaymentMethodsList = dbPaymentMethods.methods.length > 0 ? dbPaymentMethods.methods : PAYMENT_METHODS;
 
+  // `entries` is scoped to the ledger (household vs travel) by the Firestore
+  // query, but travel entries span every trip - narrow to the trip you're
+  // actually looking at so a second trip's data can't bleed into this one's
+  // balance/charts/passbook. TravelSummaryCard is the exception: it shows
+  // every trip at once, so it gets the unfiltered `entries`.
+  const tripEntries = activeLedger === 'travel' && selectedTrip
+    ? entries.filter((e) => e.tripName === selectedTrip)
+    : entries;
+
   const pinConfig = getPinConfig();
 
   if (authLoading) {
@@ -490,59 +499,71 @@ export default function App() {
             />
           )}
 
-          <BalanceStrip
-            entries={entries}
-            ledger={activeLedger}
-            dbMembers={activeMembersList}
-            tripName={selectedTrip}
-            currentCurrency={currentCurrency}
-            onSaveError={handleSaveError}
-          />
+          {activeLedger === 'travel' && !selectedTrip ? (
+            dbTrips.length > 0 && (
+              <div className="border-2 border-dashed border-ink/20 rounded-xl py-10 px-4 text-center text-muted-text text-sm bg-paper/50">
+                Select a trip above to see its balance, spend breakdown, and passbook.
+              </div>
+            )
+          ) : (
+            <>
+              <BalanceStrip
+                entries={tripEntries}
+                ledger={activeLedger}
+                dbMembers={activeMembersList}
+                tripName={selectedTrip}
+                currentCurrency={currentCurrency}
+                onSaveError={handleSaveError}
+              />
 
-          {activeLedger === 'travel' && (
-            <TravelSummaryCard entries={entries} ledger={activeLedger} dbMembers={activeMembersList} trips={dbTrips} />
-          )}
+              {activeLedger === 'travel' && (
+                <TravelSummaryCard entries={entries} ledger={activeLedger} dbMembers={activeMembersList} trips={dbTrips} />
+              )}
 
-          <AddEntryForm
-            deviceName={deviceName}
-            onSaveError={handleSaveError}
-            ledger={activeLedger}
-            tripName={selectedTrip}
-            dbCategories={currentDbCategories}
-            dbMembers={activeMembersList}
-            currentCurrency={currentCurrency}
-            dbPaymentMethods={activePaymentMethodsList}
-          />
+              <AddEntryForm
+                deviceName={deviceName}
+                onSaveError={handleSaveError}
+                ledger={activeLedger}
+                tripName={selectedTrip}
+                dbCategories={currentDbCategories}
+                dbMembers={activeMembersList}
+                currentCurrency={currentCurrency}
+                dbPaymentMethods={activePaymentMethodsList}
+              />
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <Suspense fallback={<ChartSkeleton />}>
-              <MonthChart entries={entries} ledger={activeLedger} currentCurrency={currentCurrency} />
-            </Suspense>
-            <Suspense fallback={<ChartSkeleton />}>
-              <CategoryChart
-                entries={entries}
+              <div className={activeLedger === 'travel' ? '' : 'grid grid-cols-1 lg:grid-cols-2 gap-6'}>
+                {activeLedger !== 'travel' && (
+                  <Suspense fallback={<ChartSkeleton />}>
+                    <MonthChart entries={tripEntries} ledger={activeLedger} currentCurrency={currentCurrency} />
+                  </Suspense>
+                )}
+                <Suspense fallback={<ChartSkeleton />}>
+                  <CategoryChart
+                    entries={tripEntries}
+                    selectedMonth={selectedMonth}
+                    onMonthChange={setSelectedMonth}
+                    availableMonths={availableMonths}
+                    ledger={activeLedger}
+                    currentCurrency={currentCurrency}
+                  />
+                </Suspense>
+              </div>
+
+              <EntryList
+                entries={tripEntries}
                 selectedMonth={selectedMonth}
                 onMonthChange={setSelectedMonth}
                 availableMonths={availableMonths}
+                onDeleteError={handleSaveError}
+                onSaveError={handleSaveError}
                 ledger={activeLedger}
+                dbCategories={currentDbCategories}
+                dbMembers={activeMembersList}
                 currentCurrency={currentCurrency}
+                dbPaymentMethods={activePaymentMethodsList}
               />
-            </Suspense>
-          </div>
-
-          <EntryList
-            entries={entries}
-            selectedMonth={selectedMonth}
-            onMonthChange={setSelectedMonth}
-            availableMonths={availableMonths}
-            onDeleteError={handleSaveError}
-            onSaveError={handleSaveError}
-            ledger={activeLedger}
-            dbCategories={currentDbCategories}
-            dbMembers={activeMembersList}
-            currentCurrency={currentCurrency}
-            dbPaymentMethods={activePaymentMethodsList}
-          />
+            </>
+          )}
         </main>
       </div>
     </>

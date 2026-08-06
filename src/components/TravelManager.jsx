@@ -32,6 +32,7 @@ export default function TravelManager({
   const [openingCash, setOpeningCash] = useState('');
   const [withdrawalAmount, setWithdrawalAmount] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  const [addingTrip, setAddingTrip] = useState(false);
 
   const displayCategories = dbCategories;
   const currenciesList = dbCurrencies && dbCurrencies.length > 0 ? dbCurrencies : CURRENCIES;
@@ -58,6 +59,7 @@ export default function TravelManager({
       onCurrencyChange?.(tripCurrency);
       setTripName('');
       setTripCurrency('INR');
+      setAddingTrip(false);
       setShowSettings(true);
     } catch (err) {
       onSaveError?.(err);
@@ -211,14 +213,46 @@ export default function TravelManager({
             onClick={() => {
               setTripName('');
               setTripCurrency('INR');
-              setShowSettings(false);
+              setAddingTrip((v) => !v);
             }}
             className="min-h-10 rounded-lg border border-ink/15 bg-paper px-3.5 py-2 text-xs font-semibold text-ink hover:bg-paper-card transition-colors shadow-2xs"
           >
-            + Add Trip
+            {addingTrip ? 'Cancel' : '+ Add Trip'}
           </button>
         </div>
       </div>
+
+      {addingTrip && (
+        <form onSubmit={handleAddTrip} className="rounded-xl border border-ink/15 bg-paper/80 p-4 grid gap-3 sm:grid-cols-3">
+          <div>
+            <label className="block text-sm font-medium text-muted-text mb-1">Trip Name</label>
+            <input
+              value={tripName}
+              onChange={(e) => setTripName(e.target.value)}
+              className={inputClass}
+              placeholder="e.g., Singapore 2026"
+              autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-muted-text mb-1">Default Currency</label>
+            <select
+              value={tripCurrency}
+              onChange={(e) => setTripCurrency(e.target.value)}
+              className={selectClass}
+            >
+              {currenciesList.map((currency) => (
+                <option key={currency} value={currency}>{currency}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-end">
+            <button type="submit" className="w-full min-h-11 rounded-lg bg-ledger-green text-white font-semibold text-sm hover:bg-ledger-green/90 transition-colors shadow-xs">
+              Create Trip
+            </button>
+          </div>
+        </form>
+      )}
 
       <div className="rounded-xl border border-ink/10 bg-paper px-4 py-4 space-y-3">
         <div className="flex flex-wrap gap-2">

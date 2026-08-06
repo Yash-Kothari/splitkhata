@@ -8,14 +8,14 @@ import {
   DEFAULT_CATEGORIES as CATEGORIES,
 } from '../utils';
 
-function DonutTooltip({ active, payload, currency }) {
+function DonutTooltip({ active, payload, currency, showTrend }) {
   if (!active || !payload?.length) return null;
   const { category, amount, pctChange, isNew, prevAmount } = payload[0].payload;
   return (
     <div className="rounded-xl bg-paper-card border border-ink/15 px-3.5 py-2.5 text-sm shadow-md">
       <p className="font-bold text-ink">{category}</p>
       <p className="font-mono text-ink font-bold">{formatCurrency(amount, currency)}</p>
-      {prevAmount > 0 ? (
+      {showTrend && prevAmount > 0 ? (
         <p
           className={`text-xs font-semibold mt-1 ${
             pctChange > 0 ? 'text-red-700' : pctChange < 0 ? 'text-emerald-800' : 'text-muted-text'
@@ -24,7 +24,7 @@ function DonutTooltip({ active, payload, currency }) {
           {pctChange > 0 ? '▲ +' : pctChange < 0 ? '▼ ' : ''}
           {pctChange}% vs last month
         </p>
-      ) : isNew ? (
+      ) : showTrend && isNew ? (
         <p className="text-xs font-semibold text-indigo-700 mt-1">New category spend this month</p>
       ) : null}
     </div>
@@ -32,12 +32,15 @@ function DonutTooltip({ active, payload, currency }) {
 }
 
 export default function CategoryChart({ entries, selectedMonth, onMonthChange, availableMonths, ledger, currentCurrency = 'INR' }) {
+  const isTravel = ledger === 'travel';
+  // A trip is usually days, not months - skip month filtering and the MoM
+  // comparison entirely for travel, and just show the trip's full breakdown.
   const data = useMemo(
-    () => getCategoryMoMComparison(entries, selectedMonth, ledger),
-    [entries, selectedMonth, ledger],
+    () => getCategoryMoMComparison(entries, isTravel ? null : selectedMonth, ledger),
+    [entries, selectedMonth, ledger, isTravel],
   );
   const total = useMemo(() => data.reduce((sum, d) => sum + d.amount, 0), [data]);
-  const currency = ledger === 'travel' ? currentCurrency : 'INR';
+  const currency = isTravel ? currentCurrency : 'INR';
 
   return (
     <section className="panel-card px-4 sm:px-5 py-4">
@@ -46,23 +49,25 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
           <h2 className="font-display text-lg font-bold text-ink">
             Category Breakdown
           </h2>
-          <p className="text-xs text-muted-text">Monthly spend & MoM comparison</p>
+          <p className="text-xs text-muted-text">{isTravel ? 'Spend by category' : 'Monthly spend & MoM comparison'}</p>
         </div>
-        <select
-          value={selectedMonth}
-          onChange={(e) => onMonthChange(e.target.value)}
-          className="h-10 px-3 pr-8 rounded-xl border border-ink/15 bg-paper text-ink text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-ledger-green/40 shadow-2xs appearance-none bg-[url(&quot;data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2324304A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e&quot;)] bg-[length:1rem_1rem] bg-[right_0.6rem_center] bg-no-repeat shrink-0"
-          aria-label="Filter by month"
-        >
-          {availableMonths.map((m) => (
-            <option key={m} value={m}>{formatMonthLabel(m)}</option>
-          ))}
-        </select>
+        {!isTravel && (
+          <select
+            value={selectedMonth}
+            onChange={(e) => onMonthChange(e.target.value)}
+            className="h-10 px-3 pr-8 rounded-xl border border-ink/15 bg-paper text-ink text-xs sm:text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-ledger-green/40 shadow-2xs appearance-none bg-[url(&quot;data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2324304A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e&quot;)] bg-[length:1rem_1rem] bg-[right_0.6rem_center] bg-no-repeat shrink-0"
+            aria-label="Filter by month"
+          >
+            {availableMonths.map((m) => (
+              <option key={m} value={m}>{formatMonthLabel(m)}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {data.length === 0 ? (
         <div className="border-2 border-dashed border-ink/20 rounded-xl py-12 text-center text-muted-text text-sm bg-paper/50">
-          No expenses recorded in {formatMonthLabel(selectedMonth)}.
+          {isTravel ? 'No expenses recorded yet.' : `No expenses recorded in ${formatMonthLabel(selectedMonth)}.`}
         </div>
       ) : (
         <>
@@ -91,7 +96,7 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
                     );
                   })}
                 </Pie>
-                <Tooltip content={<DonutTooltip currency={currency} />} />
+                <Tooltip content={<DonutTooltip currency={currency} showTrend={!isTravel} />} />
               </PieChart>
             </ResponsiveContainer>
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -109,7 +114,7 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
               <span>Category</span>
               <div className="flex items-center gap-2 sm:gap-4 shrink-0">
                 <span>Amount</span>
-                <span className="min-w-[4.25rem] text-right">MoM %</span>
+                {!isTravel && <span className="min-w-[4.25rem] text-right">MoM %</span>}
               </div>
             </div>
 
@@ -141,28 +146,30 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
                         {formatCurrency(entry.amount, currency)}
                       </span>
 
-                      <div className="min-w-[4.25rem] flex justify-end shrink-0">
-                        {entry.prevAmount > 0 ? (
-                          <span
-                            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] sm:text-[11px] font-semibold font-mono whitespace-nowrap ${
-                              isIncreased
-                                ? 'bg-red-100 text-red-700'
-                                : isDecreased
-                                ? 'bg-emerald-100 text-emerald-800'
-                                : 'bg-ink/5 text-muted-text'
-                            }`}
-                          >
-                            {isIncreased ? '▲ +' : isDecreased ? '▼ ' : ''}
-                            {entry.pctChange}%
-                          </span>
-                        ) : entry.isNew ? (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] sm:text-[11px] font-semibold bg-indigo-100 text-indigo-700 whitespace-nowrap">
-                            New
-                          </span>
-                        ) : (
-                          <span className="text-[11px] text-muted-text font-medium text-right font-mono">-</span>
-                        )}
-                      </div>
+                      {!isTravel && (
+                        <div className="min-w-[4.25rem] flex justify-end shrink-0">
+                          {entry.prevAmount > 0 ? (
+                            <span
+                              className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] sm:text-[11px] font-semibold font-mono whitespace-nowrap ${
+                                isIncreased
+                                  ? 'bg-red-100 text-red-700'
+                                  : isDecreased
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-ink/5 text-muted-text'
+                              }`}
+                            >
+                              {isIncreased ? '▲ +' : isDecreased ? '▼ ' : ''}
+                              {entry.pctChange}%
+                            </span>
+                          ) : entry.isNew ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] sm:text-[11px] font-semibold bg-indigo-100 text-indigo-700 whitespace-nowrap">
+                              New
+                            </span>
+                          ) : (
+                            <span className="text-[11px] text-muted-text font-medium text-right font-mono">-</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </li>
                 );

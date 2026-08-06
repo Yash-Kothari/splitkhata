@@ -290,46 +290,48 @@ export default function AddEntryForm({
             </div>
           </div>
 
-          <div className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3">
-            <label className="flex items-center gap-2.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={splitAcrossMonths}
-                onChange={(e) => setSplitAcrossMonths(e.target.checked)}
-                className="h-4 w-4 rounded border-ink/30 text-ledger-green focus:ring-ledger-green/40"
-              />
-              <span className="text-sm font-semibold text-ink">
-                Split across multiple months
-              </span>
-            </label>
-            <p className="text-xs text-muted-text mt-1 ml-6">
-              For lump-sum payments that cover several months (e.g. 6 months of WiFi) - spreads the amount evenly across one entry per month instead of inflating a single month.
-            </p>
-
-            {splitAcrossMonths && (
-              <div className="mt-3 ml-6 max-w-[10rem]">
-                <label htmlFor="monthsCount" className={labelClass}>
-                  Number of Months
-                </label>
+          {ledger !== 'travel' && (
+            <div className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3">
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
                 <input
-                  id="monthsCount"
-                  type="number"
-                  inputMode="numeric"
-                  min="2"
-                  max="36"
-                  step="1"
-                  value={monthsCount}
-                  onChange={(e) => setMonthsCount(e.target.value)}
-                  className={inputClass}
+                  type="checkbox"
+                  checked={splitAcrossMonths}
+                  onChange={(e) => setSplitAcrossMonths(e.target.checked)}
+                  className="h-4 w-4 rounded border-ink/30 text-ledger-green focus:ring-ledger-green/40"
                 />
-                {amount && parseFloat(amount) > 0 && (
-                  <p className="text-xs text-muted-text mt-1.5">
-                    ~₹{(parseFloat(amount) / Math.max(2, Math.min(36, Math.round(monthsCount) || 2))).toFixed(2)} / month
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
+                <span className="text-sm font-semibold text-ink">
+                  Split across multiple months
+                </span>
+              </label>
+              <p className="text-xs text-muted-text mt-1 ml-6">
+                For lump-sum payments that cover several months (e.g. 6 months of WiFi) - spreads the amount evenly across one entry per month instead of inflating a single month.
+              </p>
+
+              {splitAcrossMonths && (
+                <div className="mt-3 ml-6 max-w-[10rem]">
+                  <label htmlFor="monthsCount" className={labelClass}>
+                    Number of Months
+                  </label>
+                  <input
+                    id="monthsCount"
+                    type="number"
+                    inputMode="numeric"
+                    min="2"
+                    max="36"
+                    step="1"
+                    value={monthsCount}
+                    onChange={(e) => setMonthsCount(e.target.value)}
+                    className={inputClass}
+                  />
+                  {amount && parseFloat(amount) > 0 && (
+                    <p className="text-xs text-muted-text mt-1.5">
+                      ~₹{(parseFloat(amount) / Math.max(2, Math.min(36, Math.round(monthsCount) || 2))).toFixed(2)} / month
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="sticky bottom-0 -mx-4 sm:-mx-5 px-4 sm:px-5 py-3 bg-paper-card/95 backdrop-blur-xs border-t border-ink/10 sm:static sm:border-0 sm:p-0 sm:bg-transparent sm:backdrop-blur-none z-10">
             <button
