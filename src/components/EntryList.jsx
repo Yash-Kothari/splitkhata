@@ -25,7 +25,9 @@ export default function EntryList({
   dbCategories = [],
   dbMembers = [],
   currentCurrency = 'INR',
+  dbPaymentMethods = [],
 }) {
+  const displayCurrency = ledger === 'travel' ? currentCurrency : 'INR';
   const [deletingId, setDeletingId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -121,6 +123,7 @@ export default function EntryList({
                 entry={entry}
                 dbCategories={dbCategories}
                 dbMembers={dbMembers}
+                dbPaymentMethods={dbPaymentMethods}
                 ledger={ledger}
                 currentCurrency={currentCurrency}
                 onCancel={() => setEditingId(null)}
@@ -136,7 +139,7 @@ export default function EntryList({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="font-mono font-bold text-ink text-base">
-                      {formatCurrency(entry.amount)}
+                      {formatCurrency(entry.amount, displayCurrency)}
                     </span>
                     <span className="text-xs text-muted-text shrink-0 font-medium bg-paper px-2 py-0.5 rounded border border-ink/10">
                       {formatDate(entry.date)}
@@ -163,6 +166,11 @@ export default function EntryList({
                         {entry.splitType === 'owed' && entry.owedBy && (
                           <span className="px-1.5 py-0.2 rounded bg-ledger-green/15 text-ledger-green font-medium">
                             {entry.owedBy} owes full amount
+                          </span>
+                        )}
+                        {entry.paymentMethod && (
+                          <span className="text-muted-text">
+                            via <strong className="text-ink">{entry.paymentMethod}</strong>
                           </span>
                         )}
                       </>

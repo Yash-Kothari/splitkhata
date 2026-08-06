@@ -8,9 +8,9 @@ import {
   ResponsiveContainer,
   Cell,
 } from 'recharts';
-import { getLast6MonthsData, formatCurrency } from '../utils';
+import { getLast6MonthsData, formatCurrency, CURRENCY_SYMBOLS } from '../utils';
 
-function ChartTooltip({ active, payload }) {
+function ChartTooltip({ active, payload, currency }) {
   if (!active || !payload?.length) return null;
   const data = payload[0].payload;
   const isUp = data.pctChange > 0;
@@ -22,7 +22,7 @@ function ChartTooltip({ active, payload }) {
       <p className="text-muted-text font-medium text-xs">
         Total Spend:{' '}
         <span className="font-mono text-ink font-bold text-sm ml-1">
-          {formatCurrency(data.total)}
+          {formatCurrency(data.total, currency)}
         </span>
       </p>
       {data.prevTotal > 0 ? (
@@ -48,10 +48,12 @@ function ChartTooltip({ active, payload }) {
   );
 }
 
-export default function MonthChart({ entries, ledger }) {
+export default function MonthChart({ entries, ledger, currentCurrency = 'INR' }) {
   const data = useMemo(() => getLast6MonthsData(entries, ledger), [entries, ledger]);
   const latestMonth = data[data.length - 1];
   const hasSpend = data.some((d) => d.total > 0);
+  const currency = ledger === 'travel' ? currentCurrency : 'INR';
+  const symbol = CURRENCY_SYMBOLS[currency] || `${currency} `;
 
   return (
     <section className="panel-card px-4 sm:px-5 py-4">
@@ -65,7 +67,7 @@ export default function MonthChart({ entries, ledger }) {
         {latestMonth && latestMonth.total > 0 && (
           <div className="flex items-center gap-2 bg-paper px-3 py-1.5 rounded-xl border border-ink/10 text-xs self-start sm:self-auto">
             <span className="text-muted-text font-medium">{latestMonth.label}:</span>
-            <span className="font-mono font-bold text-ink">{formatCurrency(latestMonth.total)}</span>
+            <span className="font-mono font-bold text-ink">{formatCurrency(latestMonth.total, currency)}</span>
             {latestMonth.prevTotal > 0 && (
               <span
                 className={`font-semibold px-1.5 py-0.5 rounded text-[10px] ${
@@ -102,9 +104,9 @@ export default function MonthChart({ entries, ledger }) {
                 tick={{ fontSize: 11, fill: '#5C6478' }}
                 axisLine={false}
                 tickLine={false}
-                tickFormatter={(v) => `₹${v >= 1000 ? `${Math.round(v / 1000)}k` : v}`}
+                tickFormatter={(v) => `${symbol}${v >= 1000 ? `${Math.round(v / 1000)}k` : v}`}
               />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: '#24304A08' }} />
+              <Tooltip content={<ChartTooltip currency={currency} />} cursor={{ fill: '#24304A08' }} />
               <Bar dataKey="total" radius={[6, 6, 0, 0]} maxBarSize={40}>
                 {data.map((entry, index) => {
                   const isLatest = index === data.length - 1;

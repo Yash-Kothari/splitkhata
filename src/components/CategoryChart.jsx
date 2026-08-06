@@ -8,13 +8,13 @@ import {
   DEFAULT_CATEGORIES as CATEGORIES,
 } from '../utils';
 
-function DonutTooltip({ active, payload }) {
+function DonutTooltip({ active, payload, currency }) {
   if (!active || !payload?.length) return null;
   const { category, amount, pctChange, isNew, prevAmount } = payload[0].payload;
   return (
     <div className="rounded-xl bg-paper-card border border-ink/15 px-3.5 py-2.5 text-sm shadow-md">
       <p className="font-bold text-ink">{category}</p>
-      <p className="font-mono text-ink font-bold">{formatCurrency(amount)}</p>
+      <p className="font-mono text-ink font-bold">{formatCurrency(amount, currency)}</p>
       {prevAmount > 0 ? (
         <p
           className={`text-xs font-semibold mt-1 ${
@@ -31,12 +31,13 @@ function DonutTooltip({ active, payload }) {
   );
 }
 
-export default function CategoryChart({ entries, selectedMonth, onMonthChange, availableMonths, ledger }) {
+export default function CategoryChart({ entries, selectedMonth, onMonthChange, availableMonths, ledger, currentCurrency = 'INR' }) {
   const data = useMemo(
     () => getCategoryMoMComparison(entries, selectedMonth, ledger),
     [entries, selectedMonth, ledger],
   );
   const total = useMemo(() => data.reduce((sum, d) => sum + d.amount, 0), [data]);
+  const currency = ledger === 'travel' ? currentCurrency : 'INR';
 
   return (
     <section className="panel-card px-4 sm:px-5 py-4">
@@ -90,13 +91,13 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
                     );
                   })}
                 </Pie>
-                <Tooltip content={<DonutTooltip />} />
+                <Tooltip content={<DonutTooltip currency={currency} />} />
               </PieChart>
             </ResponsiveContainer>
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="text-center">
                 <p className="font-mono font-bold text-lg sm:text-xl text-ink">
-                  {formatCurrency(total)}
+                  {formatCurrency(total, currency)}
                 </p>
                 <p className="text-[10px] text-muted-text font-medium uppercase tracking-wider">Total</p>
               </div>
@@ -137,7 +138,7 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
 
                     <div className="flex items-center gap-2 sm:gap-3 shrink-0">
                       <span className="font-mono text-ink font-bold text-xs sm:text-sm text-right">
-                        {formatCurrency(entry.amount)}
+                        {formatCurrency(entry.amount, currency)}
                       </span>
 
                       <div className="min-w-[4.25rem] flex justify-end shrink-0">

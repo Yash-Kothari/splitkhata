@@ -1,14 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
-import { addCategoryToDb, deleteCategoryFromDb } from '../firebase';
+import { useMemo, useState } from 'react';
 import {
-  DEFAULT_CURRENCIES as CURRENCIES,
-  getStoredCashMovements,
-  getStoredTravelCategories,
-  getStoredTrips,
-  setStoredCashMovements,
-  setStoredTravelCategories,
-  setStoredTrips,
-} from '../utils';
+  addCategoryToDb,
+  deleteCategoryFromDb,
+  addTripToDb,
+  deleteTripFromDb,
+  addCashMovementToDb,
+  addPaymentMethodToDb,
+  deletePaymentMethodFromDb,
+} from '../firebase';
+import { DEFAULT_CURRENCIES as CURRENCIES, normalizeLedger } from '../utils';
 
 export default function TravelManager({
   onTripSelect,
@@ -18,53 +18,61 @@ export default function TravelManager({
   dbCategories = [],
   rawCategoryDocs = [],
   dbCurrencies = [],
+  trips = [],
+  cashMovements = [],
+  entries = [],
+  dbPaymentMethods = [],
+  rawPaymentMethodDocs = [],
+  onSaveError,
 }) {
-  const [trips, setTrips] = useState(() => getStoredTrips());
   const [tripName, setTripName] = useState('');
   const [tripCurrency, setTripCurrency] = useState('INR');
-  const [customCategories, setCustomCategories] = useState(() => getStoredTravelCategories());
-  const [cashMovements, setCashMovements] = useState(() => getStoredCashMovements());
   const [categoryDraft, setCategoryDraft] = useState('');
+  const [paymentMethodDraft, setPaymentMethodDraft] = useState('');
   const [openingCash, setOpeningCash] = useState('');
   const [withdrawalAmount, setWithdrawalAmount] = useState('');
   const [showSettings, setShowSettings] = useState(false);
 
-  const displayCategories = dbCategories && dbCategories.length > 0 ? dbCategories : customCategories;
+  const displayCategories = dbCategories;
   const currenciesList = dbCurrencies && dbCurrencies.length > 0 ? dbCurrencies : CURRENCIES;
-
-  useEffect(() => {
-    setStoredTrips(trips);
-  }, [trips]);
-
-  useEffect(() => {
-    setStoredTravelCategories(customCategories);
-  }, [customCategories]);
-
-  useEffect(() => {
-    setStoredCashMovements(cashMovements);
-  }, [cashMovements]);
 
   const availableTrips = useMemo(() => trips, [trips]);
   const selectedTripCash = useMemo(() => {
     const relevant = cashMovements.filter((movement) => movement.tripName === selectedTrip);
     const opening = relevant.filter((movement) => movement.type === 'opening').reduce((sum, movement) => sum + Number(movement.amount || 0), 0);
     const withdrawals = relevant.filter((movement) => movement.type === 'withdrawal').reduce((sum, movement) => sum + Number(movement.amount || 0), 0);
-    return opening - withdrawals;
-  }, [cashMovements, selectedTrip]);
+    const cashSpent = entries
+      .filter((e) => normalizeLedger(e.ledger) === 'travel' && e.tripName === selectedTrip && e.paymentMethod === 'Cash')
+      .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+    return opening + withdrawals - cashSpent;
+  }, [cashMovements, entries, selectedTrip]);
 
-  function handleAddTrip(event) {
+  async function handleAddTrip(event) {
     event.preventDefault();
     const normalized = tripName.trim();
     if (!normalized) return;
     if (trips.some((trip) => trip.name.toLowerCase() === normalized.toLowerCase())) return;
-    const nextTrip = { name: normalized, currency: tripCurrency };
-    const nextTrips = [...trips, nextTrip];
-    setTrips(nextTrips);
-    onTripSelect?.(nextTrip.name);
-    onCurrencyChange?.(tripCurrency);
-    setTripName('');
-    setTripCurrency('INR');
-    setShowSettings(true);
+    try {
+      await addTripToDb(normalized, tripCurrency, trips);
+      onTripSelect?.(normalized);
+      onCurrencyChange?.(tripCurrency);
+      setTripName('');
+      setTripCurrency('INR');
+      setShowSettings(true);
+    } catch (err) {
+      onSaveError?.(err);
+    }
+  }
+
+  async function handleDeleteTrip(trip) {
+    try {
+      await deleteTripFromDb(trip.id, trip.name);
+      if (selectedTrip === trip.name) {
+        onTripSelect?.('');
+      }
+    } catch (err) {
+      onSaveError?.(err);
+    }
   }
 
   async function handleAddCategory(event) {
@@ -73,9 +81,6 @@ export default function TravelManager({
     if (!normalized) return;
     try {
       await addCategoryToDb('travel', normalized, rawCategoryDocs);
-      setCustomCategories((prev) =>
-        prev.includes(normalized) ? prev : [...prev, normalized],
-      );
       setCategoryDraft('');
     } catch (err) {
       console.error('Failed to add category:', err);
@@ -85,35 +90,56 @@ export default function TravelManager({
   async function handleDeleteCategory(categoryName) {
     try {
       await deleteCategoryFromDb('travel', categoryName, rawCategoryDocs);
-      setCustomCategories((prev) => prev.filter((c) => c !== categoryName));
     } catch (err) {
       console.error('Failed to delete category:', err);
     }
   }
 
-  function handleSaveCash(event) {
+  async function handleAddPaymentMethod(event) {
+    event.preventDefault();
+    const normalized = paymentMethodDraft.trim();
+    if (!normalized) return;
+    try {
+      await addPaymentMethodToDb(normalized, rawPaymentMethodDocs);
+      setPaymentMethodDraft('');
+    } catch (err) {
+      console.error('Failed to add payment method:', err);
+    }
+  }
+
+  async function handleDeletePaymentMethod(name) {
+    try {
+      await deletePaymentMethodFromDb(name, rawPaymentMethodDocs);
+    } catch (err) {
+      console.error('Failed to delete payment method:', err);
+    }
+  }
+
+  async function handleSaveCash(event) {
     event.preventDefault();
     if (!selectedTrip) return;
     const parsedOpening = parseFloat(openingCash);
     if (parsedOpening > 0) {
-      setCashMovements((prev) => [
-        ...prev,
-        { tripName: selectedTrip, type: 'opening', amount: parsedOpening, createdAt: new Date().toISOString() },
-      ]);
-      setOpeningCash('');
+      try {
+        await addCashMovementToDb({ tripName: selectedTrip, type: 'opening', amount: parsedOpening });
+        setOpeningCash('');
+      } catch (err) {
+        onSaveError?.(err);
+      }
     }
   }
 
-  function handleAddWithdrawal(event) {
+  async function handleAddWithdrawal(event) {
     event.preventDefault();
     if (!selectedTrip) return;
     const parsedWithdrawal = parseFloat(withdrawalAmount);
     if (parsedWithdrawal > 0) {
-      setCashMovements((prev) => [
-        ...prev,
-        { tripName: selectedTrip, type: 'withdrawal', amount: parsedWithdrawal, createdAt: new Date().toISOString() },
-      ]);
-      setWithdrawalAmount('');
+      try {
+        await addCashMovementToDb({ tripName: selectedTrip, type: 'withdrawal', amount: parsedWithdrawal });
+        setWithdrawalAmount('');
+      } catch (err) {
+        onSaveError?.(err);
+      }
     }
   }
 
@@ -199,21 +225,35 @@ export default function TravelManager({
           {availableTrips.map((trip) => {
             const active = selectedTrip === trip.name;
             return (
-              <button
+              <div
                 key={trip.name}
-                type="button"
-                onClick={() => {
-                  onTripSelect?.(trip.name);
-                  onCurrencyChange?.(trip.currency || 'INR');
-                }}
-                className={`min-h-10 rounded-lg px-3.5 py-2 text-xs font-semibold border transition-all ${
+                className={`flex items-center min-h-10 rounded-lg border transition-all ${
                   active
-                    ? 'bg-ledger-green text-white border-ledger-green shadow-2xs'
-                    : 'border-ink/15 bg-paper text-ink hover:bg-paper-card'
+                    ? 'bg-ledger-green border-ledger-green shadow-2xs'
+                    : 'border-ink/15 bg-paper hover:bg-paper-card'
                 }`}
               >
-                {trip.name}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onTripSelect?.(trip.name);
+                    onCurrencyChange?.(trip.currency || 'INR');
+                  }}
+                  className={`min-h-10 pl-3.5 pr-2 text-xs font-semibold ${active ? 'text-white' : 'text-ink'}`}
+                >
+                  {trip.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteTrip(trip)}
+                  className={`min-h-10 min-w-8 px-2 text-xs font-bold rounded-r-lg transition-colors ${
+                    active ? 'text-white/80 hover:bg-white/10' : 'text-muted-text hover:text-stamp-red hover:bg-stamp-red/10'
+                  }`}
+                  title={`Delete ${trip.name}`}
+                >
+                  ✕
+                </button>
+              </div>
             );
           })}
         </div>
@@ -309,6 +349,44 @@ export default function TravelManager({
                   >
                     ✕
                   </button>
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2 pt-2 border-t border-ink/10">
+            <p className="text-xs font-medium text-ink">Payment Methods</p>
+            <p className="text-2xs text-muted-text -mt-1">
+              Which card or "Cash" paid for each expense - used to reconcile cash spend against the balance above.
+            </p>
+            <form onSubmit={handleAddPaymentMethod} className="flex gap-2">
+              <input
+                value={paymentMethodDraft}
+                onChange={(e) => setPaymentMethodDraft(e.target.value)}
+                className="flex-1 min-h-10 px-3 py-1.5 rounded-lg border border-ink/15 bg-paper text-ink text-xs focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                placeholder="e.g. Yash Forex, Kruti Diners"
+              />
+              <button type="submit" className="min-h-10 rounded-lg border border-ink/15 bg-paper px-3 py-1.5 font-semibold text-xs text-ink hover:bg-paper-card transition-colors">
+                Add
+              </button>
+            </form>
+            <div className="flex flex-wrap gap-1.5">
+              {dbPaymentMethods.map((method) => (
+                <span
+                  key={method}
+                  className="inline-flex items-center gap-1 rounded-md border border-ink/10 bg-paper px-2.5 py-1 text-xs text-ink font-medium shadow-2xs"
+                >
+                  <span>{method}</span>
+                  {method !== 'Cash' && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePaymentMethod(method)}
+                      className="text-muted-text hover:text-stamp-red text-xs font-bold px-1 py-0.2 rounded hover:bg-stamp-red/10 transition-colors"
+                      title={`Remove ${method}`}
+                    >
+                      ✕
+                    </button>
+                  )}
                 </span>
               ))}
             </div>

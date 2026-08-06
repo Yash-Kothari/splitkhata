@@ -6,6 +6,7 @@ export default function EditEntryRow({
   entry,
   dbMembers = [],
   dbCategories = [],
+  dbPaymentMethods = [],
   ledger = 'household',
   currentCurrency = 'INR',
   onCancel,
@@ -14,6 +15,7 @@ export default function EditEntryRow({
 }) {
   const membersList = dbMembers && dbMembers.length > 0 ? dbMembers : PERSONS;
   const categories = dbCategories && dbCategories.length > 0 ? dbCategories : [entry.category];
+  const paymentMethodsList = dbPaymentMethods && dbPaymentMethods.length > 0 ? dbPaymentMethods : ['Cash'];
 
   const [amount, setAmount] = useState(String(entry.amount ?? ''));
   const [payer, setPayer] = useState(membersList.includes(entry.payer) ? entry.payer : membersList[0]);
@@ -23,6 +25,11 @@ export default function EditEntryRow({
     entry.owedBy && membersList.includes(entry.owedBy)
       ? entry.owedBy
       : membersList.find((p) => p !== payer) || ''
+  );
+  const [paymentMethod, setPaymentMethod] = useState(
+    entry.paymentMethod && paymentMethodsList.includes(entry.paymentMethod)
+      ? entry.paymentMethod
+      : paymentMethodsList[0] || 'Cash'
   );
   const [date, setDate] = useState(entry.date || '');
   const [note, setNote] = useState(entry.note || '');
@@ -64,6 +71,7 @@ export default function EditEntryRow({
           owedBy: splitType === 'owed' ? owedBy : null,
           note: note.trim(),
           date,
+          paymentMethod: ledger === 'travel' ? paymentMethod : null,
         });
       }
       onSaved?.();
@@ -237,6 +245,24 @@ export default function EditEntryRow({
               ))}
             </select>
           </div>
+
+          {ledger === 'travel' && (
+            <div>
+              <label htmlFor={`edit-paymentmethod-${entry.id}`} className={labelClass}>
+                Payment Method
+              </label>
+              <select
+                id={`edit-paymentmethod-${entry.id}`}
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
+                className={selectClass}
+              >
+                {paymentMethodsList.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div>
             <label htmlFor={`edit-date-${entry.id}`} className={labelClass}>

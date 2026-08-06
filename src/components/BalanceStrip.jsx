@@ -2,9 +2,10 @@ import { useState, useMemo } from 'react';
 import { addExpense } from '../firebase';
 import { formatCurrency, computeBalance, todayISO } from '../utils';
 
-export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName = '', onSaveError }) {
+export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName = '', currentCurrency = 'INR', onSaveError }) {
   const balance = useMemo(() => computeBalance(entries, ledger, dbMembers), [entries, ledger, dbMembers]);
   const ledgerLabel = ledger === 'travel' ? 'Travel' : 'Household';
+  const displayCurrency = ledger === 'travel' ? currentCurrency : 'INR';
 
   const [settling, setSettling] = useState(false);
   const [amount, setAmount] = useState('');
@@ -73,7 +74,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
               <span className="font-semibold text-ledger-green">{balance.creditor}</span>
               {' '}
               <span className="font-mono font-bold text-lg text-ink">
-                {formatCurrency(balance.amount)}
+                {formatCurrency(balance.amount, displayCurrency)}
               </span>
             </p>
           )}
@@ -104,7 +105,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div>
-              <label htmlFor="settle-amount" className={labelClass}>Amount (₹)</label>
+              <label htmlFor="settle-amount" className={labelClass}>Amount ({displayCurrency})</label>
               <input
                 id="settle-amount"
                 type="number"
@@ -149,13 +150,13 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
                 <>
                   After this, <span className="font-semibold text-ink">{balance.debtor}</span> will still owe{' '}
                   <span className="font-semibold text-ink">{balance.creditor}</span>{' '}
-                  <span className="font-mono font-semibold text-ink">{formatCurrency(remaining)}</span>.
+                  <span className="font-mono font-semibold text-ink">{formatCurrency(remaining, displayCurrency)}</span>.
                 </>
               ) : (
                 <>
-                  This overpays by {formatCurrency(-remaining)} - <span className="font-semibold text-ink">{balance.creditor}</span>{' '}
+                  This overpays by {formatCurrency(-remaining, displayCurrency)} - <span className="font-semibold text-ink">{balance.creditor}</span>{' '}
                   will end up owing <span className="font-semibold text-ink">{balance.debtor}</span>{' '}
-                  <span className="font-mono font-semibold text-ink">{formatCurrency(-remaining)}</span>.
+                  <span className="font-mono font-semibold text-ink">{formatCurrency(-remaining, displayCurrency)}</span>.
                 </>
               )}
             </p>

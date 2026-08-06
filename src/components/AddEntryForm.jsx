@@ -16,18 +16,21 @@ export default function AddEntryForm({
   dbCategories,
   dbMembers = [],
   currentCurrency = 'INR',
+  dbPaymentMethods = [],
 }) {
   const categories = dbCategories && dbCategories.length > 0
     ? dbCategories
     : getLedgerCategories(ledger);
 
   const membersList = dbMembers && dbMembers.length > 0 ? dbMembers : PERSONS;
+  const paymentMethodsList = dbPaymentMethods && dbPaymentMethods.length > 0 ? dbPaymentMethods : ['Cash'];
 
   const [amount, setAmount] = useState('');
   const [payer, setPayer] = useState(deviceName || membersList[0]);
   const [category, setCategory] = useState(categories[0] || 'Groceries');
   const [splitType, setSplitType] = useState('shared');
   const [owedBy, setOwedBy] = useState(() => membersList.find((person) => person !== (deviceName || membersList[0])) || '');
+  const [paymentMethod, setPaymentMethod] = useState(paymentMethodsList[0] || 'Cash');
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -60,6 +63,13 @@ export default function AddEntryForm({
     }
   }, [membersList, owedBy, payer]);
 
+  useEffect(() => {
+    if (paymentMethodsList.length && !paymentMethodsList.includes(paymentMethod)) {
+      setPaymentMethod(paymentMethodsList[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paymentMethodsList]);
+
   async function handleSubmit(e) {
     e.preventDefault();
     const parsed = parseFloat(amount);
@@ -89,6 +99,7 @@ export default function AddEntryForm({
           date: addMonthsToDateISO(date, i),
           ledger,
           tripName: ledger === 'travel' ? tripName : '',
+          paymentMethod: ledger === 'travel' ? paymentMethod : null,
         }));
         await addExpensesBatch(installments);
       } else {
@@ -103,6 +114,7 @@ export default function AddEntryForm({
           date,
           ledger,
           tripName: ledger === 'travel' ? tripName : '',
+          paymentMethod: ledger === 'travel' ? paymentMethod : null,
         });
       }
       setAmount('');
@@ -230,6 +242,24 @@ export default function AddEntryForm({
                 ))}
               </select>
             </div>
+
+            {ledger === 'travel' && (
+              <div>
+                <label htmlFor="paymentMethod" className={labelClass}>
+                  Payment Method
+                </label>
+                <select
+                  id="paymentMethod"
+                  value={paymentMethod}
+                  onChange={(e) => setPaymentMethod(e.target.value)}
+                  className={selectClass}
+                >
+                  {paymentMethodsList.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             <div>
               <label htmlFor="date" className={labelClass}>

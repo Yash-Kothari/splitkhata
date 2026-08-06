@@ -28,6 +28,7 @@ import {
   DEFAULT_TRAVEL_CATEGORIES as TRAVEL_CATEGORIES,
   DEFAULT_CURRENCIES as CURRENCIES,
   DEFAULT_PERSONS as PERSONS,
+  DEFAULT_PAYMENT_METHODS as PAYMENT_METHODS,
   getStoredHouseholdCategories,
   setStoredHouseholdCategories,
   getStoredTravelCategories,
@@ -36,6 +37,12 @@ import {
   setStoredCurrencies,
   getStoredMembers,
   setStoredMembers,
+  getStoredTrips,
+  setStoredTrips,
+  getStoredCashMovements,
+  setStoredCashMovements,
+  getStoredPaymentMethods,
+  setStoredPaymentMethods,
   getPinConfig,
   setPinConfig,
   normalizeLedger,
@@ -43,6 +50,9 @@ import {
   TRAVEL_CATEGORIES_KEY,
   CURRENCIES_KEY,
   MEMBERS_KEY,
+  TRIPS_KEY,
+  CASH_MOVEMENTS_KEY,
+  PAYMENT_METHODS_KEY,
 } from './utils';
 
 // Firestore write batches are capped at 500 operations.
@@ -75,6 +85,9 @@ let expensesRef = null;
 let categoriesRef = null;
 let currenciesRef = null;
 let membersRef = null;
+let tripsRef = null;
+let cashMovementsRef = null;
+let paymentMethodsRef = null;
 let authInstance = null;
 
 if (isFirebaseConfigured()) {
@@ -99,6 +112,9 @@ if (isFirebaseConfigured()) {
     categoriesRef = collection(dbInstance, 'categories');
     currenciesRef = collection(dbInstance, 'currencies');
     membersRef = collection(dbInstance, 'members');
+    tripsRef = collection(dbInstance, 'trips');
+    cashMovementsRef = collection(dbInstance, 'cashMovements');
+    paymentMethodsRef = collection(dbInstance, 'paymentMethods');
   } catch (err) {
     console.warn('Firebase initialization failed, falling back to local database:', err);
   }
@@ -134,6 +150,9 @@ const expenseListeners = new Set();
 const categoryListeners = new Set();
 const currencyListeners = new Set();
 const memberListeners = new Set();
+const tripListeners = new Set();
+const cashMovementListeners = new Set();
+const paymentMethodListeners = new Set();
 
 let categoriesSeededFlag = false;
 
@@ -519,6 +538,209 @@ export async function deleteMemberFromDb(name, rawDocs = []) {
   const updated = current.filter((m) => m.toLowerCase() !== trimmed.toLowerCase());
   setStoredMembers(updated);
   memberListeners.forEach((fn) => fn({ members: updated, rawDocs: [] }));
+}
+
+// Trips (travel ledger)
+export function subscribeToTrips(onData, onError) {
+  if (tripsRef) {
+    const q = query(tripsRef, orderBy('createdAt', 'asc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      onError,
+    );
+  } else {
+    const handler = (data) => onData(data);
+    tripListeners.add(handler);
+    onData(getStoredTrips());
+
+    const storageListener = (e) => {
+      if (e.key === TRIPS_KEY) onData(getStoredTrips());
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      tripListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+export async function addTripToDb(name, currency, existingTrips = []) {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const exists = existingTrips.some((t) => t.name?.trim().toLowerCase() === trimmed.toLowerCase());
+  if (exists) return;
+
+  if (tripsRef) {
+    await addDoc(tripsRef, { name: trimmed, currency, createdAt: serverTimestamp() });
+  } else {
+    const current = getStoredTrips();
+    const newTrip = { id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), name: trimmed, currency };
+    const updated = [...current, newTrip];
+    setStoredTrips(updated);
+    tripListeners.forEach((fn) => fn(updated));
+  }
+}
+
+export async function deleteTripFromDb(tripId, tripName) {
+  if (tripsRef) {
+    if (tripId) await deleteDoc(doc(dbInstance, 'trips', tripId));
+  } else {
+    const current = getStoredTrips();
+    const updated = current.filter((t) => t.name !== tripName);
+    setStoredTrips(updated);
+    tripListeners.forEach((fn) => fn(updated));
+  }
+}
+
+// Cash movements (travel ledger - opening balance + ATM withdrawals per trip)
+export function subscribeToCashMovements(onData, onError) {
+  if (cashMovementsRef) {
+    const q = query(cashMovementsRef, orderBy('createdAt', 'asc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        onData(snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+          createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? null,
+        })));
+      },
+      onError,
+    );
+  } else {
+    const handler = (data) => onData(data);
+    cashMovementListeners.add(handler);
+    onData(getStoredCashMovements());
+
+    const storageListener = (e) => {
+      if (e.key === CASH_MOVEMENTS_KEY) onData(getStoredCashMovements());
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      cashMovementListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+export async function addCashMovementToDb(movement) {
+  if (cashMovementsRef) {
+    await addDoc(cashMovementsRef, { ...movement, createdAt: serverTimestamp() });
+  } else {
+    const current = getStoredCashMovements();
+    const newMovement = {
+      id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      ...movement,
+      createdAt: new Date().toISOString(),
+    };
+    const updated = [...current, newMovement];
+    setStoredCashMovements(updated);
+    cashMovementListeners.forEach((fn) => fn(updated));
+  }
+}
+
+export async function deleteCashMovementFromDb(id) {
+  if (cashMovementsRef) {
+    await deleteDoc(doc(dbInstance, 'cashMovements', id));
+  } else {
+    const current = getStoredCashMovements();
+    const updated = current.filter((m) => m.id !== id);
+    setStoredCashMovements(updated);
+    cashMovementListeners.forEach((fn) => fn(updated));
+  }
+}
+
+// Payment methods (travel ledger - "Cash", "Yash Forex", "Kruti Diners", etc.)
+let paymentMethodsSeededFlag = false;
+
+export function subscribeToPaymentMethods(onData, onError) {
+  if (paymentMethodsRef) {
+    const q = query(paymentMethodsRef, orderBy('createdAt', 'asc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        if (snapshot.empty && !paymentMethodsSeededFlag) {
+          paymentMethodsSeededFlag = true;
+          seedDefaultPaymentMethods().catch(() => {});
+          onData({ methods: [...PAYMENT_METHODS], rawDocs: [] });
+          return;
+        }
+        const methods = [];
+        const rawDocs = [];
+        snapshot.docs.forEach((d) => {
+          const item = { id: d.id, ...d.data() };
+          rawDocs.push(item);
+          if (item.name) methods.push(item.name);
+        });
+        onData({ methods, rawDocs });
+      },
+      onError,
+    );
+  } else {
+    const handler = (data) => onData(data);
+    paymentMethodListeners.add(handler);
+    onData({ methods: getStoredPaymentMethods(), rawDocs: [] });
+
+    const storageListener = (e) => {
+      if (e.key === PAYMENT_METHODS_KEY) onData({ methods: getStoredPaymentMethods(), rawDocs: [] });
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      paymentMethodListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+async function seedDefaultPaymentMethods() {
+  if (!paymentMethodsRef) return;
+  const batch = writeBatch(dbInstance);
+  for (const m of PAYMENT_METHODS) {
+    batch.set(doc(paymentMethodsRef), { name: m, createdAt: serverTimestamp() });
+  }
+  await batch.commit();
+}
+
+export async function addPaymentMethodToDb(name, existingRawDocs = []) {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+
+  if (paymentMethodsRef) {
+    const exists = existingRawDocs.some((d) => d.name?.trim().toLowerCase() === trimmed.toLowerCase());
+    if (!exists) {
+      await addDoc(paymentMethodsRef, { name: trimmed, createdAt: serverTimestamp() });
+    }
+  }
+
+  const current = getStoredPaymentMethods();
+  if (!current.some((m) => m.toLowerCase() === trimmed.toLowerCase())) {
+    const updated = [...current, trimmed];
+    setStoredPaymentMethods(updated);
+    paymentMethodListeners.forEach((fn) => fn({ methods: updated, rawDocs: [] }));
+  }
+}
+
+export async function deletePaymentMethodFromDb(name, rawDocs = []) {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+
+  if (paymentMethodsRef) {
+    const docToDelete = rawDocs.find((d) => d.name?.trim().toLowerCase() === trimmed.toLowerCase());
+    if (docToDelete?.id) {
+      await deleteDoc(doc(dbInstance, 'paymentMethods', docToDelete.id));
+    }
+  }
+
+  const current = getStoredPaymentMethods();
+  const updated = current.filter((m) => m.toLowerCase() !== trimmed.toLowerCase());
+  setStoredPaymentMethods(updated);
+  paymentMethodListeners.forEach((fn) => fn({ methods: updated, rawDocs: [] }));
 }
 
 // Database Actions

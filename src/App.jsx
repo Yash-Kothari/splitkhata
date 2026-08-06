@@ -12,6 +12,9 @@ import {
   subscribeToCategories,
   subscribeToCurrencies,
   subscribeToMembers,
+  subscribeToTrips,
+  subscribeToCashMovements,
+  subscribeToPaymentMethods,
   subscribeToPinConfig,
   isFirebaseConfigured,
   subscribeToAuth,
@@ -22,10 +25,14 @@ import {
 import {
   DEFAULT_PERSONS as PERSONS,
   DEFAULT_CURRENCIES as CURRENCIES,
+  DEFAULT_PAYMENT_METHODS as PAYMENT_METHODS,
   getDeviceName,
   setDeviceName,
   getAvailableMonths,
-  getStoredTrips,
+  getStoredActiveLedger,
+  setStoredActiveLedger,
+  getStoredSelectedTrip,
+  setStoredSelectedTrip,
   getPinConfig,
 } from './utils';
 
@@ -123,13 +130,13 @@ export default function App() {
   const [dbCategories, setDbCategories] = useState({ household: [], travel: [], rawDocs: [] });
   const [dbCurrencies, setDbCurrencies] = useState({ currencies: [], rawDocs: [] });
   const [dbMembers, setDbMembers] = useState({ members: [], rawDocs: [] });
+  const [dbTrips, setDbTrips] = useState([]);
+  const [dbCashMovements, setDbCashMovements] = useState([]);
+  const [dbPaymentMethods, setDbPaymentMethods] = useState({ methods: [], rawDocs: [] });
   const [connectionStatus, setConnectionStatus] = useState('ok');
   const [errorMessage, setErrorMessage] = useState('');
-  const [activeLedger, setActiveLedger] = useState('household');
-  const [selectedTrip, setSelectedTrip] = useState(() => {
-    const trips = getStoredTrips();
-    return trips[0]?.name || '';
-  });
+  const [activeLedger, setActiveLedgerState] = useState(() => getStoredActiveLedger());
+  const [selectedTrip, setSelectedTripState] = useState(() => getStoredSelectedTrip());
   const [currentCurrency, setCurrentCurrency] = useState('INR');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
@@ -138,6 +145,16 @@ export default function App() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+
+  const setActiveLedger = useCallback((ledger) => {
+    setActiveLedgerState(ledger);
+    setStoredActiveLedger(ledger);
+  }, []);
+
+  const setSelectedTrip = useCallback((tripName) => {
+    setSelectedTripState(tripName);
+    setStoredSelectedTrip(tripName);
+  }, []);
 
   useEffect(() => {
     if (!isFirebaseConfigured()) return undefined;
@@ -152,6 +169,15 @@ export default function App() {
     setErrorMessage(err?.message || 'Failed to save');
   }, []);
 
+  // Restore the trip's currency after a reload, since only the trip *name*
+  // is persisted locally - the currency lives on the trip record itself,
+  // which only becomes available once the trips subscription loads.
+  useEffect(() => {
+    if (!selectedTrip || !dbTrips.length) return;
+    const trip = dbTrips.find((t) => t.name === selectedTrip);
+    if (trip?.currency) setCurrentCurrency(trip.currency);
+  }, [selectedTrip, dbTrips]);
+
   // Subscribe to real-time database collections
   useEffect(() => {
     if (isFirebaseConfigured() && !isAllowedUser(currentUser)) return undefined;
@@ -163,6 +189,21 @@ export default function App() {
     const unsubMembers = subscribeToMembers(
       (data) => setDbMembers(data),
       (err) => console.warn('Members sync warning:', err),
+    );
+
+    const unsubTrips = subscribeToTrips(
+      (data) => setDbTrips(data),
+      (err) => console.warn('Trips sync warning:', err),
+    );
+
+    const unsubCashMovements = subscribeToCashMovements(
+      (data) => setDbCashMovements(data),
+      (err) => console.warn('Cash movements sync warning:', err),
+    );
+
+    const unsubPaymentMethods = subscribeToPaymentMethods(
+      (data) => setDbPaymentMethods(data),
+      (err) => console.warn('Payment methods sync warning:', err),
     );
 
     const unsubPin = subscribeToPinConfig((cfg) => {
@@ -177,6 +218,9 @@ export default function App() {
     return () => {
       unsubCurrencies();
       unsubMembers();
+      unsubTrips();
+      unsubCashMovements();
+      unsubPaymentMethods();
       unsubPin();
     };
   }, [currentUser]);
@@ -234,6 +278,7 @@ export default function App() {
 
   const activeMembersList = dbMembers.members.length > 0 ? dbMembers.members : PERSONS;
   const activeCurrenciesList = dbCurrencies.currencies.length > 0 ? dbCurrencies.currencies : CURRENCIES;
+  const activePaymentMethodsList = dbPaymentMethods.methods.length > 0 ? dbPaymentMethods.methods : PAYMENT_METHODS;
 
   const pinConfig = getPinConfig();
 
@@ -331,8 +376,10 @@ export default function App() {
               </h1>
             </div>
 
-            <span className="px-2.5 sm:px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-[11px] sm:text-xs font-bold tracking-wide shadow-2xs whitespace-nowrap">
-              Household Ledger
+            <span className="px-2.5 sm:px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-[11px] sm:text-xs font-bold tracking-wide shadow-2xs whitespace-nowrap truncate max-w-[40vw] sm:max-w-none">
+              {activeLedger === 'travel'
+                ? (selectedTrip ? `✈️ ${selectedTrip}` : '✈️ Travel')
+                : '🏠 Household Ledger'}
             </span>
 
               <div className="flex items-center justify-end gap-1 min-w-0">
@@ -397,6 +444,33 @@ export default function App() {
           </div>
         </header>
 
+        <div className="px-3 sm:px-4 max-w-5xl mx-auto mb-4 sm:mb-6">
+          <div className="grid grid-cols-2 gap-1.5 p-1.5 rounded-xl bg-paper border border-ink/10">
+            <button
+              type="button"
+              onClick={() => setActiveLedger('household')}
+              className={`min-h-11 rounded-lg text-sm font-semibold transition-all ${
+                activeLedger === 'household'
+                  ? 'bg-ledger-green text-white shadow-xs'
+                  : 'text-muted-text hover:text-ink'
+              }`}
+            >
+              🏠 Household
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveLedger('travel')}
+              className={`min-h-11 rounded-lg text-sm font-semibold transition-all ${
+                activeLedger === 'travel'
+                  ? 'bg-ledger-green text-white shadow-xs'
+                  : 'text-muted-text hover:text-ink'
+              }`}
+            >
+              ✈️ Travel
+            </button>
+          </div>
+        </div>
+
         <main className="px-3 sm:px-4 max-w-5xl mx-auto space-y-4 sm:space-y-6">
           {activeLedger === 'travel' && (
             <TravelManager
@@ -407,6 +481,12 @@ export default function App() {
               dbCategories={dbCategories.travel}
               rawCategoryDocs={dbCategories.rawDocs}
               dbCurrencies={activeCurrenciesList}
+              trips={dbTrips}
+              cashMovements={dbCashMovements}
+              entries={entries}
+              dbPaymentMethods={activePaymentMethodsList}
+              rawPaymentMethodDocs={dbPaymentMethods.rawDocs}
+              onSaveError={handleSaveError}
             />
           )}
 
@@ -415,11 +495,12 @@ export default function App() {
             ledger={activeLedger}
             dbMembers={activeMembersList}
             tripName={selectedTrip}
+            currentCurrency={currentCurrency}
             onSaveError={handleSaveError}
           />
 
           {activeLedger === 'travel' && (
-            <TravelSummaryCard entries={entries} ledger={activeLedger} />
+            <TravelSummaryCard entries={entries} ledger={activeLedger} dbMembers={activeMembersList} trips={dbTrips} />
           )}
 
           <AddEntryForm
@@ -430,11 +511,12 @@ export default function App() {
             dbCategories={currentDbCategories}
             dbMembers={activeMembersList}
             currentCurrency={currentCurrency}
+            dbPaymentMethods={activePaymentMethodsList}
           />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Suspense fallback={<ChartSkeleton />}>
-              <MonthChart entries={entries} ledger={activeLedger} />
+              <MonthChart entries={entries} ledger={activeLedger} currentCurrency={currentCurrency} />
             </Suspense>
             <Suspense fallback={<ChartSkeleton />}>
               <CategoryChart
@@ -443,6 +525,7 @@ export default function App() {
                 onMonthChange={setSelectedMonth}
                 availableMonths={availableMonths}
                 ledger={activeLedger}
+                currentCurrency={currentCurrency}
               />
             </Suspense>
           </div>
@@ -458,6 +541,7 @@ export default function App() {
             dbCategories={currentDbCategories}
             dbMembers={activeMembersList}
             currentCurrency={currentCurrency}
+            dbPaymentMethods={activePaymentMethodsList}
           />
         </main>
       </div>

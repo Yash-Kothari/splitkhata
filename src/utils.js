@@ -27,6 +27,8 @@ export const DEFAULT_TRAVEL_CATEGORIES = [
 
 export const DEFAULT_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'TWD', 'JPY', 'AED', 'SGD'];
 
+export const DEFAULT_PAYMENT_METHODS = ['Cash'];
+
 export const CATEGORY_COLORS = [
   '#3D7068',
   '#A63D40',
@@ -71,7 +73,7 @@ export function getPersonColor(personName, index = 0) {
   return MEMBER_PALETTE[pos];
 }
 
-const CURRENCY_SYMBOLS = {
+export const CURRENCY_SYMBOLS = {
   INR: '₹',
   USD: '$',
   EUR: '€',
@@ -424,6 +426,9 @@ export const DEVICE_NAME_KEY = 'household-ledger-device-name';
 export const HOUSEHOLD_CATEGORIES_KEY = 'household-ledger-categories';
 export const TRIPS_KEY = 'household-ledger-trips';
 export const CASH_MOVEMENTS_KEY = 'household-ledger-cash-movements';
+export const PAYMENT_METHODS_KEY = 'household-ledger-payment-methods';
+export const ACTIVE_LEDGER_KEY = 'household-ledger-active-ledger';
+export const SELECTED_TRIP_KEY = 'household-ledger-selected-trip';
 export const TRAVEL_CATEGORIES_KEY = 'household-ledger-travel-categories';
 export const MEMBERS_KEY = 'household-ledger-members';
 export const CURRENCIES_KEY = 'household-ledger-currencies';
@@ -488,6 +493,38 @@ export function getStoredCashMovements() {
 
 export function setStoredCashMovements(movements) {
   setItem(CASH_MOVEMENTS_KEY, JSON.stringify(movements));
+}
+
+export function getStoredPaymentMethods() {
+  const raw = getItem(PAYMENT_METHODS_KEY);
+  if (raw === null || raw === undefined) return DEFAULT_PAYMENT_METHODS;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_PAYMENT_METHODS;
+  } catch {
+    return DEFAULT_PAYMENT_METHODS;
+  }
+}
+
+export function setStoredPaymentMethods(methods) {
+  setItem(PAYMENT_METHODS_KEY, JSON.stringify(methods));
+}
+
+export function getStoredActiveLedger() {
+  const raw = getItem(ACTIVE_LEDGER_KEY);
+  return raw === 'travel' ? 'travel' : 'household';
+}
+
+export function setStoredActiveLedger(ledger) {
+  setItem(ACTIVE_LEDGER_KEY, normalizeLedger(ledger));
+}
+
+export function getStoredSelectedTrip() {
+  return getItem(SELECTED_TRIP_KEY) || '';
+}
+
+export function setStoredSelectedTrip(tripName) {
+  setItem(SELECTED_TRIP_KEY, tripName || '');
 }
 
 export function getStoredTravelCategories() {
