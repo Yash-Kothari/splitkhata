@@ -15,11 +15,13 @@ export default function BalanceStrip({
   const balance = useMemo(() => computeBalance(entries, ledger, dbMembers), [entries, ledger, dbMembers]);
   const ledgerLabel = isTravel ? 'Travel' : 'Household';
 
-  // Same exclusion as Category Breakdown/the old Trip Summary card: a cash
-  // purchase's cost is already carried by the ATM withdrawal that funded
-  // it, so it doesn't get counted again here.
+  // Same exclusion as Category Breakdown: an ATM withdrawal is a cash
+  // movement, not spend of its own - the money it represents is already
+  // counted for real via the individual cash purchases it funds. Excluding
+  // purchases instead (the previous filter here) double-counted every
+  // withdrawal on top of the purchases it paid for.
   const memberTotals = useMemo(
-    () => (isTravel ? computeMemberTotals(entries.filter((e) => !(!e.split && e.paymentMethod === 'Cash')), dbMembers) : null),
+    () => (isTravel ? computeMemberTotals(entries.filter((e) => !e.isWithdrawal), dbMembers) : null),
     [entries, dbMembers, isTravel],
   );
 

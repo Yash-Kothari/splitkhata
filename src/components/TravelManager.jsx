@@ -167,38 +167,30 @@ export default function TravelManager({
     event.preventDefault();
     if (!selectedTrip) return;
     const parsedWithdrawal = parseFloat(withdrawalAmount);
-    if (parsedWithdrawal > 0) {
+    const parsedInr = parseFloat(withdrawalInr);
+    // INR cost is required, not optional - without it there's no rate to
+    // register the joint debt or to auto-price the "Cash" purchases it
+    // funds, which just pushes that math back onto whoever's entering
+    // expenses by hand. Requiring it here is what keeps every Cash entry
+    // FIFO-priced automatically instead of typed in manually.
+    if (parsedWithdrawal > 0 && parsedInr > 0 && withdrawalPayer) {
       try {
         await addCashMovementToDb({ tripName: selectedTrip, type: 'withdrawal', amount: parsedWithdrawal, date: withdrawalDate });
-
-        // Recording the local-currency amount alone only feeds the cash
-        // balance widget - it doesn't touch who-owes-whom. If the INR cost
-        // is also given (from the card/forex statement), add a matching
-        // shared expense so the joint debt registers, and so this
-        // withdrawal's exact rate (INR / local) can auto-price every
-        // subsequent cash purchase in AddEntryForm. It's flagged
-        // isWithdrawal so Trip Summary/Category Breakdown don't double-count
-        // it against the cash purchases it funds. This is the only place a
-        // withdrawal gets created, so the cash-balance movement and the
-        // debt-registering expense can never drift out of sync.
-        const parsedInr = parseFloat(withdrawalInr);
-        if (parsedInr > 0 && withdrawalPayer) {
-          await addExpense({
-            amount: parsedInr,
-            localAmount: parsedWithdrawal,
-            payer: withdrawalPayer,
-            category: 'Misc',
-            split: true,
-            splitType: 'shared',
-            owedBy: null,
-            note: `${currentCurrency || 'Local'} ATM Withdrawal`,
-            date: withdrawalDate,
-            ledger: 'travel',
-            tripName: selectedTrip,
-            paymentMethod: withdrawalPaymentMethod,
-            isWithdrawal: true,
-          });
-        }
+        await addExpense({
+          amount: parsedInr,
+          localAmount: parsedWithdrawal,
+          payer: withdrawalPayer,
+          category: 'Misc',
+          split: true,
+          splitType: 'shared',
+          owedBy: null,
+          note: `${currentCurrency || 'Local'} ATM Withdrawal`,
+          date: withdrawalDate,
+          ledger: 'travel',
+          tripName: selectedTrip,
+          paymentMethod: withdrawalPaymentMethod,
+          isWithdrawal: true,
+        });
 
         setWithdrawalAmount('');
         setWithdrawalInr('');
@@ -434,12 +426,13 @@ export default function TravelManager({
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-muted-text mb-1">INR Cost (optional)</label>
+              <label className="block text-xs font-medium text-muted-text mb-1">INR Cost</label>
               <input
                 type="number"
                 inputMode="decimal"
-                min="0"
+                min="0.01"
                 step="any"
+                required
                 value={withdrawalInr}
                 onChange={(e) => setWithdrawalInr(e.target.value)}
                 className={inputClass}
@@ -455,37 +448,33 @@ export default function TravelManager({
                 className={`${inputClass} date-input appearance-none`}
               />
             </div>
-            {withdrawalInr && parseFloat(withdrawalInr) > 0 && (
-              <>
-                <div>
-                  <label className="block text-xs font-medium text-muted-text mb-1">Withdrawn By</label>
-                  <select
-                    value={withdrawalPayer}
-                    onChange={(e) => setWithdrawalPayer(e.target.value)}
-                    className={selectClass}
-                  >
-                    {(dbMembers.length > 0 ? dbMembers : [withdrawalPayer].filter(Boolean)).map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-muted-text mb-1">Card Used</label>
-                  <select
-                    value={withdrawalPaymentMethod}
-                    onChange={(e) => setWithdrawalPaymentMethod(e.target.value)}
-                    className={selectClass}
-                  >
-                    {dbPaymentMethods.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </div>
-              </>
-            )}
+            <div>
+              <label className="block text-xs font-medium text-muted-text mb-1">Withdrawn By</label>
+              <select
+                value={withdrawalPayer}
+                onChange={(e) => setWithdrawalPayer(e.target.value)}
+                className={selectClass}
+              >
+                {(dbMembers.length > 0 ? dbMembers : [withdrawalPayer].filter(Boolean)).map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-muted-text mb-1">Card Used</label>
+              <select
+                value={withdrawalPaymentMethod}
+                onChange={(e) => setWithdrawalPaymentMethod(e.target.value)}
+                className={selectClass}
+              >
+                {dbPaymentMethods.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
             <div className="sm:col-span-2">
               <p className="text-2xs text-muted-text mb-2">
-                This is the only place to record an ATM withdrawal. Adding the INR cost also records it as a shared expense, so the joint debt registers in the balance above and its exact rate auto-prices every "Cash" purchase you add afterward. Leave it blank to just track the cash balance.
+                This is the only place to record an ATM withdrawal. The INR cost is required - it's what registers the joint debt above and gives every "Cash" purchase you add afterward its rate, so nothing needs pricing by hand.
               </p>
               <button type="submit" className="w-full min-h-11 rounded-lg border border-ink/15 bg-paper font-semibold text-xs text-ink hover:bg-paper-card transition-colors">
                 Record Withdrawal

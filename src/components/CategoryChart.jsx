@@ -187,7 +187,12 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
                     );
                   })}
                 </Pie>
-                <Tooltip content={<DonutTooltip currency={currency} showTrend={!isTravel} />} />
+                <Tooltip
+                  content={<DonutTooltip currency={currency} showTrend={!isTravel} />}
+                  position={{ x: 0, y: 0 }}
+                  allowEscapeViewBox={{ x: true, y: true }}
+                  wrapperStyle={{ zIndex: 30, pointerEvents: 'none' }}
+                />
               </PieChart>
             </ResponsiveContainer>
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
