@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   addCategoryToDb,
   deleteCategoryFromDb,
@@ -37,10 +37,12 @@ export default function TravelManager({
   const [openingCash, setOpeningCash] = useState('');
   const [withdrawalAmount, setWithdrawalAmount] = useState('');
   const [withdrawalInr, setWithdrawalInr] = useState('');
+  const [withdrawalDate, setWithdrawalDate] = useState(todayISO());
   const [withdrawalPayer, setWithdrawalPayer] = useState(deviceName || dbMembers[0] || '');
   const [withdrawalPaymentMethod, setWithdrawalPaymentMethod] = useState(dbPaymentMethods[0] || 'Cash');
   const [showSettings, setShowSettings] = useState(false);
   const [addingTrip, setAddingTrip] = useState(false);
+  const [confirmingDeleteTrip, setConfirmingDeleteTrip] = useState(false);
 
   const displayCategories = dbCategories;
   const currenciesList = dbCurrencies && dbCurrencies.length > 0 ? dbCurrencies : CURRENCIES;
@@ -60,6 +62,10 @@ export default function TravelManager({
       return Number(b) - Number(a);
     });
   }, [availableTrips]);
+  useEffect(() => {
+    setConfirmingDeleteTrip(false);
+  }, [selectedTrip]);
+
   const selectedTripCash = useMemo(() => {
     const relevant = cashMovements.filter((movement) => movement.tripName === selectedTrip);
     const opening = relevant.filter((movement) => movement.type === 'opening').reduce((sum, movement) => sum + Number(movement.amount || 0), 0);
@@ -163,7 +169,7 @@ export default function TravelManager({
     const parsedWithdrawal = parseFloat(withdrawalAmount);
     if (parsedWithdrawal > 0) {
       try {
-        await addCashMovementToDb({ tripName: selectedTrip, type: 'withdrawal', amount: parsedWithdrawal });
+        await addCashMovementToDb({ tripName: selectedTrip, type: 'withdrawal', amount: parsedWithdrawal, date: withdrawalDate });
 
         // Recording the local-currency amount alone only feeds the cash
         // balance widget - it doesn't touch who-owes-whom. If the INR cost
@@ -172,7 +178,9 @@ export default function TravelManager({
         // withdrawal's exact rate (INR / local) can auto-price every
         // subsequent cash purchase in AddEntryForm. It's flagged
         // isWithdrawal so Trip Summary/Category Breakdown don't double-count
-        // it against the cash purchases it funds.
+        // it against the cash purchases it funds. This is the only place a
+        // withdrawal gets created, so the cash-balance movement and the
+        // debt-registering expense can never drift out of sync.
         const parsedInr = parseFloat(withdrawalInr);
         if (parsedInr > 0 && withdrawalPayer) {
           await addExpense({
@@ -184,7 +192,7 @@ export default function TravelManager({
             splitType: 'shared',
             owedBy: null,
             note: `${currentCurrency || 'Local'} ATM Withdrawal`,
-            date: todayISO(),
+            date: withdrawalDate,
             ledger: 'travel',
             tripName: selectedTrip,
             paymentMethod: withdrawalPaymentMethod,
@@ -194,6 +202,7 @@ export default function TravelManager({
 
         setWithdrawalAmount('');
         setWithdrawalInr('');
+        setWithdrawalDate(todayISO());
       } catch (err) {
         onSaveError?.(err);
       }
@@ -356,19 +365,9 @@ export default function TravelManager({
                           onTripSelect?.(trip.name);
                           onCurrencyChange?.(trip.currency || 'INR');
                         }}
-                        className={`min-h-10 pl-3.5 pr-2 text-xs font-semibold ${active ? 'text-white' : 'text-ink'}`}
+                        className={`min-h-10 px-3.5 text-xs font-semibold ${active ? 'text-white' : 'text-ink'}`}
                       >
                         {trip.name}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteTrip(trip)}
-                        className={`min-h-10 min-w-8 px-2 text-xs font-bold rounded-r-lg transition-colors ${
-                          active ? 'text-white/80 hover:bg-white/10' : 'text-muted-text hover:text-stamp-red hover:bg-stamp-red/10'
-                        }`}
-                        title={`Delete ${trip.name}`}
-                      >
-                        ✕
                       </button>
                     </div>
                   );
@@ -447,6 +446,15 @@ export default function TravelManager({
                 placeholder="From card/forex statement"
               />
             </div>
+            <div>
+              <label className="block text-xs font-medium text-muted-text mb-1">Date</label>
+              <input
+                type="date"
+                value={withdrawalDate}
+                onChange={(e) => setWithdrawalDate(e.target.value)}
+                className={`${inputClass} date-input appearance-none`}
+              />
+            </div>
             {withdrawalInr && parseFloat(withdrawalInr) > 0 && (
               <>
                 <div>
@@ -477,7 +485,7 @@ export default function TravelManager({
             )}
             <div className="sm:col-span-2">
               <p className="text-2xs text-muted-text mb-2">
-                Adding the INR cost records this withdrawal as a shared expense too, so the joint debt registers in the balance above, and its exact rate auto-prices every "Cash" purchase you add afterward. Leave it blank to just track the cash balance, like before.
+                This is the only place to record an ATM withdrawal. Adding the INR cost also records it as a shared expense, so the joint debt registers in the balance above and its exact rate auto-prices every "Cash" purchase you add afterward. Leave it blank to just track the cash balance.
               </p>
               <button type="submit" className="w-full min-h-11 rounded-lg border border-ink/15 bg-paper font-semibold text-xs text-ink hover:bg-paper-card transition-colors">
                 Record Withdrawal
@@ -555,6 +563,49 @@ export default function TravelManager({
               ))}
             </div>
           </div>
+
+          {selectedTrip && (
+            <div className="space-y-2 pt-2 border-t border-ink/10">
+              <p className="text-xs font-bold uppercase tracking-wider text-stamp-red">Danger Zone</p>
+              {!confirmingDeleteTrip ? (
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDeleteTrip(true)}
+                  className="min-h-10 rounded-lg border border-stamp-red/30 bg-paper px-3.5 py-2 text-xs font-semibold text-stamp-red hover:bg-stamp-red/10 transition-colors"
+                >
+                  Delete {selectedTrip}…
+                </button>
+              ) : (
+                <div className="rounded-lg border border-stamp-red/30 bg-stamp-red/5 p-3 space-y-2.5">
+                  <p className="text-xs text-ink">
+                    Permanently delete <span className="font-semibold">{selectedTrip}</span>? Its entries and cash
+                    movements aren't deleted with it, but they'll no longer be reachable from any trip. This can't be
+                    undone.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const trip = trips.find((t) => t.name === selectedTrip);
+                        if (trip) handleDeleteTrip(trip);
+                        setConfirmingDeleteTrip(false);
+                      }}
+                      className="h-9 px-4 rounded-lg bg-stamp-red text-white font-semibold text-xs hover:bg-stamp-red/90 transition-colors"
+                    >
+                      Confirm Delete
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingDeleteTrip(false)}
+                      className="h-9 px-4 rounded-lg border border-ink/15 text-ink font-semibold text-xs hover:bg-ink/5 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </section>

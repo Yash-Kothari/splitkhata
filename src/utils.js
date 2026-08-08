@@ -366,11 +366,7 @@ export function getPreviousMonthKey(monthKey) {
 
 export function getLast6MonthsData(entries = [], ledger) {
   const targetLedger = ledger ? normalizeLedger(ledger) : null;
-  const filtered = entries.filter((e) => {
-    if (targetLedger && normalizeLedger(e.ledger) !== targetLedger) return false;
-    if (e.splitType === 'settlement') return false;
-    return true;
-  });
+  const filtered = entries.filter((e) => isCountableSpend(e, null, targetLedger));
 
   const monthTotals = {};
   for (const entry of filtered) {
@@ -449,7 +445,7 @@ export function groupByMonth(entries = [], dynamicMembers = DEFAULT_PERSONS) {
   const groups = {};
 
   for (const entry of entries) {
-    if (entry.splitType === 'settlement') continue;
+    if (!isCountableSpend(entry, null, null)) continue;
     const key = getMonthKey(entry.date);
     if (!key) continue;
     if (!groups[key]) {
@@ -469,20 +465,34 @@ export function groupByMonth(entries = [], dynamicMembers = DEFAULT_PERSONS) {
     .map(([month, data]) => ({ month, ...data }));
 }
 
+// Shared by anything that totals up "real spend" (Category Breakdown, the
+// per-category drill-down, monthly totals) - a settlement/withdrawal/rollup
+// isn't a new expense, it's money already accounted for elsewhere.
+function isCountableSpend(entry, monthKey, targetLedger) {
+  if (monthKey && getMonthKey(entry.date) !== monthKey) return false;
+  if (targetLedger && normalizeLedger(entry.ledger) !== targetLedger) return false;
+  if (entry.splitType === 'settlement') return false;
+  // A cash withdrawal isn't a spend category of its own - the money it
+  // represents already shows up for real via the purchases it funded.
+  if (entry.isWithdrawal) return false;
+  // A trip-rollup entry is a debt transfer into the household ledger, not
+  // a real household expense - it shouldn't inflate a spend category.
+  if (entry.isTripRollup) return false;
+  return true;
+}
+
+// The individual entries behind one category's slice of the Category
+// Breakdown, biggest first - powers the "click a category" drill-down.
+export function getCategoryEntries(entries = [], monthKey, ledger, category) {
+  const targetLedger = ledger ? normalizeLedger(ledger) : null;
+  return entries
+    .filter((e) => e.category === category && isCountableSpend(e, monthKey, targetLedger))
+    .sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
+}
+
 export function groupByCategory(entries = [], monthKey, ledger, customCategoriesList = null) {
   const targetLedger = ledger ? normalizeLedger(ledger) : null;
-  const filtered = entries.filter((e) => {
-    if (monthKey && getMonthKey(e.date) !== monthKey) return false;
-    if (targetLedger && normalizeLedger(e.ledger) !== targetLedger) return false;
-    if (e.splitType === 'settlement') return false;
-    // A cash withdrawal isn't a spend category of its own - the money it
-    // represents already shows up for real via the purchases it funded.
-    if (e.isWithdrawal) return false;
-    // A trip-rollup entry is a debt transfer into the household ledger, not
-    // a real household expense - it shouldn't inflate a spend category.
-    if (e.isTripRollup) return false;
-    return true;
-  });
+  const filtered = entries.filter((e) => isCountableSpend(e, monthKey, targetLedger));
 
   const groups = {};
   for (const entry of filtered) {

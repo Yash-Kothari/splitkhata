@@ -1,12 +1,93 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import {
   getCategoryMoMComparison,
+  getCategoryEntries,
   formatMonthLabel,
   formatCurrency,
   CATEGORY_COLORS,
   DEFAULT_CATEGORIES as CATEGORIES,
 } from '../utils';
+
+function CategoryDrilldownModal({ category, entries, currency, isTravel, selectedMonth, onClose }) {
+  const total = entries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  const biggest = entries[0];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-2.5 sm:px-4 backdrop-blur-xs"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl bg-paper-card border border-ink/15 shadow-2xl overflow-hidden flex flex-col max-h-[85dvh]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 sm:px-5 py-3.5 border-b border-ink/10 flex items-center justify-between bg-paper/60 shrink-0">
+          <div className="min-w-0 pr-2">
+            <h2 className="font-display text-base sm:text-lg font-bold text-ink truncate">{category}</h2>
+            <p className="text-xs text-muted-text">
+              {isTravel ? 'Whole trip' : formatMonthLabel(selectedMonth)} · {formatCurrency(total, currency)} total
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-8 h-8 rounded-full border border-ink/15 bg-paper flex items-center justify-center text-ink hover:bg-paper-card font-bold transition-colors shrink-0"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="overflow-y-auto px-4 sm:px-5 py-4 space-y-3">
+          {biggest && (
+            <div className="rounded-xl border border-ledger-green/30 bg-ledger-green/10 px-3.5 py-3">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-ledger-green mb-1">
+                Biggest expense
+              </p>
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-ink truncate">{biggest.note || 'No note'}</p>
+                  <p className="text-xs text-muted-text">
+                    {biggest.date} · Paid by {biggest.payer}
+                  </p>
+                </div>
+                <span className="font-mono font-bold text-ink text-sm shrink-0">
+                  {formatCurrency(biggest.amount, currency)}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {entries.length > 1 && (
+            <ul className="space-y-1">
+              {entries.slice(1).map((entry) => (
+                <li
+                  key={entry.id}
+                  className="flex items-center justify-between gap-3 py-2 px-2.5 rounded-lg hover:bg-paper/80 transition-colors"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm text-ink truncate">{entry.note || 'No note'}</p>
+                    <p className="text-xs text-muted-text">
+                      {entry.date} · Paid by {entry.payer}
+                    </p>
+                  </div>
+                  <span className="font-mono font-semibold text-ink text-sm shrink-0">
+                    {formatCurrency(entry.amount, currency)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {entries.length === 0 && (
+            <p className="text-sm text-muted-text text-center py-6">No expenses found for this category.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function DonutTooltip({ active, payload, currency, showTrend }) {
   if (!active || !payload?.length) return null;
@@ -43,6 +124,12 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
   // amount is always INR now (real cost) - a trip's local currency is a
   // per-entry reference (see EntryList), not what spend charts total up.
   const currency = 'INR';
+
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const drilldownEntries = useMemo(
+    () => (selectedCategory ? getCategoryEntries(entries, isTravel ? null : selectedMonth, ledger, selectedCategory) : []),
+    [entries, isTravel, selectedMonth, ledger, selectedCategory],
+  );
 
   return (
     <section className="panel-card px-4 sm:px-5 py-4">
@@ -86,6 +173,8 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
                   outerRadius="85%"
                   paddingAngle={2}
                   stroke="none"
+                  cursor="pointer"
+                  onClick={(entry) => setSelectedCategory(entry.payload?.category ?? entry.category)}
                 >
                   {data.map((entry, index) => {
                     const idx = CATEGORIES.indexOf(entry.category);
@@ -131,7 +220,8 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
                 return (
                   <li
                     key={entry.category}
-                    className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-paper/80 transition-colors"
+                    onClick={() => setSelectedCategory(entry.category)}
+                    className="flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-paper/80 cursor-pointer transition-colors"
                   >
                     <div className="flex items-center gap-2 min-w-0 pr-2">
                       <span
@@ -179,6 +269,17 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
             </ul>
           </div>
         </>
+      )}
+
+      {selectedCategory && (
+        <CategoryDrilldownModal
+          category={selectedCategory}
+          entries={drilldownEntries}
+          currency={currency}
+          isTravel={isTravel}
+          selectedMonth={selectedMonth}
+          onClose={() => setSelectedCategory(null)}
+        />
       )}
     </section>
   );

@@ -31,7 +31,6 @@ export default function AddEntryForm({
   const [amount, setAmount] = useState('');
   const [localAmount, setLocalAmount] = useState('');
   const [rewardPoints, setRewardPoints] = useState('');
-  const [isWithdrawal, setIsWithdrawal] = useState(false);
   const [payer, setPayer] = useState(deviceName || membersList[0]);
   const [category, setCategory] = useState(categories[0] || 'Groceries');
   const [splitType, setSplitType] = useState('shared');
@@ -137,7 +136,6 @@ export default function AddEntryForm({
           paymentMethod: ledger === 'travel' ? paymentMethod : null,
           localAmount: null,
           rewardPoints: null,
-          isWithdrawal: false,
         }));
         await addExpensesBatch(installments);
       } else {
@@ -155,13 +153,11 @@ export default function AddEntryForm({
           paymentMethod: ledger === 'travel' ? paymentMethod : null,
           localAmount: parsedLocal,
           rewardPoints: parsedPoints,
-          isWithdrawal: ledger === 'travel' ? isWithdrawal : false,
         });
       }
       setAmount('');
       setLocalAmount('');
       setRewardPoints('');
-      setIsWithdrawal(false);
       setNote('');
       setDate(todayISO());
       setSplitAcrossMonths(false);
@@ -383,25 +379,6 @@ export default function AddEntryForm({
             <p className="text-xs text-muted-text -mt-1.5 px-0.5">
               "Personal" here just means this won't affect the balance - it's still joint cash from the ATM withdrawal, not {payer}'s own money. That cost was already split when the withdrawal was recorded.
             </p>
-          )}
-
-          {ledger === 'travel' && (
-            <div className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3">
-              <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={isWithdrawal}
-                  onChange={(e) => setIsWithdrawal(e.target.checked)}
-                  className="h-4 w-4 rounded border-ink/30 text-ledger-green focus:ring-ledger-green/40"
-                />
-                <span className="text-sm font-semibold text-ink">
-                  Cash withdrawal (exclude from spend totals)
-                </span>
-              </label>
-              <p className="text-xs text-muted-text mt-1 ml-6">
-                Only for a shared "Split" entry recording an ATM withdrawal so the joint cost registers in the balance above. The Trip Summary total and Category Breakdown skip it, since the cash it represents is already counted for real via the purchases it funds - the "ATM Cash Withdrawal" field under Trip Settings already tracks the cash balance separately and doesn't need this.
-              </p>
-            </div>
           )}
 
           {ledger !== 'travel' && (

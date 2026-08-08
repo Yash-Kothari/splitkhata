@@ -32,6 +32,19 @@ export default function BalanceStrip({
     () => (hasPoints ? computeBalance(entries, ledger, dbMembers, 'rewardPoints') : null),
     [entries, ledger, dbMembers, hasPoints],
   );
+
+  // Same total as the Category Breakdown card - every real spend, minus
+  // settlements (not a spend) and withdrawals (already counted via the
+  // cash purchases they funded).
+  const totalSpend = useMemo(
+    () =>
+      isTravel
+        ? entries
+            .filter((e) => e.splitType !== 'settlement' && !e.isWithdrawal && !e.isTripRollup)
+            .reduce((sum, e) => sum + Number(e.amount || 0), 0)
+        : null,
+    [entries, isTravel],
+  );
   // Settlements are always in real money (INR) - a trip's local-currency
   // figure is per-entry reference only, it doesn't drive who-owes-whom.
   const displayCurrency = 'INR';
@@ -180,6 +193,12 @@ export default function BalanceStrip({
               <span className="font-mono font-bold text-lg text-ink">
                 {formatCurrency(balance.amount, displayCurrency)}
               </span>
+            </p>
+          )}
+          {isTravel && totalSpend > 0 && (
+            <p className="text-sm text-muted-text mt-1">
+              Total trip expense:{' '}
+              <span className="font-mono font-semibold text-ink">{formatCurrency(totalSpend, displayCurrency)}</span>
             </p>
           )}
           {hasPoints && pointsBalance.status !== 'settled' && (
