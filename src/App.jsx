@@ -4,7 +4,7 @@ import AddEntryForm from './components/AddEntryForm';
 import EntryList from './components/EntryList';
 import ConnectionState from './components/ConnectionState';
 import TravelManager from './components/TravelManager';
-import TravelSummaryCard from './components/TravelSummaryCard';
+import PaymentsCenter from './components/PaymentsCenter';
 import SettingsModal from './components/SettingsModal';
 import PinLockScreen from './components/PinLockScreen';
 import {
@@ -127,6 +127,7 @@ export default function App() {
     return cfg.enabled && Boolean(cfg.pin);
   });
   const [entries, setEntries] = useState([]);
+  const [paymentsTravelEntries, setPaymentsTravelEntries] = useState([]);
   const [dbCategories, setDbCategories] = useState({ household: [], travel: [], rawDocs: [] });
   const [dbCurrencies, setDbCurrencies] = useState({ currencies: [], rawDocs: [] });
   const [dbMembers, setDbMembers] = useState({ members: [], rawDocs: [] });
@@ -225,12 +226,17 @@ export default function App() {
     };
   }, [currentUser]);
 
+  // Payments is a tab, not a real `ledger` value - it's a combined view over
+  // household-ledger data (settlements + trip rollups), so it reads from
+  // 'household' underneath rather than a third literal ledger.
+  const dataLedger = activeLedger === 'payments' ? 'household' : activeLedger;
+
   useEffect(() => {
     if (!deviceName || (isFirebaseConfigured() && !isAllowedUser(currentUser))) return undefined;
 
     setConnectionStatus('syncing');
     const unsubExpenses = subscribeToExpenses(
-      activeLedger,
+      dataLedger,
       (data) => {
         setEntries(data);
         setConnectionStatus(navigator.onLine ? 'ok' : 'offline');
@@ -266,7 +272,23 @@ export default function App() {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
-  }, [deviceName, currentUser, activeLedger]);
+  }, [deviceName, currentUser, dataLedger]);
+
+  // The Payments tab also needs every trip's reward points (not just
+  // household data) to show the combined points balance - fetched
+  // separately, only while that tab is open, so Household/Travel don't pay
+  // for a second subscription they never use.
+  useEffect(() => {
+    if (activeLedger !== 'payments' || !deviceName || (isFirebaseConfigured() && !isAllowedUser(currentUser))) {
+      setPaymentsTravelEntries([]);
+      return undefined;
+    }
+    return subscribeToExpenses(
+      'travel',
+      (data) => setPaymentsTravelEntries(data),
+      (err) => console.warn('Payments travel-entries sync warning:', err),
+    );
+  }, [activeLedger, deviceName, currentUser]);
 
   const availableMonths = getAvailableMonths(entries);
 
@@ -288,6 +310,16 @@ export default function App() {
   const tripEntries = activeLedger === 'travel' && selectedTrip
     ? entries.filter((e) => e.tripName === selectedTrip)
     : entries;
+
+  const currentTrip = dbTrips.find((t) => t.name === selectedTrip);
+  const tripRollup = currentTrip?.rolledUpEntryId
+    ? {
+        entryId: currentTrip.rolledUpEntryId,
+        amount: Number(currentTrip.rolledUpAmount || 0),
+        debtor: currentTrip.rolledUpDebtor,
+        creditor: currentTrip.rolledUpCreditor,
+      }
+    : null;
 
   const pinConfig = getPinConfig();
 
@@ -388,7 +420,9 @@ export default function App() {
             <span className="px-2.5 sm:px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-[11px] sm:text-xs font-bold tracking-wide shadow-2xs whitespace-nowrap truncate max-w-[40vw] sm:max-w-none">
               {activeLedger === 'travel'
                 ? (selectedTrip ? `✈️ ${selectedTrip}` : '✈️ Travel')
-                : '🏠 Household Ledger'}
+                : activeLedger === 'payments'
+                  ? '💰 Payments'
+                  : '🏠 Household Ledger'}
             </span>
 
               <div className="flex items-center justify-end gap-1 min-w-0">
@@ -454,11 +488,22 @@ export default function App() {
         </header>
 
         <div className="px-3 sm:px-4 max-w-5xl mx-auto mb-4 sm:mb-6">
-          <div className="grid grid-cols-2 gap-1.5 p-1.5 rounded-xl bg-paper border border-ink/10">
+          <div className="grid grid-cols-3 gap-1.5 p-1.5 rounded-xl bg-paper border border-ink/10">
+            <button
+              type="button"
+              onClick={() => setActiveLedger('payments')}
+              className={`min-h-11 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
+                activeLedger === 'payments'
+                  ? 'bg-ledger-green text-white shadow-xs'
+                  : 'text-muted-text hover:text-ink'
+              }`}
+            >
+              💰 Payments
+            </button>
             <button
               type="button"
               onClick={() => setActiveLedger('household')}
-              className={`min-h-11 rounded-lg text-sm font-semibold transition-all ${
+              className={`min-h-11 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
                 activeLedger === 'household'
                   ? 'bg-ledger-green text-white shadow-xs'
                   : 'text-muted-text hover:text-ink'
@@ -469,7 +514,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setActiveLedger('travel')}
-              className={`min-h-11 rounded-lg text-sm font-semibold transition-all ${
+              className={`min-h-11 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
                 activeLedger === 'travel'
                   ? 'bg-ledger-green text-white shadow-xs'
                   : 'text-muted-text hover:text-ink'
@@ -481,6 +526,15 @@ export default function App() {
         </div>
 
         <main className="px-3 sm:px-4 max-w-5xl mx-auto space-y-4 sm:space-y-6">
+          {activeLedger === 'payments' && (
+            <PaymentsCenter
+              entries={entries}
+              travelEntries={paymentsTravelEntries}
+              dbMembers={activeMembersList}
+              onSaveError={handleSaveError}
+            />
+          )}
+
           {activeLedger === 'travel' && (
             <TravelManager
               selectedTrip={selectedTrip}
@@ -495,6 +549,8 @@ export default function App() {
               entries={entries}
               dbPaymentMethods={activePaymentMethodsList}
               rawPaymentMethodDocs={dbPaymentMethods.rawDocs}
+              dbMembers={activeMembersList}
+              deviceName={deviceName}
               onSaveError={handleSaveError}
             />
           )}
@@ -505,19 +561,18 @@ export default function App() {
                 Select a trip above to see its balance, spend breakdown, and passbook.
               </div>
             )
-          ) : (
+          ) : activeLedger !== 'payments' && (
             <>
-              <BalanceStrip
-                entries={tripEntries}
-                ledger={activeLedger}
-                dbMembers={activeMembersList}
-                tripName={selectedTrip}
-                currentCurrency={currentCurrency}
-                onSaveError={handleSaveError}
-              />
-
               {activeLedger === 'travel' && (
-                <TravelSummaryCard entries={entries} ledger={activeLedger} dbMembers={activeMembersList} trips={dbTrips} />
+                <BalanceStrip
+                  entries={tripEntries}
+                  ledger="travel"
+                  dbMembers={activeMembersList}
+                  tripName={selectedTrip}
+                  tripId={currentTrip?.id}
+                  tripRollup={tripRollup}
+                  onSaveError={handleSaveError}
+                />
               )}
 
               <AddEntryForm
@@ -529,12 +584,13 @@ export default function App() {
                 dbMembers={activeMembersList}
                 currentCurrency={currentCurrency}
                 dbPaymentMethods={activePaymentMethodsList}
+                tripEntries={tripEntries}
               />
 
               <div className={activeLedger === 'travel' ? '' : 'grid grid-cols-1 lg:grid-cols-2 gap-6'}>
                 {activeLedger !== 'travel' && (
                   <Suspense fallback={<ChartSkeleton />}>
-                    <MonthChart entries={tripEntries} ledger={activeLedger} currentCurrency={currentCurrency} />
+                    <MonthChart entries={tripEntries} ledger={activeLedger} />
                   </Suspense>
                 )}
                 <Suspense fallback={<ChartSkeleton />}>
@@ -544,7 +600,6 @@ export default function App() {
                     onMonthChange={setSelectedMonth}
                     availableMonths={availableMonths}
                     ledger={activeLedger}
-                    currentCurrency={currentCurrency}
                   />
                 </Suspense>
               </div>

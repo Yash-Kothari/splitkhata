@@ -15,6 +15,8 @@ function formatDate(dateStr) {
 }
 
 export default function EntryList({
+  title = 'Passbook Entries',
+  emptyMessage = 'No entries recorded yet. Add your first expense above!',
   entries,
   selectedMonth,
   onMonthChange,
@@ -27,7 +29,6 @@ export default function EntryList({
   currentCurrency = 'INR',
   dbPaymentMethods = [],
 }) {
-  const displayCurrency = ledger === 'travel' ? currentCurrency : 'INR';
   const isTravel = ledger === 'travel';
   const [deletingId, setDeletingId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
@@ -45,7 +46,7 @@ export default function EntryList({
         const matchNote = e.note?.toLowerCase().includes(term);
         const matchCat = e.category?.toLowerCase().includes(term);
         const matchPayer = e.payer?.toLowerCase().includes(term);
-        const matchAmount = String(e.amount).includes(term);
+        const matchAmount = String(e.amount).includes(term) || String(e.localAmount ?? '').includes(term);
         if (!matchNote && !matchCat && !matchPayer && !matchAmount) return false;
       }
       return true;
@@ -77,7 +78,7 @@ export default function EntryList({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
           <h2 className="font-display text-lg font-bold text-ink">
-            Passbook Entries {!isTravel && (selectedMonth === 'all' ? '(All Months)' : `(${formatMonthLabel(selectedMonth)})`)}
+            {title} {!isTravel && (selectedMonth === 'all' ? '(All Months)' : `(${formatMonthLabel(selectedMonth)})`)}
           </h2>
           <p className="text-xs text-muted-text">
             {filtered.length} {filtered.length === 1 ? 'transaction' : 'transactions'} recorded
@@ -114,7 +115,7 @@ export default function EntryList({
       {filtered.length === 0 ? (
         <div className="border-2 border-dashed border-ink/20 rounded-xl py-12 px-4 text-center text-muted-text text-sm bg-paper/50">
           {entries.length === 0
-            ? 'No entries recorded yet. Add your first expense above!'
+            ? emptyMessage
             : isTravel
               ? 'No entries match your search.'
               : `No matching entries in ${formatMonthLabel(selectedMonth)}.`}
@@ -131,6 +132,7 @@ export default function EntryList({
                 dbPaymentMethods={dbPaymentMethods}
                 ledger={ledger}
                 currentCurrency={currentCurrency}
+                tripEntries={entries}
                 onCancel={() => setEditingId(null)}
                 onSaved={() => setEditingId(null)}
                 onSaveError={onSaveError}
@@ -143,8 +145,26 @@ export default function EntryList({
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline justify-between gap-2">
-                    <span className="font-mono font-bold text-ink text-base">
-                      {formatCurrency(entry.amount, displayCurrency)}
+                    <span className="flex items-baseline gap-1.5">
+                      <span className="font-mono font-bold text-ink text-base">
+                        {formatCurrency(entry.amount, 'INR')}
+                      </span>
+                      {isTravel && entry.localAmount != null && (
+                        <span className="font-mono text-muted-text text-xs">
+                          ({formatCurrency(entry.localAmount, currentCurrency)})
+                        </span>
+                      )}
+                      {isTravel && entry.rewardPoints ? (
+                        <span
+                          className={`font-mono text-xs px-1.5 py-0.2 rounded font-semibold ${
+                            entry.rewardPoints > 0
+                              ? 'bg-mustard/20 text-mustard'
+                              : 'bg-ledger-green/15 text-ledger-green'
+                          }`}
+                        >
+                          🪙 {entry.rewardPoints > 0 ? `-${entry.rewardPoints}` : `+${Math.abs(entry.rewardPoints)}`} pts
+                        </span>
+                      ) : null}
                     </span>
                     <span className="text-xs text-muted-text shrink-0 font-medium bg-paper px-2 py-0.5 rounded border border-ink/10">
                       {formatDate(entry.date)}
@@ -164,9 +184,18 @@ export default function EntryList({
                           Paid by <strong className="text-ink">{entry.payer}</strong>
                         </span>
                         {!entry.split && (
-                          <span className="px-1.5 py-0.2 rounded bg-mustard/20 text-mustard font-medium">
-                            Personal
-                          </span>
+                          isTravel && entry.paymentMethod === 'Cash' ? (
+                            <span
+                              className="px-1.5 py-0.2 rounded bg-slate-500/15 text-slate-600 font-medium"
+                              title="Joint cash from the trip's ATM withdrawal, not this person's own money - its cost was already covered when the withdrawal was split, so this doesn't affect the balance."
+                            >
+                              Cash Pool
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.2 rounded bg-mustard/20 text-mustard font-medium">
+                              Personal
+                            </span>
+                          )
                         )}
                         {entry.splitType === 'owed' && entry.owedBy && (
                           <span className="px-1.5 py-0.2 rounded bg-ledger-green/15 text-ledger-green font-medium">

@@ -31,16 +31,18 @@ function DonutTooltip({ active, payload, currency, showTrend }) {
   );
 }
 
-export default function CategoryChart({ entries, selectedMonth, onMonthChange, availableMonths, ledger, currentCurrency = 'INR' }) {
+export default function CategoryChart({ entries, selectedMonth, onMonthChange, availableMonths, ledger }) {
   const isTravel = ledger === 'travel';
   // A trip is usually days, not months - skip month filtering and the MoM
   // comparison entirely for travel, and just show the trip's full breakdown.
   const data = useMemo(
-    () => getCategoryMoMComparison(entries, isTravel ? null : selectedMonth, ledger),
+    () => getCategoryMoMComparison(entries, isTravel ? null : selectedMonth, ledger).sort((a, b) => b.amount - a.amount),
     [entries, selectedMonth, ledger, isTravel],
   );
   const total = useMemo(() => data.reduce((sum, d) => sum + d.amount, 0), [data]);
-  const currency = isTravel ? currentCurrency : 'INR';
+  // amount is always INR now (real cost) - a trip's local currency is a
+  // per-entry reference (see EntryList), not what spend charts total up.
+  const currency = 'INR';
 
   return (
     <section className="panel-card px-4 sm:px-5 py-4">

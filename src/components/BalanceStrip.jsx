@@ -1,17 +1,60 @@
 import { useState, useMemo } from 'react';
-import { addExpense } from '../firebase';
-import { formatCurrency, computeBalance, todayISO } from '../utils';
+import { addExpense, updateExpense, deleteExpense, updateTripInDb } from '../firebase';
+import { formatCurrency, computeBalance, computeMemberTotals, todayISO, PERSON_COLORS } from '../utils';
 
-export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName = '', currentCurrency = 'INR', onSaveError }) {
+export default function BalanceStrip({
+  entries,
+  ledger,
+  dbMembers = [],
+  tripName = '',
+  tripId = '',
+  tripRollup = null,
+  onSaveError,
+}) {
+  const isTravel = ledger === 'travel';
   const balance = useMemo(() => computeBalance(entries, ledger, dbMembers), [entries, ledger, dbMembers]);
-  const ledgerLabel = ledger === 'travel' ? 'Travel' : 'Household';
-  const displayCurrency = ledger === 'travel' ? currentCurrency : 'INR';
+  const ledgerLabel = isTravel ? 'Travel' : 'Household';
+
+  // Same exclusion as Category Breakdown/the old Trip Summary card: a cash
+  // purchase's cost is already carried by the ATM withdrawal that funded
+  // it, so it doesn't get counted again here.
+  const memberTotals = useMemo(
+    () => (isTravel ? computeMemberTotals(entries.filter((e) => !(!e.split && e.paymentMethod === 'Cash')), dbMembers) : null),
+    [entries, dbMembers, isTravel],
+  );
+
+  // Reward points get their own balance, computed with the exact same
+  // split/owed logic as money but never converted to INR - a positive
+  // rewardPoints value is points spent (owed back), negative is points
+  // earned (owed to the other person, since they sit in one account).
+  const hasPoints = isTravel && entries.some((e) => Number(e.rewardPoints || 0) !== 0);
+  const pointsBalance = useMemo(
+    () => (hasPoints ? computeBalance(entries, ledger, dbMembers, 'rewardPoints') : null),
+    [entries, ledger, dbMembers, hasPoints],
+  );
+  // Settlements are always in real money (INR) - a trip's local-currency
+  // figure is per-entry reference only, it doesn't drive who-owes-whom.
+  const displayCurrency = 'INR';
+
+  // Editing/adding/deleting an entry after a trip's been rolled up changes
+  // this trip's live balance without touching the snapshot that got copied
+  // into the main ledger - compare against that snapshot (cached on the
+  // trip doc, see App.jsx) to notice when the two have drifted apart.
+  const rollupStale = Boolean(
+    tripRollup &&
+      (Math.abs(tripRollup.amount - balance.amount) > 0.01 ||
+        tripRollup.debtor !== balance.debtor ||
+        tripRollup.creditor !== balance.creditor),
+  );
+  const rollupNowSettled = Boolean(tripRollup && balance.status === 'settled');
 
   const [settling, setSettling] = useState(false);
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const [confirmingRollup, setConfirmingRollup] = useState(false);
+  const [rollingUp, setRollingUp] = useState(false);
 
   const inputClass =
     'w-full h-10 px-3 text-sm rounded-lg border border-ink/15 bg-paper text-ink font-medium focus:outline-none focus:ring-2 focus:ring-ledger-green/40';
@@ -44,7 +87,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
         note: note.trim(),
         date,
         ledger,
-        tripName: ledger === 'travel' ? tripName : '',
+        tripName: isTravel ? tripName : '',
       });
       setSettling(false);
     } catch (err) {
@@ -54,13 +97,74 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
     }
   }
 
+  // Doesn't settle this trip's own balance (its entries and history stay
+  // exactly as they are) - it adds ONE line to the household-ledger
+  // Payments tab instead, noting where it came from, so a finished trip's
+  // debt joins the same ongoing pot as everything else instead of being
+  // tracked separately forever. Also handles keeping that line in sync:
+  // if the trip's entries changed since the rollup (rollupStale), this
+  // updates the existing line in place instead of adding a second one; if
+  // the trip landed back at exactly settled, it removes the line entirely.
+  async function handleRollup() {
+    setRollingUp(true);
+    try {
+      if (rollupNowSettled) {
+        await deleteExpense(tripRollup.entryId);
+        if (tripId) {
+          await updateTripInDb(tripId, {
+            rolledUpEntryId: null,
+            rolledUpAmount: null,
+            rolledUpDebtor: null,
+            rolledUpCreditor: null,
+          });
+        }
+      } else {
+        let entryId = tripRollup?.entryId;
+        if (entryId) {
+          await updateExpense(entryId, {
+            amount: balance.amount,
+            payer: balance.creditor,
+            owedBy: balance.debtor,
+          });
+        } else {
+          entryId = await addExpense({
+            amount: balance.amount,
+            payer: balance.creditor,
+            owedBy: balance.debtor,
+            splitType: 'owed',
+            split: true,
+            category: 'Misc',
+            note: `From ${tripName} trip`,
+            date: todayISO(),
+            ledger: 'household',
+            tripName: '',
+            isTripRollup: true,
+          });
+        }
+        if (tripId) {
+          await updateTripInDb(tripId, {
+            rolledUpEntryId: entryId,
+            rolledUpAmount: balance.amount,
+            rolledUpDebtor: balance.debtor,
+            rolledUpCreditor: balance.creditor,
+          });
+        }
+      }
+      setConfirmingRollup(false);
+    } catch (err) {
+      onSaveError?.(err);
+    } finally {
+      setRollingUp(false);
+    }
+  }
+
   return (
     <section className="panel-card px-5 py-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <h2 className="font-display text-lg font-bold text-ink">
-              {ledgerLabel} Net Balance
+              {isTravel ? 'Trip Summary' : 'Household Net Balance'}
             </h2>
           </div>
           {balance.status === 'settled' ? (
@@ -78,16 +182,75 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
               </span>
             </p>
           )}
+          {hasPoints && pointsBalance.status !== 'settled' && (
+            <p className="text-sm text-muted-text mt-1">
+              🪙 <span className="font-semibold text-stamp-red">{pointsBalance.debtor}</span>
+              {' owes '}
+              <span className="font-semibold text-ledger-green">{pointsBalance.creditor}</span>
+              {' '}
+              <span className="font-mono font-semibold text-ink">
+                {Math.round(pointsBalance.amount).toLocaleString('en-IN')} pts
+              </span>
+            </p>
+          )}
+          {isTravel && dbMembers.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-ink/10 flex flex-wrap gap-x-4 gap-y-1.5">
+              {dbMembers.map((member) => (
+                <div key={member} className="flex items-center gap-1.5 text-xs">
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: PERSON_COLORS[member] || '#3D7068' }}
+                  />
+                  <span className="text-muted-text">{member}</span>
+                  <span className="font-mono font-semibold text-ink">{formatCurrency(memberTotals?.[member] || 0)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
-          {balance.status !== 'settled' && !settling && (
-            <button
-              type="button"
-              onClick={startSettling}
-              className="w-full sm:w-auto h-9 px-3.5 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm hover:bg-ledger-green/90 transition-colors whitespace-nowrap"
-            >
-              Record Payment
-            </button>
+          {isTravel ? (
+            confirmingRollup ? null : rollupNowSettled ? (
+              <button
+                type="button"
+                onClick={() => setConfirmingRollup(true)}
+                className="w-full sm:w-auto h-9 px-3.5 rounded-lg bg-mustard/90 text-white font-semibold text-xs sm:text-sm hover:bg-mustard transition-colors whitespace-nowrap"
+              >
+                Remove from Main Ledger
+              </button>
+            ) : rollupStale ? (
+              <button
+                type="button"
+                onClick={() => setConfirmingRollup(true)}
+                className="w-full sm:w-auto h-9 px-3.5 rounded-lg bg-mustard/90 text-white font-semibold text-xs sm:text-sm hover:bg-mustard transition-colors whitespace-nowrap"
+              >
+                Update Main Ledger
+              </button>
+            ) : tripRollup ? (
+              <div className="text-xs text-muted-text text-center sm:text-left sm:h-9 sm:flex sm:items-center sm:bg-ledger-green/10 sm:px-3 sm:rounded-lg sm:border sm:border-ledger-green/20 font-medium">
+                ✓ Added to main ledger
+              </div>
+            ) : (
+              balance.status !== 'settled' && (
+                <button
+                  type="button"
+                  onClick={() => setConfirmingRollup(true)}
+                  className="w-full sm:w-auto h-9 px-3.5 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm hover:bg-ledger-green/90 transition-colors whitespace-nowrap"
+                >
+                  Add to Main Ledger
+                </button>
+              )
+            )
+          ) : (
+            balance.status !== 'settled' && !settling && (
+              <button
+                type="button"
+                onClick={startSettling}
+                className="w-full sm:w-auto h-9 px-3.5 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm hover:bg-ledger-green/90 transition-colors whitespace-nowrap"
+              >
+                Record Payment
+              </button>
+            )
           )}
           <div className="text-xs text-muted-text text-center sm:text-left sm:h-9 sm:flex sm:items-center sm:bg-paper sm:px-3 sm:rounded-lg sm:border sm:border-ink/10">
             Calculated across {ledgerLabel.toLowerCase()} entries
@@ -95,7 +258,62 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
         </div>
       </div>
 
-      {settling && (
+      {isTravel && confirmingRollup && (
+        <div className="mt-4 pt-4 border-t border-ink/10 space-y-3">
+          <p className="text-sm text-ink">
+            {rollupNowSettled ? (
+              <>
+                {tripName} is back to settled, but the main Payments ledger still has an old line for it:{' '}
+                <span className="font-semibold">{tripRollup.debtor} owed {tripRollup.creditor}{' '}
+                  {formatCurrency(tripRollup.amount, displayCurrency)}</span>. This removes that line - nothing about
+                {' '}{tripName}'s own entries changes.
+              </>
+            ) : rollupStale ? (
+              <>
+                {tripName} changed since it was last added - the main Payments ledger still has{' '}
+                <span className="font-semibold">{tripRollup.debtor} owed {tripRollup.creditor}{' '}
+                  {formatCurrency(tripRollup.amount, displayCurrency)}</span>. This updates that same line to{' '}
+                <span className="font-semibold text-stamp-red">{balance.debtor}</span>
+                {' owes '}
+                <span className="font-semibold text-ledger-green">{balance.creditor}</span>{' '}
+                <span className="font-mono font-bold">{formatCurrency(balance.amount, displayCurrency)}</span> instead
+                of adding a second one.
+              </>
+            ) : (
+              <>
+                This adds one line to the main Payments ledger:{' '}
+                <span className="font-semibold text-stamp-red">{balance.debtor}</span>
+                {' owes '}
+                <span className="font-semibold text-ledger-green">{balance.creditor}</span>{' '}
+                <span className="font-mono font-bold">{formatCurrency(balance.amount, displayCurrency)}</span>, noted as
+                coming from {tripName}. {tripName}'s own entries and balance here stay exactly as they are.
+              </>
+            )}
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRollup}
+              disabled={rollingUp}
+              className="flex-1 sm:flex-none h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
+            >
+              {rollingUp
+                ? (rollupNowSettled ? 'Removing...' : rollupStale ? 'Updating...' : 'Adding...')
+                : (rollupNowSettled ? 'Confirm & Remove' : rollupStale ? 'Confirm & Update' : 'Confirm & Add')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmingRollup(false)}
+              disabled={rollingUp}
+              className="flex-1 sm:flex-none h-9 px-4 rounded-lg border border-ink/15 text-ink font-semibold text-xs sm:text-sm hover:bg-ink/5 transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!isTravel && settling && (
         <form onSubmit={handleConfirm} className="mt-4 pt-4 border-t border-ink/10 space-y-3">
           <p className="text-sm text-ink">
             Recording a payment from <span className="font-semibold text-stamp-red">{balance.debtor}</span>

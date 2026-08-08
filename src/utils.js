@@ -10,7 +10,6 @@ export const DEFAULT_CATEGORIES = [
   'Household',
   'Health',
   'Entertainment',
-  'Other',
 ];
 
 export const DEFAULT_TRAVEL_CATEGORIES = [
@@ -22,7 +21,6 @@ export const DEFAULT_TRAVEL_CATEGORIES = [
   'Souvenir',
   'Insurance',
   'Misc',
-  'Other',
 ];
 
 export const DEFAULT_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'TWD', 'JPY', 'AED', 'SGD'];
@@ -104,7 +102,86 @@ export function normalizeLedger(ledger) {
   return 'household';
 }
 
-export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PERSONS) {
+// Chronological order for the FIFO cash queue: date first, then createdAt
+// as a tie-break. An entry with no createdAt yet (still being composed in
+// AddEntryForm, not saved) sorts last among same-date entries, so it
+// queues behind whatever's already recorded for that day.
+function fifoSortKey(entry) {
+  return `${entry.date || ''}_${entry.createdAt || '9999-99-99'}`;
+}
+
+// Prices a cash purchase by walking the trip's withdrawals as a single
+// FIFO queue of local-currency "chunks", each at its own rate, consumed in
+// order by every cash purchase that came before this one (by date, then
+// createdAt). A purchase that straddles two withdrawals - one nearly
+// drained, a fresh one covering the rest - is billed at each withdrawal's
+// own rate for the exact portion it funds, e.g. $10 of a $90 purchase at
+// the old rate and $80 at the new one, not a blend of the two across the
+// full $90. A later withdrawal can only ever fund purchases that come
+// after it in the queue, so it never changes what an earlier purchase was
+// billed. Returns null if the known withdrawals don't yet cover this
+// purchase's full local amount (so the caller can fall back to manual
+// entry instead of guessing) - otherwise { amount, breakdown }, where
+// breakdown lists which withdrawal(s) funded which slice, for a note
+// explaining how the amount was derived.
+export function computeFifoCashAmount(withdrawals = [], otherCashEntries = [], targetEntry) {
+  const sortedWithdrawals = [...withdrawals].sort((a, b) => fifoSortKey(a).localeCompare(fifoSortKey(b)));
+  const targetKey = fifoSortKey(targetEntry);
+
+  const priorLocal = otherCashEntries
+    .filter((e) => e.id !== targetEntry.id && fifoSortKey(e) < targetKey)
+    .reduce((sum, e) => sum + Number(e.localAmount || 0), 0);
+
+  const targetLocal = Number(targetEntry.localAmount || 0);
+  if (targetLocal <= 0) return null;
+
+  const rangeStart = priorLocal;
+  const rangeEnd = priorLocal + targetLocal;
+
+  let cursor = 0;
+  let coveredLocal = 0;
+  let inrSum = 0;
+  const breakdown = [];
+
+  for (const w of sortedWithdrawals) {
+    const wLocal = Number(w.localAmount || 0);
+    if (wLocal <= 0) continue;
+    const wStart = cursor;
+    const wEnd = cursor + wLocal;
+    cursor = wEnd;
+
+    const overlapLocal = Math.min(rangeEnd, wEnd) - Math.max(rangeStart, wStart);
+    if (overlapLocal > 0) {
+      const rate = Number(w.amount || 0) / wLocal;
+      const overlapInr = overlapLocal * rate;
+      inrSum += overlapInr;
+      coveredLocal += overlapLocal;
+      breakdown.push({
+        date: w.date,
+        localAmount: Math.round(overlapLocal * 100) / 100,
+        rate,
+        inr: Math.round(overlapInr * 100) / 100,
+      });
+    }
+  }
+
+  if (coveredLocal < targetLocal - 0.01) return null;
+  return { amount: Math.round(inrSum * 100) / 100, breakdown };
+}
+
+// Turns computeFifoCashAmount's breakdown into a short human-readable
+// explanation for a hover tooltip, quoted as a standard FX rate (1 unit of
+// the local currency = so many INR), e.g. "10 TWD @ 1 TWD = ₹10.00
+// (withdrawal 2030-01-01) + 80 TWD @ 1 TWD = ₹11.00 (withdrawal 2030-01-03)".
+export function formatFifoBreakdownSummary(breakdown = [], currency = '') {
+  if (!breakdown.length) return '';
+  const unit = currency || 'unit';
+  return breakdown
+    .map((b) => `${b.localAmount} ${unit} @ 1 ${unit} = ₹${b.rate.toFixed(2)} (withdrawal ${b.date || '?'})`)
+    .join(' + ');
+}
+
+export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PERSONS, valueField = 'amount') {
   const members = dynamicMembers && dynamicMembers.length > 0 ? dynamicMembers : DEFAULT_PERSONS;
   const targetLedger = ledger ? normalizeLedger(ledger) : null;
 
@@ -121,18 +198,18 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
     if (targetLedger && normalizeLedger(entry.ledger) !== targetLedger) continue;
 
     const payer = resolveMember(entry.payer);
-    const amount = Number(entry.amount || 0);
+    const value = Number(entry[valueField] || 0);
 
-    if (!amount || !payer) continue;
-    netByMember[payer] += amount;
+    if (!value || !payer) continue;
+    netByMember[payer] += value;
 
     if ((entry.splitType === 'owed' || entry.splitType === 'settlement') && entry.owedBy) {
       const debtor = resolveMember(entry.owedBy);
-      if (debtor && debtor !== payer) netByMember[debtor] -= amount;
+      if (debtor && debtor !== payer) netByMember[debtor] -= value;
       continue;
     }
 
-    const eachShare = amount / members.length;
+    const eachShare = value / members.length;
     members.forEach((member) => {
       netByMember[member] -= eachShare;
     });
@@ -194,6 +271,32 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
     debtor: maxDebtor,
     creditor: maxCreditor,
   };
+}
+
+// Each member's share of trip cost - not who paid, but who it's ultimately
+// attributed to: personal expenses count fully against the payer, "owed"
+// expenses count fully against whoever owes it back, and shared expenses
+// split evenly. Mirrors the Excel's "Total Kruti / Total Yash" panel, which
+// only ever prices card-paid entries and the ATM withdrawal itself - it
+// never assigns an INR cost to individual cash purchases, so neither does
+// this (see the exclusion in the caller).
+export function computeMemberTotals(entries, members) {
+  const totals = Object.fromEntries(members.map((m) => [m, 0]));
+  for (const entry of entries) {
+    const amount = Number(entry.amount || 0);
+    if (!amount) continue;
+    if (!entry.split) {
+      if (members.includes(entry.payer)) totals[entry.payer] += amount;
+    } else if (entry.splitType === 'owed' && entry.owedBy) {
+      if (members.includes(entry.owedBy)) totals[entry.owedBy] += amount;
+    } else {
+      const share = amount / members.length;
+      members.forEach((m) => {
+        totals[m] += share;
+      });
+    }
+  }
+  return totals;
 }
 
 export function getMonthKey(dateStr) {
@@ -372,6 +475,12 @@ export function groupByCategory(entries = [], monthKey, ledger, customCategories
     if (monthKey && getMonthKey(e.date) !== monthKey) return false;
     if (targetLedger && normalizeLedger(e.ledger) !== targetLedger) return false;
     if (e.splitType === 'settlement') return false;
+    // A cash withdrawal isn't a spend category of its own - the money it
+    // represents already shows up for real via the purchases it funded.
+    if (e.isWithdrawal) return false;
+    // A trip-rollup entry is a debt transfer into the household ledger, not
+    // a real household expense - it shouldn't inflate a spend category.
+    if (e.isTripRollup) return false;
     return true;
   });
 
@@ -510,13 +619,17 @@ export function setStoredPaymentMethods(methods) {
   setItem(PAYMENT_METHODS_KEY, JSON.stringify(methods));
 }
 
+// This is the active *tab*, not an expense's `ledger` field - it has a
+// third value ('payments') that never appears on an actual entry, so it
+// can't reuse normalizeLedger (which only ever resolves to 'household' or
+// 'travel').
 export function getStoredActiveLedger() {
   const raw = getItem(ACTIVE_LEDGER_KEY);
-  return raw === 'travel' ? 'travel' : 'household';
+  return raw === 'travel' || raw === 'payments' ? raw : 'household';
 }
 
 export function setStoredActiveLedger(ledger) {
-  setItem(ACTIVE_LEDGER_KEY, normalizeLedger(ledger));
+  setItem(ACTIVE_LEDGER_KEY, ledger === 'travel' || ledger === 'payments' ? ledger : 'household');
 }
 
 export function getStoredSelectedTrip() {

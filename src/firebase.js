@@ -568,18 +568,29 @@ export function subscribeToTrips(onData, onError) {
   }
 }
 
-export async function addTripToDb(name, currency, existingTrips = []) {
+export async function addTripToDb(name, currency, year, existingTrips = []) {
   const trimmed = name.trim();
   if (!trimmed) return;
   const exists = existingTrips.some((t) => t.name?.trim().toLowerCase() === trimmed.toLowerCase());
   if (exists) return;
 
   if (tripsRef) {
-    await addDoc(tripsRef, { name: trimmed, currency, createdAt: serverTimestamp() });
+    await addDoc(tripsRef, { name: trimmed, currency, year, createdAt: serverTimestamp() });
   } else {
     const current = getStoredTrips();
-    const newTrip = { id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), name: trimmed, currency };
+    const newTrip = { id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), name: trimmed, currency, year };
     const updated = [...current, newTrip];
+    setStoredTrips(updated);
+    tripListeners.forEach((fn) => fn(updated));
+  }
+}
+
+export async function updateTripInDb(tripId, updates) {
+  if (tripsRef) {
+    if (tripId) await updateDoc(doc(dbInstance, 'trips', tripId), updates);
+  } else {
+    const current = getStoredTrips();
+    const updated = current.map((t) => (t.id === tripId ? { ...t, ...updates } : t));
     setStoredTrips(updated);
     tripListeners.forEach((fn) => fn(updated));
   }
@@ -746,10 +757,11 @@ export async function deletePaymentMethodFromDb(name, rawDocs = []) {
 // Database Actions
 export async function addExpense(entry) {
   if (expensesRef) {
-    await addDoc(expensesRef, {
+    const docRef = await addDoc(expensesRef, {
       ...entry,
       createdAt: serverTimestamp(),
     });
+    return docRef.id;
   } else {
     const current = getLocalExpenses();
     const newEntry = {
@@ -758,6 +770,7 @@ export async function addExpense(entry) {
       createdAt: new Date().toISOString(),
     };
     saveLocalExpenses([newEntry, ...current]);
+    return newEntry.id;
   }
 }
 

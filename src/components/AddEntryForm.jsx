@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { addExpense, addExpensesBatch } from '../firebase';
 import {
   getLedgerCategories,
@@ -6,6 +6,8 @@ import {
   todayISO,
   addMonthsToDateISO,
   splitAmountEvenly,
+  computeFifoCashAmount,
+  formatFifoBreakdownSummary,
 } from '../utils';
 
 export default function AddEntryForm({
@@ -17,6 +19,7 @@ export default function AddEntryForm({
   dbMembers = [],
   currentCurrency = 'INR',
   dbPaymentMethods = [],
+  tripEntries = [],
 }) {
   const categories = dbCategories && dbCategories.length > 0
     ? dbCategories
@@ -26,6 +29,9 @@ export default function AddEntryForm({
   const paymentMethodsList = dbPaymentMethods && dbPaymentMethods.length > 0 ? dbPaymentMethods : ['Cash'];
 
   const [amount, setAmount] = useState('');
+  const [localAmount, setLocalAmount] = useState('');
+  const [rewardPoints, setRewardPoints] = useState('');
+  const [isWithdrawal, setIsWithdrawal] = useState(false);
   const [payer, setPayer] = useState(deviceName || membersList[0]);
   const [category, setCategory] = useState(categories[0] || 'Groceries');
   const [splitType, setSplitType] = useState('shared');
@@ -38,6 +44,24 @@ export default function AddEntryForm({
   const [expanded, setExpanded] = useState(true);
   const [splitAcrossMonths, setSplitAcrossMonths] = useState(false);
   const [monthsCount, setMonthsCount] = useState(6);
+
+  const tripWithdrawals = useMemo(() => tripEntries.filter((e) => e.isWithdrawal), [tripEntries]);
+  const otherCashEntries = useMemo(
+    () => tripEntries.filter((e) => !e.isWithdrawal && e.paymentMethod === 'Cash'),
+    [tripEntries],
+  );
+  // FIFO-priced against the trip's withdrawal queue, using whatever's been
+  // typed so far - null (not yet computable) until Local Amount has a
+  // value the known withdrawals can actually cover.
+  const fifoResult = useMemo(() => {
+    const parsedLocal = parseFloat(localAmount);
+    if (!parsedLocal || parsedLocal <= 0) return null;
+    return computeFifoCashAmount(tripWithdrawals, otherCashEntries, { id: null, date, createdAt: null, localAmount: parsedLocal });
+  }, [tripWithdrawals, otherCashEntries, date, localAmount]);
+  const fifoBreakdownText = useMemo(
+    () => (fifoResult ? formatFifoBreakdownSummary(fifoResult.breakdown, currentCurrency) : ''),
+    [fifoResult, currentCurrency],
+  );
 
   useEffect(() => {
     if (categories.length && !categories.includes(category)) {
@@ -70,6 +94,15 @@ export default function AddEntryForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paymentMethodsList]);
 
+  // Auto-price a cash purchase's INR cost from its local amount, using the
+  // trip's withdrawal queue in FIFO order (see computeFifoCashAmount) -
+  // saves working out which withdrawal funded it and at what rate by hand.
+  useEffect(() => {
+    if (ledger !== 'travel' || paymentMethod !== 'Cash' || fifoResult == null) return;
+    setAmount(fifoResult.amount.toString());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fifoResult, paymentMethod, ledger]);
+
   async function handleSubmit(e) {
     e.preventDefault();
     const parsed = parseFloat(amount);
@@ -77,6 +110,8 @@ export default function AddEntryForm({
 
     const trimmedNote = note.trim();
     const months = splitAcrossMonths ? Math.max(2, Math.min(36, Math.round(monthsCount) || 2)) : 1;
+    const parsedLocal = ledger === 'travel' && localAmount ? parseFloat(localAmount) : null;
+    const parsedPoints = ledger === 'travel' && rewardPoints ? parseFloat(rewardPoints) : null;
 
     setSaving(true);
     // Firestore write promises only resolve once the server acknowledges
@@ -100,6 +135,9 @@ export default function AddEntryForm({
           ledger,
           tripName: ledger === 'travel' ? tripName : '',
           paymentMethod: ledger === 'travel' ? paymentMethod : null,
+          localAmount: null,
+          rewardPoints: null,
+          isWithdrawal: false,
         }));
         await addExpensesBatch(installments);
       } else {
@@ -115,9 +153,15 @@ export default function AddEntryForm({
           ledger,
           tripName: ledger === 'travel' ? tripName : '',
           paymentMethod: ledger === 'travel' ? paymentMethod : null,
+          localAmount: parsedLocal,
+          rewardPoints: parsedPoints,
+          isWithdrawal: ledger === 'travel' ? isWithdrawal : false,
         });
       }
       setAmount('');
+      setLocalAmount('');
+      setRewardPoints('');
+      setIsWithdrawal(false);
       setNote('');
       setDate(todayISO());
       setSplitAcrossMonths(false);
@@ -130,6 +174,12 @@ export default function AddEntryForm({
       setSlowSave(false);
     }
   }
+
+  // Once the trip's withdrawals fully cover this Local Amount, a Cash
+  // entry's INR cost is derived (FIFO), not entered - locking it stops
+  // someone from typing a number that doesn't match, which the auto-fill
+  // would otherwise silently overwrite the next time Local Amount changes.
+  const amountLocked = ledger === 'travel' && paymentMethod === 'Cash' && fifoResult != null;
 
   const inputClass =
     'w-full h-11 px-3.5 text-sm sm:text-base rounded-xl border border-ink/15 bg-paper text-ink font-medium focus:outline-none focus:ring-2 focus:ring-ledger-green/40 shadow-2xs transition-all flex items-center';
@@ -160,7 +210,7 @@ export default function AddEntryForm({
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
             <div>
               <label htmlFor="amount" className={labelClass}>
-                Amount ({ledger === 'travel' ? currentCurrency : '₹'})
+                Amount (₹){ledger === 'travel' ? ' - real cost' : ''}
               </label>
               <input
                 id="amount"
@@ -169,12 +219,51 @@ export default function AddEntryForm({
                 min="0.01"
                 step="any"
                 required
+                readOnly={amountLocked}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                className={`${inputClass} font-mono font-bold`}
+                className={`${inputClass} font-mono font-bold ${amountLocked ? 'bg-paper/60 text-muted-text cursor-not-allowed' : ''}`}
                 placeholder="0.00"
+                title={amountLocked ? fifoBreakdownText : undefined}
               />
             </div>
+
+            {ledger === 'travel' && (
+              <div>
+                <label htmlFor="localAmount" className={labelClass}>
+                  Local Amount ({currentCurrency})
+                </label>
+                <input
+                  id="localAmount"
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  value={localAmount}
+                  onChange={(e) => setLocalAmount(e.target.value)}
+                  className={`${inputClass} font-mono font-bold`}
+                  placeholder="Optional"
+                />
+              </div>
+            )}
+
+            {ledger === 'travel' && (
+              <div>
+                <label htmlFor="rewardPoints" className={labelClass}>
+                  Reward Points (+ spent / − earned)
+                </label>
+                <input
+                  id="rewardPoints"
+                  type="number"
+                  inputMode="decimal"
+                  step="any"
+                  value={rewardPoints}
+                  onChange={(e) => setRewardPoints(e.target.value)}
+                  className={`${inputClass} font-mono font-bold`}
+                  placeholder="Optional"
+                />
+              </div>
+            )}
 
             <div>
               <label htmlFor="split" className={labelClass}>
@@ -289,6 +378,31 @@ export default function AddEntryForm({
               />
             </div>
           </div>
+
+          {ledger === 'travel' && paymentMethod === 'Cash' && splitType === 'personal' && (
+            <p className="text-xs text-muted-text -mt-1.5 px-0.5">
+              "Personal" here just means this won't affect the balance - it's still joint cash from the ATM withdrawal, not {payer}'s own money. That cost was already split when the withdrawal was recorded.
+            </p>
+          )}
+
+          {ledger === 'travel' && (
+            <div className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3">
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={isWithdrawal}
+                  onChange={(e) => setIsWithdrawal(e.target.checked)}
+                  className="h-4 w-4 rounded border-ink/30 text-ledger-green focus:ring-ledger-green/40"
+                />
+                <span className="text-sm font-semibold text-ink">
+                  Cash withdrawal (exclude from spend totals)
+                </span>
+              </label>
+              <p className="text-xs text-muted-text mt-1 ml-6">
+                Only for a shared "Split" entry recording an ATM withdrawal so the joint cost registers in the balance above. The Trip Summary total and Category Breakdown skip it, since the cash it represents is already counted for real via the purchases it funds - the "ATM Cash Withdrawal" field under Trip Settings already tracks the cash balance separately and doesn't need this.
+              </p>
+            </div>
+          )}
 
           {ledger !== 'travel' && (
             <div className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3">

@@ -7,8 +7,9 @@ import {
   addCashMovementToDb,
   addPaymentMethodToDb,
   deletePaymentMethodFromDb,
+  addExpense,
 } from '../firebase';
-import { DEFAULT_CURRENCIES as CURRENCIES, normalizeLedger } from '../utils';
+import { DEFAULT_CURRENCIES as CURRENCIES, normalizeLedger, todayISO } from '../utils';
 
 export default function TravelManager({
   onTripSelect,
@@ -23,14 +24,21 @@ export default function TravelManager({
   entries = [],
   dbPaymentMethods = [],
   rawPaymentMethodDocs = [],
+  dbMembers = [],
+  deviceName = '',
   onSaveError,
 }) {
+  const currentYear = new Date().getFullYear();
   const [tripName, setTripName] = useState('');
   const [tripCurrency, setTripCurrency] = useState('INR');
+  const [tripYear, setTripYear] = useState(currentYear);
   const [categoryDraft, setCategoryDraft] = useState('');
   const [paymentMethodDraft, setPaymentMethodDraft] = useState('');
   const [openingCash, setOpeningCash] = useState('');
   const [withdrawalAmount, setWithdrawalAmount] = useState('');
+  const [withdrawalInr, setWithdrawalInr] = useState('');
+  const [withdrawalPayer, setWithdrawalPayer] = useState(deviceName || dbMembers[0] || '');
+  const [withdrawalPaymentMethod, setWithdrawalPaymentMethod] = useState(dbPaymentMethods[0] || 'Cash');
   const [showSettings, setShowSettings] = useState(false);
   const [addingTrip, setAddingTrip] = useState(false);
 
@@ -38,13 +46,30 @@ export default function TravelManager({
   const currenciesList = dbCurrencies && dbCurrencies.length > 0 ? dbCurrencies : CURRENCIES;
 
   const availableTrips = useMemo(() => trips, [trips]);
+  // Newest year first, and within a year, whatever order they were created.
+  const tripsByYear = useMemo(() => {
+    const groups = {};
+    for (const trip of availableTrips) {
+      const year = trip.year || 'Unsorted';
+      if (!groups[year]) groups[year] = [];
+      groups[year].push(trip);
+    }
+    return Object.entries(groups).sort(([a], [b]) => {
+      if (a === 'Unsorted') return 1;
+      if (b === 'Unsorted') return -1;
+      return Number(b) - Number(a);
+    });
+  }, [availableTrips]);
   const selectedTripCash = useMemo(() => {
     const relevant = cashMovements.filter((movement) => movement.tripName === selectedTrip);
     const opening = relevant.filter((movement) => movement.type === 'opening').reduce((sum, movement) => sum + Number(movement.amount || 0), 0);
     const withdrawals = relevant.filter((movement) => movement.type === 'withdrawal').reduce((sum, movement) => sum + Number(movement.amount || 0), 0);
+    // Cash movements and cash-paid entries are tracked in the trip's local
+    // currency (physical notes in hand), not entry.amount - that's always
+    // INR now (the real cost that drives who-owes-whom).
     const cashSpent = entries
       .filter((e) => normalizeLedger(e.ledger) === 'travel' && e.tripName === selectedTrip && e.paymentMethod === 'Cash')
-      .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+      .reduce((sum, e) => sum + Number(e.localAmount || 0), 0);
     return opening + withdrawals - cashSpent;
   }, [cashMovements, entries, selectedTrip]);
 
@@ -54,11 +79,12 @@ export default function TravelManager({
     if (!normalized) return;
     if (trips.some((trip) => trip.name.toLowerCase() === normalized.toLowerCase())) return;
     try {
-      await addTripToDb(normalized, tripCurrency, trips);
+      await addTripToDb(normalized, tripCurrency, Number(tripYear) || currentYear, trips);
       onTripSelect?.(normalized);
       onCurrencyChange?.(tripCurrency);
       setTripName('');
       setTripCurrency('INR');
+      setTripYear(currentYear);
       setAddingTrip(false);
       setShowSettings(true);
     } catch (err) {
@@ -138,7 +164,36 @@ export default function TravelManager({
     if (parsedWithdrawal > 0) {
       try {
         await addCashMovementToDb({ tripName: selectedTrip, type: 'withdrawal', amount: parsedWithdrawal });
+
+        // Recording the local-currency amount alone only feeds the cash
+        // balance widget - it doesn't touch who-owes-whom. If the INR cost
+        // is also given (from the card/forex statement), add a matching
+        // shared expense so the joint debt registers, and so this
+        // withdrawal's exact rate (INR / local) can auto-price every
+        // subsequent cash purchase in AddEntryForm. It's flagged
+        // isWithdrawal so Trip Summary/Category Breakdown don't double-count
+        // it against the cash purchases it funds.
+        const parsedInr = parseFloat(withdrawalInr);
+        if (parsedInr > 0 && withdrawalPayer) {
+          await addExpense({
+            amount: parsedInr,
+            localAmount: parsedWithdrawal,
+            payer: withdrawalPayer,
+            category: 'Misc',
+            split: true,
+            splitType: 'shared',
+            owedBy: null,
+            note: `${currentCurrency || 'Local'} ATM Withdrawal`,
+            date: todayISO(),
+            ledger: 'travel',
+            tripName: selectedTrip,
+            paymentMethod: withdrawalPaymentMethod,
+            isWithdrawal: true,
+          });
+        }
+
         setWithdrawalAmount('');
+        setWithdrawalInr('');
       } catch (err) {
         onSaveError?.(err);
       }
@@ -161,14 +216,26 @@ export default function TravelManager({
           </span>
         </div>
         <p className="text-sm text-muted-text">Create a trip to organize transactions, track cash balances, and manage trip currency.</p>
-        <form onSubmit={handleAddTrip} className="grid gap-3 sm:grid-cols-2">
+        <form onSubmit={handleAddTrip} className="grid gap-3 sm:grid-cols-3">
           <div>
             <label className="block text-sm font-medium text-muted-text mb-1">Trip Name</label>
             <input
               value={tripName}
               onChange={(e) => setTripName(e.target.value)}
               className={inputClass}
-              placeholder="e.g., Taiwan 2026"
+              placeholder="e.g., Taiwan"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-muted-text mb-1">Year</label>
+            <input
+              type="number"
+              inputMode="numeric"
+              step="1"
+              value={tripYear}
+              onChange={(e) => setTripYear(e.target.value)}
+              className={inputClass}
+              placeholder={String(currentYear)}
             />
           </div>
           <div>
@@ -183,7 +250,7 @@ export default function TravelManager({
               ))}
             </select>
           </div>
-          <div className="sm:col-span-2">
+          <div className="sm:col-span-3">
             <button type="submit" className="w-full min-h-11 rounded-lg bg-ledger-green text-white font-semibold text-sm hover:bg-ledger-green/90 transition-colors shadow-xs">
               Create Trip
             </button>
@@ -223,15 +290,27 @@ export default function TravelManager({
       </div>
 
       {addingTrip && (
-        <form onSubmit={handleAddTrip} className="rounded-xl border border-ink/15 bg-paper/80 p-4 grid gap-3 sm:grid-cols-3">
+        <form onSubmit={handleAddTrip} className="rounded-xl border border-ink/15 bg-paper/80 p-4 grid gap-3 sm:grid-cols-4">
           <div>
             <label className="block text-sm font-medium text-muted-text mb-1">Trip Name</label>
             <input
               value={tripName}
               onChange={(e) => setTripName(e.target.value)}
               className={inputClass}
-              placeholder="e.g., Singapore 2026"
+              placeholder="e.g., Singapore"
               autoFocus
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-muted-text mb-1">Year</label>
+            <input
+              type="number"
+              inputMode="numeric"
+              step="1"
+              value={tripYear}
+              onChange={(e) => setTripYear(e.target.value)}
+              className={inputClass}
+              placeholder={String(currentYear)}
             />
           </div>
           <div>
@@ -255,41 +334,48 @@ export default function TravelManager({
       )}
 
       <div className="rounded-xl border border-ink/10 bg-paper px-4 py-4 space-y-3">
-        <div className="flex flex-wrap gap-2">
-          {availableTrips.map((trip) => {
-            const active = selectedTrip === trip.name;
-            return (
-              <div
-                key={trip.name}
-                className={`flex items-center min-h-10 rounded-lg border transition-all ${
-                  active
-                    ? 'bg-ledger-green border-ledger-green shadow-2xs'
-                    : 'border-ink/15 bg-paper hover:bg-paper-card'
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => {
-                    onTripSelect?.(trip.name);
-                    onCurrencyChange?.(trip.currency || 'INR');
-                  }}
-                  className={`min-h-10 pl-3.5 pr-2 text-xs font-semibold ${active ? 'text-white' : 'text-ink'}`}
-                >
-                  {trip.name}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteTrip(trip)}
-                  className={`min-h-10 min-w-8 px-2 text-xs font-bold rounded-r-lg transition-colors ${
-                    active ? 'text-white/80 hover:bg-white/10' : 'text-muted-text hover:text-stamp-red hover:bg-stamp-red/10'
-                  }`}
-                  title={`Delete ${trip.name}`}
-                >
-                  ✕
-                </button>
+        <div className="space-y-2.5">
+          {tripsByYear.map(([year, yearTrips]) => (
+            <div key={year}>
+              <p className="text-2xs font-bold uppercase tracking-wider text-muted-text mb-1.5">{year}</p>
+              <div className="flex flex-wrap gap-2">
+                {yearTrips.map((trip) => {
+                  const active = selectedTrip === trip.name;
+                  return (
+                    <div
+                      key={trip.name}
+                      className={`flex items-center min-h-10 rounded-lg border transition-all ${
+                        active
+                          ? 'bg-ledger-green border-ledger-green shadow-2xs'
+                          : 'border-ink/15 bg-paper hover:bg-paper-card'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onTripSelect?.(trip.name);
+                          onCurrencyChange?.(trip.currency || 'INR');
+                        }}
+                        className={`min-h-10 pl-3.5 pr-2 text-xs font-semibold ${active ? 'text-white' : 'text-ink'}`}
+                      >
+                        {trip.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteTrip(trip)}
+                        className={`min-h-10 min-w-8 px-2 text-xs font-bold rounded-r-lg transition-colors ${
+                          active ? 'text-white/80 hover:bg-white/10' : 'text-muted-text hover:text-stamp-red hover:bg-stamp-red/10'
+                        }`}
+                        title={`Delete ${trip.name}`}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
@@ -336,7 +422,7 @@ export default function TravelManager({
 
           <form onSubmit={handleAddWithdrawal} className="grid gap-3 sm:grid-cols-2">
             <div>
-              <label className="block text-xs font-medium text-muted-text mb-1">ATM Cash Withdrawal</label>
+              <label className="block text-xs font-medium text-muted-text mb-1">ATM Cash Withdrawal ({currentCurrency || 'Local'})</label>
               <input
                 type="number"
                 inputMode="decimal"
@@ -348,7 +434,51 @@ export default function TravelManager({
                 placeholder="0"
               />
             </div>
-            <div className="flex items-end">
+            <div>
+              <label className="block text-xs font-medium text-muted-text mb-1">INR Cost (optional)</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="any"
+                value={withdrawalInr}
+                onChange={(e) => setWithdrawalInr(e.target.value)}
+                className={inputClass}
+                placeholder="From card/forex statement"
+              />
+            </div>
+            {withdrawalInr && parseFloat(withdrawalInr) > 0 && (
+              <>
+                <div>
+                  <label className="block text-xs font-medium text-muted-text mb-1">Withdrawn By</label>
+                  <select
+                    value={withdrawalPayer}
+                    onChange={(e) => setWithdrawalPayer(e.target.value)}
+                    className={selectClass}
+                  >
+                    {(dbMembers.length > 0 ? dbMembers : [withdrawalPayer].filter(Boolean)).map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-muted-text mb-1">Card Used</label>
+                  <select
+                    value={withdrawalPaymentMethod}
+                    onChange={(e) => setWithdrawalPaymentMethod(e.target.value)}
+                    className={selectClass}
+                  >
+                    {dbPaymentMethods.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+            <div className="sm:col-span-2">
+              <p className="text-2xs text-muted-text mb-2">
+                Adding the INR cost records this withdrawal as a shared expense too, so the joint debt registers in the balance above, and its exact rate auto-prices every "Cash" purchase you add afterward. Leave it blank to just track the cash balance, like before.
+              </p>
               <button type="submit" className="w-full min-h-11 rounded-lg border border-ink/15 bg-paper font-semibold text-xs text-ink hover:bg-paper-card transition-colors">
                 Record Withdrawal
               </button>
