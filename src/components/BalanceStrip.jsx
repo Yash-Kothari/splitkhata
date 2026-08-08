@@ -15,13 +15,18 @@ export default function BalanceStrip({
   const balance = useMemo(() => computeBalance(entries, ledger, dbMembers), [entries, ledger, dbMembers]);
   const ledgerLabel = isTravel ? 'Travel' : 'Household';
 
-  // Same exclusion as Category Breakdown: an ATM withdrawal is a cash
-  // movement, not spend of its own - the money it represents is already
-  // counted for real via the individual cash purchases it funds. Excluding
-  // purchases instead (the previous filter here) double-counted every
-  // withdrawal on top of the purchases it paid for.
+  // Mirrors the Excel's "Total Kruti / Total Yash" panel (see
+  // computeMemberTotals): it only ever prices card-paid entries and the
+  // ATM withdrawal itself, never individual cash purchases - so this
+  // excludes every Cash-paid entry, personal or shared, and keeps the
+  // withdrawal (paid by card, not "Cash"). A previous version of this
+  // filter only excluded *personal* cash entries, which happened to work
+  // when every cash purchase on a trip was personal (no shared ones to
+  // slip through) but double-counted the withdrawal on any trip - like
+  // one where the cash spend was entirely shared - that had shared cash
+  // purchases too.
   const memberTotals = useMemo(
-    () => (isTravel ? computeMemberTotals(entries.filter((e) => !e.isWithdrawal), dbMembers) : null),
+    () => (isTravel ? computeMemberTotals(entries.filter((e) => e.paymentMethod !== 'Cash'), dbMembers) : null),
     [entries, dbMembers, isTravel],
   );
 
