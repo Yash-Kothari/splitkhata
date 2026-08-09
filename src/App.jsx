@@ -173,12 +173,12 @@ export default function App() {
 
   // Restore the trip's currency after a reload, since only the trip *name*
   // is persisted locally - the currency lives on the trip record itself,
-  // which only becomes available once the trips subscription loads. Also
-  // auto-picks a trip when none is selected (or the stored one was
-  // deleted), so the Travel tab never sits on an empty "select a trip"
-  // placeholder while trips exist - prefers whichever trip is in progress
-  // today by date range, falling back to the most recent year's
-  // most-recently-added trip (dbTrips arrives oldest-created first).
+  // which only becomes available once the trips subscription loads. Only
+  // auto-picks a trip when one is genuinely in progress today by date
+  // range - it deliberately does NOT fall back to "most recent trip" the
+  // way it used to, so the Travel tab stays on its empty "search to pick a
+  // trip" state rather than silently opening some arbitrary old trip's
+  // summary/entries on every fresh visit.
   useEffect(() => {
     if (!dbTrips.length) return;
     const trip = dbTrips.find((t) => t.name === selectedTrip);
@@ -186,9 +186,8 @@ export default function App() {
       if (trip.currency) setCurrentCurrency(trip.currency);
       return;
     }
-    const defaultTrip = getActiveTrip(dbTrips)
-      || dbTrips.reduce((best, t) => ((t.year || 0) >= (best.year || 0) ? t : best), dbTrips[0]);
-    setSelectedTrip(defaultTrip.name);
+    const activeTrip = getActiveTrip(dbTrips);
+    if (activeTrip) setSelectedTrip(activeTrip.name);
   }, [selectedTrip, dbTrips, setSelectedTrip]);
 
   // Subscribe to real-time database collections
@@ -567,10 +566,10 @@ export default function App() {
             />
           )}
 
-          {activeLedger === 'travel' && !selectedTrip ? (
+          {activeLedger === 'travel' && !currentTrip ? (
             dbTrips.length > 0 && (
               <div className="border-2 border-dashed border-ink/20 rounded-xl py-10 px-4 text-center text-muted-text text-sm bg-paper/50">
-                Select a trip above to see its balance, spend breakdown, and passbook.
+                Search and select a trip above to see its balance, spend breakdown, and passbook.
               </div>
             )
           ) : activeLedger !== 'payments' && (

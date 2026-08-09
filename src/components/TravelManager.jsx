@@ -350,13 +350,15 @@ export default function TravelManager({
           <p className="text-xs text-muted-text">Manage your active trip, cash balances, and trip options.</p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowSettings((value) => !value)}
-            className="min-h-10 rounded-lg border border-ink/15 bg-paper px-3.5 py-2 text-xs font-semibold text-ink hover:bg-paper-card transition-colors shadow-2xs"
-          >
-            {showSettings ? 'Hide Trip Settings' : 'Trip Settings'}
-          </button>
+          {selectedTrip && (
+            <button
+              type="button"
+              onClick={() => setShowSettings(true)}
+              className="min-h-10 rounded-lg border border-ink/15 bg-paper px-3.5 py-2 text-xs font-semibold text-ink hover:bg-paper-card transition-colors shadow-2xs"
+            >
+              Trip Settings
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -549,32 +551,48 @@ export default function TravelManager({
           })}
         </div>
         )}
-        <div className="grid gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
-            <p className="text-2xs uppercase font-bold tracking-wider text-muted-text">Active Trip</p>
-            <p className="font-bold text-ink mt-0.5 text-sm">{selectedTrip || 'None Selected'}</p>
-          </div>
-          <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
-            <p className="text-2xs uppercase font-bold tracking-wider text-muted-text">Currency</p>
-            <p className="font-bold text-ink mt-0.5 text-sm">{currentCurrency || 'INR'}</p>
-          </div>
-          <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
-            <p className="text-2xs uppercase font-bold tracking-wider text-muted-text">Cash Balance</p>
-            <p className="font-mono font-bold text-ink mt-0.5 text-sm">
-              {selectedTrip ? `${selectedTripCash.toFixed(2)} ${currentCurrency || 'INR'}` : '0.00'}
-            </p>
-            {selectedTrip && selectedTripCashStats.withdrawn > 0 && (
-              <p className="font-mono text-2xs text-muted-text mt-0.5">
-                {selectedTripCashStats.withdrawn.toFixed(2)} {currentCurrency || 'INR'} withdrawn
+        {selectedTrip && (
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
+              <p className="text-2xs uppercase font-bold tracking-wider text-muted-text">Active Trip</p>
+              <p className="font-bold text-ink mt-0.5 text-sm">{selectedTrip}</p>
+            </div>
+            <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
+              <p className="text-2xs uppercase font-bold tracking-wider text-muted-text">Currency</p>
+              <p className="font-bold text-ink mt-0.5 text-sm">{currentCurrency || 'INR'}</p>
+            </div>
+            <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
+              <p className="text-2xs uppercase font-bold tracking-wider text-muted-text">Cash Balance</p>
+              <p className="font-mono font-bold text-ink mt-0.5 text-sm">
+                {selectedTripCash.toFixed(2)} {currentCurrency || 'INR'}
               </p>
-            )}
+              {selectedTripCashStats.withdrawn > 0 && (
+                <p className="font-mono text-2xs text-muted-text mt-0.5">
+                  {selectedTripCashStats.withdrawn.toFixed(2)} {currentCurrency || 'INR'} withdrawn
+                </p>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {showSettings && (
-        <div className="rounded-xl border border-ink/15 bg-paper/80 p-4 space-y-4">
-          <p className="text-xs font-bold uppercase tracking-wider text-ink">Trip Management & Cash</p>
+      {showSettings && selectedTrip && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-2.5 sm:px-4 backdrop-blur-xs">
+          <div className="w-full max-w-xl rounded-2xl bg-paper-card border border-ink/15 shadow-2xl overflow-hidden flex flex-col max-h-[92dvh]">
+            <div className="px-4 sm:px-6 py-3.5 border-b border-ink/10 flex items-center justify-between bg-paper/60">
+              <h2 className="font-display text-base sm:text-xl font-bold text-ink truncate">
+                {selectedTrip} Settings
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowSettings(false)}
+                className="w-8 h-8 rounded-full border border-ink/15 bg-paper flex items-center justify-center text-ink hover:bg-paper-card font-bold transition-colors shrink-0"
+                aria-label="Close trip settings"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-4 sm:space-y-6 flex-1">
 
           {selectedTripObj && (
             <form onSubmit={handleSaveDates} className="grid gap-3 sm:grid-cols-3 pb-2 border-b border-ink/10">
@@ -816,6 +834,17 @@ export default function TravelManager({
               )}
             </div>
           )}
+            </div>
+            <div className="px-4 sm:px-6 py-3 border-t border-ink/10 bg-paper/80 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowSettings(false)}
+                className="w-full sm:w-auto min-h-11 px-6 py-2 rounded-xl bg-ledger-green text-white font-semibold text-sm hover:bg-ledger-green/90 transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </section>
