@@ -62,6 +62,43 @@ export default function TravelManager({
       return Number(b) - Number(a);
     });
   }, [availableTrips]);
+  const selectedTripYear = availableTrips.find((t) => t.name === selectedTrip)?.year;
+  // A year is expanded by default only if it's the most recent one or holds
+  // the active trip - otherwise this list would only ever grow taller as
+  // trips pile up year after year. `toggledYears` tracks explicit clicks as
+  // a flip against that default, rather than storing expanded/collapsed
+  // directly, so a newly-added year still opens by default without needing
+  // to be added to this set first.
+  const [toggledYears, setToggledYears] = useState(() => new Set());
+  function isYearExpanded(year, isDefaultExpanded) {
+    return toggledYears.has(year) ? !isDefaultExpanded : isDefaultExpanded;
+  }
+  function toggleYear(year) {
+    setToggledYears((prev) => {
+      const next = new Set(prev);
+      if (next.has(year)) next.delete(year);
+      else next.add(year);
+      return next;
+    });
+  }
+  // Picking a trip should always leave its year visibly expanded - without
+  // this, selecting a trip inside a year the user had manually toggled
+  // open would flip `isDefaultExpanded` (now true, since it holds the
+  // active trip) against a stale toggle and immediately re-collapse it.
+  function selectTrip(trip) {
+    onTripSelect?.(trip.name);
+    onCurrencyChange?.(trip.currency || 'INR');
+    // tripsByYear's keys are strings (Object.entries always stringifies
+    // keys), but trip.year is stored as a number - comparing/deleting
+    // against toggledYears without coercing here silently no-ops.
+    const year = String(trip.year || 'Unsorted');
+    setToggledYears((prev) => {
+      if (!prev.has(year)) return prev;
+      const next = new Set(prev);
+      next.delete(year);
+      return next;
+    });
+  }
   useEffect(() => {
     setConfirmingDeleteTrip(false);
   }, [selectedTrip]);
@@ -336,37 +373,53 @@ export default function TravelManager({
 
       <div className="rounded-xl border border-ink/10 bg-paper px-4 py-4 space-y-3">
         <div className="space-y-2.5">
-          {tripsByYear.map(([year, yearTrips]) => (
-            <div key={year}>
-              <p className="text-2xs font-bold uppercase tracking-wider text-muted-text mb-1.5">{year}</p>
-              <div className="flex flex-wrap gap-2">
-                {yearTrips.map((trip) => {
-                  const active = selectedTrip === trip.name;
-                  return (
-                    <div
-                      key={trip.name}
-                      className={`flex items-center min-h-10 rounded-lg border transition-all ${
-                        active
-                          ? 'bg-ledger-green border-ledger-green shadow-2xs'
-                          : 'border-ink/15 bg-paper hover:bg-paper-card'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onTripSelect?.(trip.name);
-                          onCurrencyChange?.(trip.currency || 'INR');
-                        }}
-                        className={`min-h-10 px-3.5 text-xs font-semibold ${active ? 'text-white' : 'text-ink'}`}
-                      >
-                        {trip.name}
-                      </button>
-                    </div>
-                  );
-                })}
+          {tripsByYear.map(([year, yearTrips], idx) => {
+            const isDefaultExpanded = idx === 0 || String(year) === String(selectedTripYear);
+            const expanded = isYearExpanded(year, isDefaultExpanded);
+            return (
+              <div key={year}>
+                <button
+                  type="button"
+                  onClick={() => toggleYear(year)}
+                  className="w-full flex items-center justify-between gap-2 mb-1.5 group"
+                  aria-expanded={expanded}
+                >
+                  <span className="text-2xs font-bold uppercase tracking-wider text-muted-text group-hover:text-ink transition-colors">
+                    {year}
+                  </span>
+                  <span className="flex items-center gap-1.5 text-2xs font-semibold text-muted-text group-hover:text-ink transition-colors">
+                    {!expanded && `${yearTrips.length} trip${yearTrips.length === 1 ? '' : 's'}`}
+                    <span className={`inline-block transition-transform ${expanded ? 'rotate-90' : ''}`}>▸</span>
+                  </span>
+                </button>
+                {expanded && (
+                  <div className="flex flex-wrap gap-2">
+                    {yearTrips.map((trip) => {
+                      const active = selectedTrip === trip.name;
+                      return (
+                        <div
+                          key={trip.name}
+                          className={`flex items-center min-h-10 rounded-lg border transition-all ${
+                            active
+                              ? 'bg-ledger-green border-ledger-green shadow-2xs'
+                              : 'border-ink/15 bg-paper hover:bg-paper-card'
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => selectTrip(trip)}
+                            className={`min-h-10 px-3.5 text-xs font-semibold ${active ? 'text-white' : 'text-ink'}`}
+                          >
+                            {trip.name}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
