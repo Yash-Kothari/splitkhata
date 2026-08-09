@@ -568,17 +568,17 @@ export function subscribeToTrips(onData, onError) {
   }
 }
 
-export async function addTripToDb(name, currency, year, existingTrips = []) {
+export async function addTripToDb(name, currency, year, existingTrips = [], startDate = null, endDate = null) {
   const trimmed = name.trim();
   if (!trimmed) return;
   const exists = existingTrips.some((t) => t.name?.trim().toLowerCase() === trimmed.toLowerCase());
   if (exists) return;
 
   if (tripsRef) {
-    await addDoc(tripsRef, { name: trimmed, currency, year, createdAt: serverTimestamp() });
+    await addDoc(tripsRef, { name: trimmed, currency, year, startDate, endDate, createdAt: serverTimestamp() });
   } else {
     const current = getStoredTrips();
-    const newTrip = { id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), name: trimmed, currency, year };
+    const newTrip = { id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), name: trimmed, currency, year, startDate, endDate };
     const updated = [...current, newTrip];
     setStoredTrips(updated);
     tripListeners.forEach((fn) => fn(updated));

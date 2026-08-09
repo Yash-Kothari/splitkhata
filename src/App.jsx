@@ -34,6 +34,7 @@ import {
   getStoredSelectedTrip,
   setStoredSelectedTrip,
   getPinConfig,
+  getActiveTrip,
 } from './utils';
 
 // recharts pulls in a lot of weight for content that's below the fold on
@@ -175,8 +176,9 @@ export default function App() {
   // which only becomes available once the trips subscription loads. Also
   // auto-picks a trip when none is selected (or the stored one was
   // deleted), so the Travel tab never sits on an empty "select a trip"
-  // placeholder while trips exist - defaults to the most recent year's
-  // most-recently-added trip, since dbTrips arrives oldest-created first.
+  // placeholder while trips exist - prefers whichever trip is in progress
+  // today by date range, falling back to the most recent year's
+  // most-recently-added trip (dbTrips arrives oldest-created first).
   useEffect(() => {
     if (!dbTrips.length) return;
     const trip = dbTrips.find((t) => t.name === selectedTrip);
@@ -184,7 +186,8 @@ export default function App() {
       if (trip.currency) setCurrentCurrency(trip.currency);
       return;
     }
-    const defaultTrip = dbTrips.reduce((best, t) => ((t.year || 0) >= (best.year || 0) ? t : best), dbTrips[0]);
+    const defaultTrip = getActiveTrip(dbTrips)
+      || dbTrips.reduce((best, t) => ((t.year || 0) >= (best.year || 0) ? t : best), dbTrips[0]);
     setSelectedTrip(defaultTrip.name);
   }, [selectedTrip, dbTrips, setSelectedTrip]);
 

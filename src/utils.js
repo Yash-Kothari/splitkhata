@@ -394,6 +394,18 @@ export function todayISO() {
   return `${year}-${month}-${day}`;
 }
 
+export function isTripActive(trip, today = todayISO()) {
+  if (!trip?.startDate || !trip?.endDate) return false;
+  return today >= trip.startDate && today <= trip.endDate;
+}
+
+// Picks the trip currently in progress by date range, if any - ties (two
+// trips somehow overlapping today) resolve to whichever comes first in the
+// given list. Trips without both dates set can never be "active".
+export function getActiveTrip(trips, today = todayISO()) {
+  return trips.find((trip) => isTripActive(trip, today)) || null;
+}
+
 export function getPreviousMonthKey(monthKey) {
   if (!monthKey) return '';
   const [yearStr, monthStr] = monthKey.split('-');

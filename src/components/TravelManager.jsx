@@ -3,13 +3,14 @@ import {
   addCategoryToDb,
   deleteCategoryFromDb,
   addTripToDb,
+  updateTripInDb,
   deleteTripFromDb,
   addCashMovementToDb,
   addPaymentMethodToDb,
   deletePaymentMethodFromDb,
   addExpense,
 } from '../firebase';
-import { DEFAULT_CURRENCIES as CURRENCIES, normalizeLedger, todayISO } from '../utils';
+import { DEFAULT_CURRENCIES as CURRENCIES, normalizeLedger, todayISO, getActiveTrip } from '../utils';
 
 export default function TravelManager({
   onTripSelect,
@@ -32,6 +33,12 @@ export default function TravelManager({
   const [tripName, setTripName] = useState('');
   const [tripCurrency, setTripCurrency] = useState('INR');
   const [tripYear, setTripYear] = useState(currentYear);
+  const [tripStartDate, setTripStartDate] = useState('');
+  const [tripEndDate, setTripEndDate] = useState('');
+  const [browsingByYear, setBrowsingByYear] = useState(false);
+  const [datesStartDraft, setDatesStartDraft] = useState('');
+  const [datesEndDraft, setDatesEndDraft] = useState('');
+  const [savingDates, setSavingDates] = useState(false);
   const [categoryDraft, setCategoryDraft] = useState('');
   const [paymentMethodDraft, setPaymentMethodDraft] = useState('');
   const [openingCash, setOpeningCash] = useState('');
@@ -43,6 +50,7 @@ export default function TravelManager({
   const [showSettings, setShowSettings] = useState(false);
   const [addingTrip, setAddingTrip] = useState(false);
   const [confirmingDeleteTrip, setConfirmingDeleteTrip] = useState(false);
+  const [tripSearch, setTripSearch] = useState('');
 
   const displayCategories = dbCategories;
   const currenciesList = dbCurrencies && dbCurrencies.length > 0 ? dbCurrencies : CURRENCIES;
@@ -62,7 +70,18 @@ export default function TravelManager({
       return Number(b) - Number(a);
     });
   }, [availableTrips]);
-  const selectedTripYear = availableTrips.find((t) => t.name === selectedTrip)?.year;
+  const trimmedSearch = tripSearch.trim().toLowerCase();
+  // Flat (ungrouped) search results - once a search has narrowed the list
+  // down, year headers just add noise for what's usually a single match.
+  const searchedTripsFlat = useMemo(() => {
+    if (!trimmedSearch) return [];
+    return availableTrips
+      .filter((t) => t.name.toLowerCase().includes(trimmedSearch))
+      .sort((a, b) => (b.year || 0) - (a.year || 0));
+  }, [availableTrips, trimmedSearch]);
+  const dateActiveTrip = useMemo(() => getActiveTrip(availableTrips), [availableTrips]);
+  const selectedTripObj = availableTrips.find((t) => t.name === selectedTrip);
+  const selectedTripYear = selectedTripObj?.year;
   // A year is expanded by default only if it's the most recent one or holds
   // the active trip - otherwise this list would only ever grow taller as
   // trips pile up year after year. `toggledYears` tracks explicit clicks as
@@ -103,6 +122,28 @@ export default function TravelManager({
     setConfirmingDeleteTrip(false);
   }, [selectedTrip]);
 
+  useEffect(() => {
+    setDatesStartDraft(selectedTripObj?.startDate || '');
+    setDatesEndDraft(selectedTripObj?.endDate || '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTrip]);
+
+  async function handleSaveDates(event) {
+    event.preventDefault();
+    if (!selectedTripObj) return;
+    setSavingDates(true);
+    try {
+      await updateTripInDb(selectedTripObj.id, {
+        startDate: datesStartDraft || null,
+        endDate: datesEndDraft || null,
+      });
+    } catch (err) {
+      onSaveError?.(err);
+    } finally {
+      setSavingDates(false);
+    }
+  }
+
   const selectedTripCashStats = useMemo(() => {
     const relevant = cashMovements.filter((movement) => movement.tripName === selectedTrip);
     const opening = relevant.filter((movement) => movement.type === 'opening').reduce((sum, movement) => sum + Number(movement.amount || 0), 0);
@@ -123,12 +164,14 @@ export default function TravelManager({
     if (!normalized) return;
     if (trips.some((trip) => trip.name.toLowerCase() === normalized.toLowerCase())) return;
     try {
-      await addTripToDb(normalized, tripCurrency, Number(tripYear) || currentYear, trips);
+      await addTripToDb(normalized, tripCurrency, Number(tripYear) || currentYear, trips, tripStartDate || null, tripEndDate || null);
       onTripSelect?.(normalized);
       onCurrencyChange?.(tripCurrency);
       setTripName('');
       setTripCurrency('INR');
       setTripYear(currentYear);
+      setTripStartDate('');
+      setTripEndDate('');
       setAddingTrip(false);
       setShowSettings(true);
     } catch (err) {
@@ -319,6 +362,8 @@ export default function TravelManager({
             onClick={() => {
               setTripName('');
               setTripCurrency('INR');
+              setTripStartDate('');
+              setTripEndDate('');
               setAddingTrip((v) => !v);
             }}
             className="min-h-10 rounded-lg border border-ink/15 bg-paper px-3.5 py-2 text-xs font-semibold text-ink hover:bg-paper-card transition-colors shadow-2xs"
@@ -364,6 +409,24 @@ export default function TravelManager({
               ))}
             </select>
           </div>
+          <div>
+            <label className="block text-sm font-medium text-muted-text mb-1">Start Date (optional)</label>
+            <input
+              type="date"
+              value={tripStartDate}
+              onChange={(e) => setTripStartDate(e.target.value)}
+              className={`${inputClass} date-input appearance-none`}
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-muted-text mb-1">End Date (optional)</label>
+            <input
+              type="date"
+              value={tripEndDate}
+              onChange={(e) => setTripEndDate(e.target.value)}
+              className={`${inputClass} date-input appearance-none`}
+            />
+          </div>
           <div className="flex items-end">
             <button type="submit" className="w-full min-h-11 rounded-lg bg-ledger-green text-white font-semibold text-sm hover:bg-ledger-green/90 transition-colors shadow-xs">
               Create Trip
@@ -373,6 +436,69 @@ export default function TravelManager({
       )}
 
       <div className="rounded-xl border border-ink/10 bg-paper px-4 py-4 space-y-3">
+        <input
+          type="text"
+          value={tripSearch}
+          onChange={(e) => setTripSearch(e.target.value)}
+          placeholder="Search trips…"
+          className={inputClass}
+        />
+
+        {!trimmedSearch && dateActiveTrip && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-ledger-green/40 bg-ledger-green/10 px-3.5 py-2.5">
+            <div>
+              <p className="text-2xs uppercase font-bold tracking-wider text-ledger-green">🧳 Currently Traveling</p>
+              <p className="font-bold text-ink text-sm mt-0.5">{dateActiveTrip.name}</p>
+            </div>
+            {selectedTrip !== dateActiveTrip.name && (
+              <button
+                type="button"
+                onClick={() => selectTrip(dateActiveTrip)}
+                className="min-h-9 rounded-lg bg-ledger-green text-white px-3 text-xs font-semibold hover:bg-ledger-green/90 transition-colors shrink-0"
+              >
+                Switch to it
+              </button>
+            )}
+          </div>
+        )}
+
+        {trimmedSearch && (
+          <div className="flex flex-wrap gap-2">
+            {searchedTripsFlat.length === 0 && (
+              <p className="text-sm text-muted-text px-1">No trips match "{tripSearch.trim()}".</p>
+            )}
+            {searchedTripsFlat.map((trip) => {
+              const active = selectedTrip === trip.name;
+              return (
+                <button
+                  key={trip.name}
+                  type="button"
+                  onClick={() => selectTrip(trip)}
+                  className={`min-h-10 px-3.5 rounded-lg border text-xs font-semibold transition-all ${
+                    active
+                      ? 'bg-ledger-green border-ledger-green text-white shadow-2xs'
+                      : 'border-ink/15 bg-paper text-ink hover:bg-paper-card'
+                  }`}
+                >
+                  {trip.name}{trip.year ? ` (${trip.year})` : ''}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {!trimmedSearch && (
+          <button
+            type="button"
+            onClick={() => setBrowsingByYear((v) => !v)}
+            className="text-xs font-semibold text-muted-text hover:text-ink transition-colors flex items-center gap-1"
+          >
+            <span className={`inline-block transition-transform ${browsingByYear ? 'rotate-90' : ''}`}>▸</span>
+            {browsingByYear ? 'Hide trips grouped by year' : `Browse all trips by year (${availableTrips.length})`}
+          </button>
+        )}
+
+        {!trimmedSearch && browsingByYear && (
         <div className="space-y-2.5">
           {tripsByYear.map(([year, yearTrips], idx) => {
             const isDefaultExpanded = idx === 0 || String(year) === String(selectedTripYear);
@@ -422,6 +548,7 @@ export default function TravelManager({
             );
           })}
         </div>
+        )}
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-lg border border-ink/10 bg-paper-card px-3.5 py-2.5">
             <p className="text-2xs uppercase font-bold tracking-wider text-muted-text">Active Trip</p>
@@ -448,6 +575,41 @@ export default function TravelManager({
       {showSettings && (
         <div className="rounded-xl border border-ink/15 bg-paper/80 p-4 space-y-4">
           <p className="text-xs font-bold uppercase tracking-wider text-ink">Trip Management & Cash</p>
+
+          {selectedTripObj && (
+            <form onSubmit={handleSaveDates} className="grid gap-3 sm:grid-cols-3 pb-2 border-b border-ink/10">
+              <div>
+                <label className="block text-xs font-medium text-muted-text mb-1">Trip Start Date</label>
+                <input
+                  type="date"
+                  value={datesStartDraft}
+                  onChange={(e) => setDatesStartDraft(e.target.value)}
+                  className={`${inputClass} date-input appearance-none`}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-text mb-1">Trip End Date</label>
+                <input
+                  type="date"
+                  value={datesEndDraft}
+                  onChange={(e) => setDatesEndDraft(e.target.value)}
+                  className={`${inputClass} date-input appearance-none`}
+                />
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="submit"
+                  disabled={savingDates}
+                  className="w-full min-h-11 rounded-lg border border-ink/15 bg-paper font-semibold text-xs text-ink hover:bg-paper-card transition-colors disabled:opacity-50"
+                >
+                  Save Dates
+                </button>
+              </div>
+              <p className="sm:col-span-3 text-2xs text-muted-text -mt-1">
+                Sets when {selectedTrip} counts as your active trip, so it surfaces automatically without searching.
+              </p>
+            </form>
+          )}
 
           <form onSubmit={handleSaveCash} className="grid gap-3 sm:grid-cols-2">
             <div>
