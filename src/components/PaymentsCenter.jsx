@@ -36,7 +36,7 @@ export default function PaymentsCenter({ entries, travelEntries = [], dbMembers 
             <p className="text-sm text-ledger-green font-semibold">All settled up across every trip</p>
           ) : (
             <p className="text-base text-ink">
-              🪙 <span className="font-semibold text-stamp-red">{pointsBalance.debtor}</span>
+              💳 <span className="font-semibold text-stamp-red">{pointsBalance.debtor}</span>
               {' owes '}
               <span className="font-semibold text-ledger-green">{pointsBalance.creditor}</span>{' '}
               <span className="font-mono font-bold text-lg text-ink">

@@ -234,7 +234,7 @@ export default function BalanceStrip({
           )}
           {isTravel && totalPointsSpent !== 0 && (
             <p className="text-sm text-muted-text mt-1">
-              🪙 Points {totalPointsSpent > 0 ? 'spent' : 'earned'}:{' '}
+              💳 Points {totalPointsSpent > 0 ? 'spent' : 'earned'}:{' '}
               <span className="font-mono font-semibold text-ink">
                 {Math.abs(Math.round(totalPointsSpent)).toLocaleString('en-IN')} pts
               </span>
@@ -242,10 +242,10 @@ export default function BalanceStrip({
           )}
           {hasPoints && (
             pointsBalance.status === 'settled' ? (
-              <p className="text-sm text-ledger-green font-medium mt-1">🪙 All settled up in points</p>
+              <p className="text-sm text-ledger-green font-medium mt-1">💳 All settled up in points</p>
             ) : (
               <p className="text-sm text-muted-text mt-1">
-                🪙 <span className="font-semibold text-stamp-red">{pointsBalance.debtor}</span>
+                💳 <span className="font-semibold text-stamp-red">{pointsBalance.debtor}</span>
                 {' owes '}
                 <span className="font-semibold text-ledger-green">{pointsBalance.creditor}</span>
                 {' '}
@@ -279,7 +279,7 @@ export default function BalanceStrip({
                   />
                   <span className="text-muted-text">{member}</span>
                   <span className="font-mono font-semibold text-ink">
-                    🪙 {Math.round(pointsMemberTotals?.[member] || 0).toLocaleString('en-IN')} pts
+                    💳 {Math.round(pointsMemberTotals?.[member] || 0).toLocaleString('en-IN')} pts
                   </span>
                 </div>
               ))}

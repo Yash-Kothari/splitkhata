@@ -169,7 +169,7 @@ export default function EntryList({
                               : 'bg-ledger-green/15 text-ledger-green'
                           }`}
                         >
-                          🪙 {entry.rewardPoints > 0 ? `-${entry.rewardPoints}` : `+${Math.abs(entry.rewardPoints)}`} pts
+                          💳 {entry.rewardPoints > 0 ? `-${entry.rewardPoints}` : `+${Math.abs(entry.rewardPoints)}`} pts
                         </span>
                       ) : null}
                     </span>
