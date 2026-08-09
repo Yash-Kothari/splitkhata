@@ -103,7 +103,7 @@ export default function TravelManager({
     setConfirmingDeleteTrip(false);
   }, [selectedTrip]);
 
-  const selectedTripCash = useMemo(() => {
+  const selectedTripCashStats = useMemo(() => {
     const relevant = cashMovements.filter((movement) => movement.tripName === selectedTrip);
     const opening = relevant.filter((movement) => movement.type === 'opening').reduce((sum, movement) => sum + Number(movement.amount || 0), 0);
     const withdrawals = relevant.filter((movement) => movement.type === 'withdrawal').reduce((sum, movement) => sum + Number(movement.amount || 0), 0);
@@ -113,8 +113,9 @@ export default function TravelManager({
     const cashSpent = entries
       .filter((e) => normalizeLedger(e.ledger) === 'travel' && e.tripName === selectedTrip && e.paymentMethod === 'Cash')
       .reduce((sum, e) => sum + Number(e.localAmount || 0), 0);
-    return opening + withdrawals - cashSpent;
+    return { balance: opening + withdrawals - cashSpent, withdrawn: opening + withdrawals };
   }, [cashMovements, entries, selectedTrip]);
+  const selectedTripCash = selectedTripCashStats.balance;
 
   async function handleAddTrip(event) {
     event.preventDefault();
@@ -435,6 +436,11 @@ export default function TravelManager({
             <p className="font-mono font-bold text-ink mt-0.5 text-sm">
               {selectedTrip ? `${selectedTripCash.toFixed(2)} ${currentCurrency || 'INR'}` : '0.00'}
             </p>
+            {selectedTrip && selectedTripCashStats.withdrawn > 0 && (
+              <p className="font-mono text-2xs text-muted-text mt-0.5">
+                {selectedTripCashStats.withdrawn.toFixed(2)} {currentCurrency || 'INR'} withdrawn
+              </p>
+            )}
           </div>
         </div>
       </div>

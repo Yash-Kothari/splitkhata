@@ -161,7 +161,7 @@ export default function EntryList({
                           ({formatCurrency(entry.localAmount, currentCurrency)})
                         </span>
                       )}
-                      {isTravel && entry.rewardPoints ? (
+                      {(isTravel || entry.isTripRollup) && entry.rewardPoints ? (
                         <span
                           className={`font-mono text-xs px-1.5 py-0.2 rounded font-semibold ${
                             entry.rewardPoints > 0

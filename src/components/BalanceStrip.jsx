@@ -39,6 +39,24 @@ export default function BalanceStrip({
     () => (hasPoints ? computeBalance(entries, ledger, dbMembers, 'rewardPoints') : null),
     [entries, ledger, dbMembers, hasPoints],
   );
+  // Total points spent on the trip, regardless of split - unlike
+  // pointsBalance (which only counts split entries, so a personal
+  // points-funded flight nets to "settled" and shows nothing) this is
+  // purely informational: how many points did this trip burn, full stop.
+  const totalPointsSpent = useMemo(
+    () => (isTravel ? entries.reduce((sum, e) => sum + Number(e.rewardPoints || 0), 0) : 0),
+    [entries, isTravel],
+  );
+  // Per-person points breakdown - same attribution rules as memberTotals
+  // (personal counts fully against the payer, shared splits evenly), just
+  // reading rewardPoints instead of amount. This is what makes a
+  // personal points-funded flight show up as "Yash: 22,345 pts" instead
+  // of vanishing the way pointsBalance does (that one only counts split
+  // entries, since a personal redemption isn't a debt to anyone).
+  const pointsMemberTotals = useMemo(
+    () => (hasPoints ? computeMemberTotals(entries, dbMembers, 'rewardPoints') : null),
+    [entries, dbMembers, hasPoints],
+  );
 
   // Same total as the Category Breakdown card - every real spend, minus
   // settlements (not a spend) and withdrawals (already counted via the
@@ -145,6 +163,7 @@ export default function BalanceStrip({
             amount: balance.amount,
             payer: balance.creditor,
             owedBy: balance.debtor,
+            rewardPoints: totalPointsSpent || null,
           });
         } else {
           entryId = await addExpense({
@@ -159,6 +178,11 @@ export default function BalanceStrip({
             ledger: 'household',
             tripName: '',
             isTripRollup: true,
+            // Carried along purely so the trip's total points usage stays
+            // visible in the Payments passbook (see EntryList's badge) -
+            // this is NOT a person-to-person points debt, just the same
+            // "how many points did this trip burn" figure shown above.
+            rewardPoints: totalPointsSpent || null,
           });
         }
         if (tripId) {
@@ -208,16 +232,28 @@ export default function BalanceStrip({
               <span className="font-mono font-semibold text-ink">{formatCurrency(totalSpend, displayCurrency)}</span>
             </p>
           )}
-          {hasPoints && pointsBalance.status !== 'settled' && (
+          {isTravel && totalPointsSpent !== 0 && (
             <p className="text-sm text-muted-text mt-1">
-              🪙 <span className="font-semibold text-stamp-red">{pointsBalance.debtor}</span>
-              {' owes '}
-              <span className="font-semibold text-ledger-green">{pointsBalance.creditor}</span>
-              {' '}
+              🪙 Points {totalPointsSpent > 0 ? 'spent' : 'earned'}:{' '}
               <span className="font-mono font-semibold text-ink">
-                {Math.round(pointsBalance.amount).toLocaleString('en-IN')} pts
+                {Math.abs(Math.round(totalPointsSpent)).toLocaleString('en-IN')} pts
               </span>
             </p>
+          )}
+          {hasPoints && (
+            pointsBalance.status === 'settled' ? (
+              <p className="text-sm text-ledger-green font-medium mt-1">🪙 All settled up in points</p>
+            ) : (
+              <p className="text-sm text-muted-text mt-1">
+                🪙 <span className="font-semibold text-stamp-red">{pointsBalance.debtor}</span>
+                {' owes '}
+                <span className="font-semibold text-ledger-green">{pointsBalance.creditor}</span>
+                {' '}
+                <span className="font-mono font-semibold text-ink">
+                  {Math.round(pointsBalance.amount).toLocaleString('en-IN')} pts
+                </span>
+              </p>
+            )
           )}
           {isTravel && dbMembers.length > 0 && (
             <div className="mt-3 pt-3 border-t border-ink/10 flex flex-wrap gap-x-4 gap-y-1.5">
@@ -229,6 +265,22 @@ export default function BalanceStrip({
                   />
                   <span className="text-muted-text">{member}</span>
                   <span className="font-mono font-semibold text-ink">{formatCurrency(memberTotals?.[member] || 0)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {hasPoints && dbMembers.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1.5">
+              {dbMembers.map((member) => (
+                <div key={member} className="flex items-center gap-1.5 text-xs">
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: PERSON_COLORS[member] || '#3D7068' }}
+                  />
+                  <span className="text-muted-text">{member}</span>
+                  <span className="font-mono font-semibold text-ink">
+                    🪙 {Math.round(pointsMemberTotals?.[member] || 0).toLocaleString('en-IN')} pts
+                  </span>
                 </div>
               ))}
             </div>

@@ -280,10 +280,10 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
 // only ever prices card-paid entries and the ATM withdrawal itself - it
 // never assigns an INR cost to individual cash purchases, so neither does
 // this (see the exclusion in the caller).
-export function computeMemberTotals(entries, members) {
+export function computeMemberTotals(entries, members, valueField = 'amount') {
   const totals = Object.fromEntries(members.map((m) => [m, 0]));
   for (const entry of entries) {
-    const amount = Number(entry.amount || 0);
+    const amount = Number(entry[valueField] || 0);
     if (!amount) continue;
     if (!entry.split) {
       if (members.includes(entry.payer)) totals[entry.payer] += amount;
