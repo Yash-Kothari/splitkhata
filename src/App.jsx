@@ -172,12 +172,21 @@ export default function App() {
 
   // Restore the trip's currency after a reload, since only the trip *name*
   // is persisted locally - the currency lives on the trip record itself,
-  // which only becomes available once the trips subscription loads.
+  // which only becomes available once the trips subscription loads. Also
+  // auto-picks a trip when none is selected (or the stored one was
+  // deleted), so the Travel tab never sits on an empty "select a trip"
+  // placeholder while trips exist - defaults to the most recent year's
+  // most-recently-added trip, since dbTrips arrives oldest-created first.
   useEffect(() => {
-    if (!selectedTrip || !dbTrips.length) return;
+    if (!dbTrips.length) return;
     const trip = dbTrips.find((t) => t.name === selectedTrip);
-    if (trip?.currency) setCurrentCurrency(trip.currency);
-  }, [selectedTrip, dbTrips]);
+    if (trip) {
+      if (trip.currency) setCurrentCurrency(trip.currency);
+      return;
+    }
+    const defaultTrip = dbTrips.reduce((best, t) => ((t.year || 0) >= (best.year || 0) ? t : best), dbTrips[0]);
+    setSelectedTrip(defaultTrip.name);
+  }, [selectedTrip, dbTrips, setSelectedTrip]);
 
   // Subscribe to real-time database collections
   useEffect(() => {

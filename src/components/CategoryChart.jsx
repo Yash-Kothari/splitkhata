@@ -124,6 +124,11 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
   // amount is always INR now (real cost) - a trip's local currency is a
   // per-entry reference (see EntryList), not what spend charts total up.
   const currency = 'INR';
+  // The center total sits inside a fixed-size donut hole - a long total
+  // (large trips, or currencies whose symbol/format runs wide) can overflow
+  // that circle and spill onto the ring, so its font size scales down by
+  // string length instead of staying fixed regardless of digit count.
+  const totalLabel = formatCurrency(total, currency);
 
   const [selectedCategory, setSelectedCategory] = useState(null);
   const drilldownEntries = useMemo(
@@ -196,9 +201,13 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
               </PieChart>
             </ResponsiveContainer>
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="text-center">
-                <p className="font-mono font-bold text-lg sm:text-xl text-ink">
-                  {formatCurrency(total, currency)}
+              <div className="text-center px-2 max-w-[38%]">
+                <p
+                  className={`font-mono font-bold text-ink leading-tight ${
+                    totalLabel.length > 12 ? 'text-xs sm:text-sm' : totalLabel.length > 9 ? 'text-sm sm:text-base' : 'text-lg sm:text-xl'
+                  }`}
+                >
+                  {totalLabel}
                 </p>
                 <p className="text-[10px] text-muted-text font-medium uppercase tracking-wider">Total</p>
               </div>
