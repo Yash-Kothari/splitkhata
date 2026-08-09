@@ -153,17 +153,21 @@ export default function EntryList({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline justify-between gap-2">
                     <span className="flex items-baseline gap-1.5">
-                      <span className="font-mono font-bold text-ink text-base">
-                        {formatCurrency(entry.amount, 'INR')}
-                      </span>
+                      {entry.amount ? (
+                        <span className="font-mono font-bold text-ink text-base">
+                          {formatCurrency(entry.amount, 'INR')}
+                        </span>
+                      ) : null}
                       {isTravel && entry.localAmount != null && (
                         <span className="font-mono text-muted-text text-xs">
                           ({formatCurrency(entry.localAmount, currentCurrency)})
                         </span>
                       )}
-                      {(isTravel || entry.isTripRollup) && entry.rewardPoints ? (
+                      {(isTravel || entry.isTripRollup || entry.splitType === 'settlement') && entry.rewardPoints ? (
                         <span
-                          className={`font-mono text-xs px-1.5 py-0.2 rounded font-semibold ${
+                          className={`font-mono px-1.5 py-0.2 rounded font-semibold ${
+                            entry.amount ? 'text-xs' : 'text-base'
+                          } ${
                             entry.rewardPoints > 0
                               ? 'bg-mustard/20 text-mustard'
                               : 'bg-ledger-green/15 text-ledger-green'
