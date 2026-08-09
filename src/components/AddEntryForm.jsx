@@ -38,8 +38,7 @@ export default function AddEntryForm({
   const [paymentMethod, setPaymentMethod] = useState(paymentMethodsList[0] || 'Cash');
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [slowSave, setSlowSave] = useState(false);
+  const [pendingSaves, setPendingSaves] = useState(0);
   const [expanded, setExpanded] = useState(true);
   const [splitAcrossMonths, setSplitAcrossMonths] = useState(false);
   const [monthsCount, setMonthsCount] = useState(6);
@@ -102,7 +101,7 @@ export default function AddEntryForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fifoResult, paymentMethod, ledger]);
 
-  async function handleSubmit(e) {
+  function handleSubmit(e) {
     e.preventDefault();
     const parsed = parseFloat(amount);
     if (!parsed || parsed <= 0) return;
@@ -112,63 +111,60 @@ export default function AddEntryForm({
     const parsedLocal = ledger === 'travel' && localAmount ? parseFloat(localAmount) : null;
     const parsedPoints = ledger === 'travel' && rewardPoints ? parseFloat(rewardPoints) : null;
 
-    setSaving(true);
-    // Firestore write promises only resolve once the server acknowledges
-    // the write, which can take a while on a slow/flaky connection even
-    // though the entry already appears locally via the realtime listener.
-    // Escalate the button text after a couple seconds so it reads as "still
-    // working on a slow network", not "frozen".
-    const slowTimer = setTimeout(() => setSlowSave(true), 2500);
-    try {
-      if (months > 1) {
-        const installmentAmounts = splitAmountEvenly(parsed, months);
-        const installments = Array.from({ length: months }, (_, i) => ({
-          amount: installmentAmounts[i],
-          payer,
-          category,
-          split: splitType !== 'personal',
-          splitType,
-          owedBy: splitType === 'owed' ? owedBy : null,
-          note: trimmedNote ? `${trimmedNote} (${i + 1}/${months})` : `Installment ${i + 1}/${months}`,
-          date: addMonthsToDateISO(date, i),
-          ledger,
-          tripName: ledger === 'travel' ? tripName : '',
-          paymentMethod: ledger === 'travel' ? paymentMethod : null,
-          localAmount: null,
-          rewardPoints: null,
-        }));
-        await addExpensesBatch(installments);
-      } else {
-        await addExpense({
-          amount: parsed,
-          payer,
-          category,
-          split: splitType !== 'personal',
-          splitType,
-          owedBy: splitType === 'owed' ? owedBy : null,
-          note: trimmedNote,
-          date,
-          ledger,
-          tripName: ledger === 'travel' ? tripName : '',
-          paymentMethod: ledger === 'travel' ? paymentMethod : null,
-          localAmount: parsedLocal,
-          rewardPoints: parsedPoints,
-        });
-      }
-      setAmount('');
-      setLocalAmount('');
-      setRewardPoints('');
-      setNote('');
-      setDate(todayISO());
-      setSplitAcrossMonths(false);
-      setMonthsCount(6);
-    } catch (err) {
-      onSaveError?.(err);
-    } finally {
-      clearTimeout(slowTimer);
-      setSaving(false);
-      setSlowSave(false);
+    // Firestore's offline cache queues this write locally and syncs it in
+    // the background - the entry is durable even if this tab closes before
+    // that sync finishes. Don't make the next entry wait on the server
+    // round-trip: fire the write and reset the form immediately, and only
+    // surface a problem later (via onSaveError) if it actually fails.
+    let writePromise;
+    if (months > 1) {
+      const installmentAmounts = splitAmountEvenly(parsed, months);
+      const installments = Array.from({ length: months }, (_, i) => ({
+        amount: installmentAmounts[i],
+        payer,
+        category,
+        split: splitType !== 'personal',
+        splitType,
+        owedBy: splitType === 'owed' ? owedBy : null,
+        note: trimmedNote ? `${trimmedNote} (${i + 1}/${months})` : `Installment ${i + 1}/${months}`,
+        date: addMonthsToDateISO(date, i),
+        ledger,
+        tripName: ledger === 'travel' ? tripName : '',
+        paymentMethod: ledger === 'travel' ? paymentMethod : null,
+        localAmount: null,
+        rewardPoints: null,
+      }));
+      writePromise = addExpensesBatch(installments);
+    } else {
+      writePromise = addExpense({
+        amount: parsed,
+        payer,
+        category,
+        split: splitType !== 'personal',
+        splitType,
+        owedBy: splitType === 'owed' ? owedBy : null,
+        note: trimmedNote,
+        date,
+        ledger,
+        tripName: ledger === 'travel' ? tripName : '',
+        paymentMethod: ledger === 'travel' ? paymentMethod : null,
+        localAmount: parsedLocal,
+        rewardPoints: parsedPoints,
+      });
     }
+
+    setPendingSaves((n) => n + 1);
+    writePromise
+      .catch((err) => onSaveError?.(err))
+      .finally(() => setPendingSaves((n) => n - 1));
+
+    setAmount('');
+    setLocalAmount('');
+    setRewardPoints('');
+    setNote('');
+    setDate(todayISO());
+    setSplitAcrossMonths(false);
+    setMonthsCount(6);
   }
 
   // Once the trip's withdrawals fully cover this Local Amount, a Cash
@@ -427,10 +423,13 @@ export default function AddEntryForm({
           <div className="sticky bottom-0 -mx-4 sm:-mx-5 px-4 sm:px-5 py-3 bg-paper-card/95 backdrop-blur-xs border-t border-ink/10 sm:static sm:border-0 sm:p-0 sm:bg-transparent sm:backdrop-blur-none z-10">
             <button
               type="submit"
-              disabled={saving || !amount}
+              disabled={!amount}
               className="w-full h-11 px-4 py-2.5 rounded-xl bg-ledger-green text-white font-semibold text-sm sm:text-base shadow-xs disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-ledger-green/50 transition-all flex items-center justify-center gap-2"
             >
-              <span>{saving ? (slowSave ? 'Still saving (slow connection)…' : 'Saving...') : 'Add to Ledger'}</span>
+              <span>Add to Ledger</span>
+              {pendingSaves > 0 && (
+                <span className="w-1.5 h-1.5 rounded-full bg-white/70 animate-pulse" title="Syncing…" />
+              )}
             </button>
           </div>
         </form>
