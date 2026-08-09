@@ -94,6 +94,8 @@ export default function BalanceStrip({
 
   const [settling, setSettling] = useState(false);
   const [amount, setAmount] = useState('');
+  const [settlePayer, setSettlePayer] = useState('');
+  const [settleOwedBy, setSettleOwedBy] = useState('');
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -103,28 +105,49 @@ export default function BalanceStrip({
   const inputClass =
     'w-full h-10 px-3 text-sm rounded-lg border border-ink/15 bg-paper text-ink font-medium focus:outline-none focus:ring-2 focus:ring-ledger-green/40';
   const labelClass = 'block text-[11px] font-semibold uppercase tracking-wider text-muted-text mb-1';
+  const selectClass = `${inputClass} appearance-none`;
 
+  // Defaults to whichever direction pays off the current balance, but both
+  // sides stay fully editable - a real-world payment doesn't have to match
+  // what this app currently thinks is owed (e.g. reimbursing something
+  // unrelated, or logging a transfer that happened outside it entirely).
   function startSettling() {
-    setAmount(balance.amount.toFixed(2));
+    const [defaultPayer, defaultOwedBy] = balance.status === 'settled'
+      ? [dbMembers[0] || '', dbMembers[1] || '']
+      : [balance.debtor, balance.creditor];
+    setAmount(balance.status === 'settled' ? '' : balance.amount.toFixed(2));
+    setSettlePayer(defaultPayer);
+    setSettleOwedBy(defaultOwedBy);
     setDate(todayISO());
     setNote('');
     setSettling(true);
   }
 
   const parsedAmount = parseFloat(amount) || 0;
-  const remaining = balance.status !== 'settled' ? balance.amount - parsedAmount : 0;
+  // Simulates the entry being recorded rather than hand-deriving the math,
+  // so it's correct regardless of which direction was picked - paying off
+  // the existing debt, overpaying it (which flips who owes whom), or an
+  // unrelated transfer that creates a new debt from scratch.
+  const previewBalance = useMemo(() => {
+    if (!parsedAmount || !settlePayer || !settleOwedBy || settlePayer === settleOwedBy) return null;
+    return computeBalance(
+      [...balanceEntries, { amount: parsedAmount, payer: settlePayer, owedBy: settleOwedBy, splitType: 'settlement', split: true, ledger }],
+      ledger,
+      dbMembers,
+    );
+  }, [balanceEntries, parsedAmount, settlePayer, settleOwedBy, ledger, dbMembers]);
 
   async function handleConfirm(e) {
     e.preventDefault();
     const parsed = parseFloat(amount);
-    if (!parsed || parsed <= 0) return;
+    if (!parsed || parsed <= 0 || !settlePayer || !settleOwedBy || settlePayer === settleOwedBy) return;
 
     setSaving(true);
     try {
       await addExpense({
         amount: parsed,
-        payer: balance.debtor,
-        owedBy: balance.creditor,
+        payer: settlePayer,
+        owedBy: settleOwedBy,
         splitType: 'settlement',
         split: true,
         category: 'Settlement',
@@ -332,7 +355,7 @@ export default function BalanceStrip({
               )
             )
           ) : (
-            balance.status !== 'settled' && !settling && (
+            !settling && (
               <button
                 type="button"
                 onClick={startSettling}
@@ -406,11 +429,42 @@ export default function BalanceStrip({
       {!isTravel && settling && (
         <form onSubmit={handleConfirm} className="mt-4 pt-4 border-t border-ink/10 space-y-3">
           <p className="text-sm text-ink">
-            Recording a payment from <span className="font-semibold text-stamp-red">{balance.debtor}</span>
-            {' to '}
-            <span className="font-semibold text-ledger-green">{balance.creditor}</span>.
-            {' '}Doesn't have to be the full amount - partial payments are fine.
+            Record a real-world payment - either direction, any amount. It doesn't have to match the balance
+            above or pay it down; this just logs money that actually changed hands.
           </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="settle-payer" className={labelClass}>Paid by</label>
+              <select
+                id="settle-payer"
+                required
+                value={settlePayer}
+                onChange={(e) => setSettlePayer(e.target.value)}
+                className={selectClass}
+              >
+                {dbMembers.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label htmlFor="settle-owedby" className={labelClass}>Paid to</label>
+              <select
+                id="settle-owedby"
+                required
+                value={settleOwedBy}
+                onChange={(e) => setSettleOwedBy(e.target.value)}
+                className={selectClass}
+              >
+                {dbMembers.map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {settlePayer && settleOwedBy && settlePayer === settleOwedBy && (
+            <p className="text-xs text-stamp-red font-medium">"Paid by" and "Paid to" can't be the same person.</p>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             <div>
               <label htmlFor="settle-amount" className={labelClass}>Amount ({displayCurrency})</label>
@@ -450,21 +504,15 @@ export default function BalanceStrip({
             </div>
           </div>
 
-          {parsedAmount > 0 && (
+          {parsedAmount > 0 && previewBalance && (
             <p className="text-xs text-muted-text">
-              {Math.abs(remaining) < 0.01 ? (
+              {previewBalance.status === 'settled' ? (
                 <span className="text-ledger-green font-semibold">This fully settles the balance.</span>
-              ) : remaining > 0 ? (
-                <>
-                  After this, <span className="font-semibold text-ink">{balance.debtor}</span> will still owe{' '}
-                  <span className="font-semibold text-ink">{balance.creditor}</span>{' '}
-                  <span className="font-mono font-semibold text-ink">{formatCurrency(remaining, displayCurrency)}</span>.
-                </>
               ) : (
                 <>
-                  This overpays by {formatCurrency(-remaining, displayCurrency)} - <span className="font-semibold text-ink">{balance.creditor}</span>{' '}
-                  will end up owing <span className="font-semibold text-ink">{balance.debtor}</span>{' '}
-                  <span className="font-mono font-semibold text-ink">{formatCurrency(-remaining, displayCurrency)}</span>.
+                  After this, <span className="font-semibold text-ink">{previewBalance.debtor}</span> will owe{' '}
+                  <span className="font-semibold text-ink">{previewBalance.creditor}</span>{' '}
+                  <span className="font-mono font-semibold text-ink">{formatCurrency(previewBalance.amount, displayCurrency)}</span>.
                 </>
               )}
             </p>
@@ -473,7 +521,7 @@ export default function BalanceStrip({
           <div className="flex items-center gap-2">
             <button
               type="submit"
-              disabled={saving || !amount}
+              disabled={saving || !amount || !settlePayer || !settleOwedBy || settlePayer === settleOwedBy}
               className="flex-1 sm:flex-none h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
             >
               {saving ? 'Saving...' : 'Record Payment'}

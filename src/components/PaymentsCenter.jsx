@@ -7,6 +7,7 @@ import { computeBalance, todayISO } from '../utils';
 const inputClass =
   'w-full h-10 px-3 text-sm rounded-lg border border-ink/15 bg-paper text-ink font-medium focus:outline-none focus:ring-2 focus:ring-ledger-green/40';
 const labelClass = 'block text-[11px] font-semibold uppercase tracking-wider text-muted-text mb-1';
+const selectClass = `${inputClass} appearance-none`;
 
 // The combined view across both ledgers: household's own live balance (via
 // BalanceStrip in household mode - unchanged, still "long running"), plus
@@ -28,26 +29,46 @@ export default function PaymentsCenter({ entries, travelEntries = [], dbMembers 
 
   const [settlingPoints, setSettlingPoints] = useState(false);
   const [pointsAmount, setPointsAmount] = useState('');
+  const [settlePointsPayer, setSettlePointsPayer] = useState('');
+  const [settlePointsOwedBy, setSettlePointsOwedBy] = useState('');
   const [pointsDate, setPointsDate] = useState(todayISO());
   const [pointsNote, setPointsNote] = useState('');
   const [savingPoints, setSavingPoints] = useState(false);
 
+  // Same reasoning as BalanceStrip's money settlement: defaults to the
+  // direction that pays off the current points balance, but both sides
+  // stay editable so a real-world points transfer can be logged regardless
+  // of what this app currently thinks is owed.
   function startSettlingPoints() {
-    setPointsAmount(Math.round(pointsBalance.amount).toString());
+    const [defaultPayer, defaultOwedBy] = pointsBalance.status === 'settled'
+      ? [dbMembers[0] || '', dbMembers[1] || '']
+      : [pointsBalance.debtor, pointsBalance.creditor];
+    setPointsAmount(pointsBalance.status === 'settled' ? '' : Math.round(pointsBalance.amount).toString());
+    setSettlePointsPayer(defaultPayer);
+    setSettlePointsOwedBy(defaultOwedBy);
     setPointsDate(todayISO());
     setPointsNote('');
     setSettlingPoints(true);
   }
 
   const parsedPointsAmount = parseFloat(pointsAmount) || 0;
-  const remainingPoints = pointsBalance && pointsBalance.status !== 'settled'
-    ? pointsBalance.amount - parsedPointsAmount
-    : 0;
+  // Simulates the entry rather than hand-deriving the math, same as the
+  // money settlement's previewBalance - correct for any direction/amount,
+  // not just ones that pay down the existing points debt.
+  const previewPointsBalance = useMemo(() => {
+    if (!parsedPointsAmount || !settlePointsPayer || !settlePointsOwedBy || settlePointsPayer === settlePointsOwedBy) return null;
+    return computeBalance(
+      [...entries, ...travelEntries, { rewardPoints: parsedPointsAmount, payer: settlePointsPayer, owedBy: settlePointsOwedBy, splitType: 'settlement', split: true }],
+      null,
+      dbMembers,
+      'rewardPoints',
+    );
+  }, [entries, travelEntries, parsedPointsAmount, settlePointsPayer, settlePointsOwedBy, dbMembers]);
 
   async function handleConfirmPoints(event) {
     event.preventDefault();
     const parsed = Math.round(parseFloat(pointsAmount));
-    if (!parsed || parsed <= 0) return;
+    if (!parsed || parsed <= 0 || !settlePointsPayer || !settlePointsOwedBy || settlePointsPayer === settlePointsOwedBy) return;
 
     setSavingPoints(true);
     try {
@@ -59,8 +80,8 @@ export default function PaymentsCenter({ entries, travelEntries = [], dbMembers 
       // every money-based total (they all skip falsy amounts).
       await addExpense({
         amount: 0,
-        payer: pointsBalance.debtor,
-        owedBy: pointsBalance.creditor,
+        payer: settlePointsPayer,
+        owedBy: settlePointsOwedBy,
         splitType: 'settlement',
         split: true,
         category: 'Settlement',
@@ -111,7 +132,7 @@ export default function PaymentsCenter({ entries, travelEntries = [], dbMembers 
               )}
               <p className="text-xs text-muted-text mt-1">Combined across every trip's reward points, not just one.</p>
             </div>
-            {pointsBalance.status !== 'settled' && !settlingPoints && (
+            {!settlingPoints && (
               <button
                 type="button"
                 onClick={startSettlingPoints}
@@ -125,11 +146,42 @@ export default function PaymentsCenter({ entries, travelEntries = [], dbMembers 
           {settlingPoints && (
             <form onSubmit={handleConfirmPoints} className="mt-4 pt-4 border-t border-ink/10 space-y-3">
               <p className="text-sm text-ink">
-                Recording a points payment from <span className="font-semibold text-stamp-red">{pointsBalance.debtor}</span>
-                {' to '}
-                <span className="font-semibold text-ledger-green">{pointsBalance.creditor}</span>.
-                {' '}Doesn't have to be the full amount - partial payments are fine.
+                Record a real points transfer - either direction, any amount. It doesn't have to match the
+                balance above or pay it down; this just logs points that actually changed hands.
               </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="settle-points-payer" className={labelClass}>Paid by</label>
+                  <select
+                    id="settle-points-payer"
+                    required
+                    value={settlePointsPayer}
+                    onChange={(e) => setSettlePointsPayer(e.target.value)}
+                    className={selectClass}
+                  >
+                    {dbMembers.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="settle-points-owedby" className={labelClass}>Paid to</label>
+                  <select
+                    id="settle-points-owedby"
+                    required
+                    value={settlePointsOwedBy}
+                    onChange={(e) => setSettlePointsOwedBy(e.target.value)}
+                    className={selectClass}
+                  >
+                    {dbMembers.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {settlePointsPayer && settlePointsOwedBy && settlePointsPayer === settlePointsOwedBy && (
+                <p className="text-xs text-stamp-red font-medium">"Paid by" and "Paid to" can't be the same person.</p>
+              )}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div>
                   <label htmlFor="settle-points-amount" className={labelClass}>Points</label>
@@ -169,21 +221,15 @@ export default function PaymentsCenter({ entries, travelEntries = [], dbMembers 
                 </div>
               </div>
 
-              {parsedPointsAmount > 0 && (
+              {parsedPointsAmount > 0 && previewPointsBalance && (
                 <p className="text-xs text-muted-text">
-                  {Math.abs(remainingPoints) < 0.5 ? (
+                  {previewPointsBalance.status === 'settled' ? (
                     <span className="text-ledger-green font-semibold">This fully settles the points balance.</span>
-                  ) : remainingPoints > 0 ? (
-                    <>
-                      After this, <span className="font-semibold text-ink">{pointsBalance.debtor}</span> will still owe{' '}
-                      <span className="font-semibold text-ink">{pointsBalance.creditor}</span>{' '}
-                      <span className="font-mono font-semibold text-ink">{Math.round(remainingPoints).toLocaleString('en-IN')} pts</span>.
-                    </>
                   ) : (
                     <>
-                      This overpays by {Math.round(-remainingPoints).toLocaleString('en-IN')} pts - <span className="font-semibold text-ink">{pointsBalance.creditor}</span>{' '}
-                      will end up owing <span className="font-semibold text-ink">{pointsBalance.debtor}</span>{' '}
-                      <span className="font-mono font-semibold text-ink">{Math.round(-remainingPoints).toLocaleString('en-IN')} pts</span>.
+                      After this, <span className="font-semibold text-ink">{previewPointsBalance.debtor}</span> will owe{' '}
+                      <span className="font-semibold text-ink">{previewPointsBalance.creditor}</span>{' '}
+                      <span className="font-mono font-semibold text-ink">{Math.round(previewPointsBalance.amount).toLocaleString('en-IN')} pts</span>.
                     </>
                   )}
                 </p>
@@ -192,7 +238,7 @@ export default function PaymentsCenter({ entries, travelEntries = [], dbMembers 
               <div className="flex items-center gap-2">
                 <button
                   type="submit"
-                  disabled={savingPoints || !pointsAmount}
+                  disabled={savingPoints || !pointsAmount || !settlePointsPayer || !settlePointsOwedBy || settlePointsPayer === settlePointsOwedBy}
                   className="flex-1 sm:flex-none h-9 px-4 rounded-lg bg-ledger-green text-white font-semibold text-xs sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
                 >
                   {savingPoints ? 'Saving...' : 'Record Points Payment'}
