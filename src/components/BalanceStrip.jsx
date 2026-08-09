@@ -69,17 +69,21 @@ export default function BalanceStrip({
     [entries, dbMembers, hasPoints],
   );
 
-  // Same total as the Category Breakdown card - every real spend, minus
-  // settlements (not a spend) and withdrawals (already counted via the
-  // cash purchases they funded).
+  // Same basis as memberTotals, not the Category Breakdown card - card
+  // entries plus the ATM withdrawal itself, never the itemized cash
+  // purchases it funded (see balanceEntries above). This is what keeps
+  // "Total trip expense" always equal to Yash + Kruti's totals below;
+  // Category Breakdown is the only place that looks at itemized cash
+  // spend, and can legitimately show a smaller sum when some withdrawn
+  // cash is still unspent (not a mismatch to reconcile).
   const totalSpend = useMemo(
     () =>
       isTravel
-        ? entries
-            .filter((e) => e.splitType !== 'settlement' && !e.isWithdrawal && !e.isTripRollup)
+        ? balanceEntries
+            .filter((e) => e.splitType !== 'settlement' && !e.isTripRollup)
             .reduce((sum, e) => sum + Number(e.amount || 0), 0)
         : null,
-    [entries, isTravel],
+    [balanceEntries, isTravel],
   );
   // Settlements are always in real money (INR) - a trip's local-currency
   // figure is per-entry reference only, it doesn't drive who-owes-whom.
