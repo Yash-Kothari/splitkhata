@@ -81,13 +81,13 @@ export default function TravelManager({
   }, [availableTrips, trimmedSearch]);
   const dateActiveTrip = useMemo(() => getActiveTrip(availableTrips), [availableTrips]);
   const selectedTripObj = availableTrips.find((t) => t.name === selectedTrip);
-  const selectedTripYear = selectedTripObj?.year;
-  // A year is expanded by default only if it's the most recent one or holds
-  // the active trip - otherwise this list would only ever grow taller as
-  // trips pile up year after year. `toggledYears` tracks explicit clicks as
-  // a flip against that default, rather than storing expanded/collapsed
-  // directly, so a newly-added year still opens by default without needing
-  // to be added to this set first.
+  // Every year starts expanded - this list only shows up behind the
+  // "Browse all trips by year" toggle in the first place, so someone who's
+  // opened it wants to see everything, not hunt for which years happen to
+  // be collapsed. `toggledYears` tracks explicit clicks as a flip against
+  // that default, rather than storing expanded/collapsed directly, so a
+  // newly-added year still opens by default without needing to be added to
+  // this set first.
   const [toggledYears, setToggledYears] = useState(() => new Set());
   function isYearExpanded(year, isDefaultExpanded) {
     return toggledYears.has(year) ? !isDefaultExpanded : isDefaultExpanded;
@@ -101,9 +101,8 @@ export default function TravelManager({
     });
   }
   // Picking a trip should always leave its year visibly expanded - without
-  // this, selecting a trip inside a year the user had manually toggled
-  // open would flip `isDefaultExpanded` (now true, since it holds the
-  // active trip) against a stale toggle and immediately re-collapse it.
+  // this, selecting a trip inside a year the user had manually collapsed
+  // would flip against that stale toggle and immediately re-collapse it.
   function selectTrip(trip) {
     onTripSelect?.(trip.name);
     onCurrencyChange?.(trip.currency || 'INR');
@@ -502,9 +501,8 @@ export default function TravelManager({
 
         {!trimmedSearch && browsingByYear && (
         <div className="space-y-2.5">
-          {tripsByYear.map(([year, yearTrips], idx) => {
-            const isDefaultExpanded = idx === 0 || String(year) === String(selectedTripYear);
-            const expanded = isYearExpanded(year, isDefaultExpanded);
+          {tripsByYear.map(([year, yearTrips]) => {
+            const expanded = isYearExpanded(year, true);
             return (
               <div key={year}>
                 <button
