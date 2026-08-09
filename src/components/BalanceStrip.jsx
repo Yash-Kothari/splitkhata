@@ -153,7 +153,7 @@ export default function BalanceStrip({
             owedBy: balance.debtor,
             splitType: 'owed',
             split: true,
-            category: 'Misc',
+            category: 'Trip',
             note: `From ${tripName} trip`,
             date: todayISO(),
             ledger: 'household',

@@ -616,6 +616,7 @@ export default function App() {
                 dbMembers={activeMembersList}
                 currentCurrency={currentCurrency}
                 dbPaymentMethods={activePaymentMethodsList}
+                excludePaymentEntries={activeLedger === 'household'}
               />
             </>
           )}

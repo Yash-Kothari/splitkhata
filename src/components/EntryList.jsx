@@ -28,6 +28,7 @@ export default function EntryList({
   dbMembers = [],
   currentCurrency = 'INR',
   dbPaymentMethods = [],
+  excludePaymentEntries = false,
 }) {
   const isTravel = ledger === 'travel';
   const [deletingId, setDeletingId] = useState(null);
@@ -41,6 +42,12 @@ export default function EntryList({
       // for the household ledger, where it actually helps.
       if (!isTravel && selectedMonth !== 'all' && getMonthKey(e.date) !== selectedMonth) return false;
       if (ledger && normalizeLedger(e.ledger) !== normalizeLedger(ledger)) return false;
+      // Settlements and trip rollups already have their own home in the
+      // Payments tab - showing them again in the household passbook makes
+      // it look like real household spend crept in among the groceries.
+      // Opt-in only: PaymentsCenter's own list is exactly these entries, so
+      // it must not filter them back out.
+      if (excludePaymentEntries && (e.splitType === 'settlement' || e.isTripRollup)) return false;
       if (searchTerm) {
         const term = searchTerm.toLowerCase();
         const matchNote = e.note?.toLowerCase().includes(term);
