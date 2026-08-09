@@ -299,6 +299,48 @@ export function computeMemberTotals(entries, members, valueField = 'amount') {
   return totals;
 }
 
+// A shared ATM withdrawal and the itemized Cash-tagged purchases it funds
+// both carry a real INR `amount`, but they're the same money once, not
+// twice - the withdrawal already creates the shared debt for that cash
+// (both people owe half of what was taken out), so re-splitting each
+// individual Cash-tagged purchase on top double-counts it. Every
+// trip-level money figure (the overall balance, per-person totals, total
+// spend) excludes Cash-paid entries for this reason; Category Breakdown
+// is the one place that's supposed to look at them, since it wants to
+// know *what* the cash went on, not re-total it.
+//
+// This one-line filter went unnoticed as a source of real bugs for a
+// while: it's easy to add a new trip-level total and forget it needs the
+// same exclusion, since the mistake doesn't show up until a trip has a
+// withdrawal AND shared (not personal) cash purchases funded by it -
+// Taiwan's cash was all personal, so nothing to double-count; Sri Lanka
+// and South Korea both had shared cash purchases, and both silently
+// double-counted until caught against their real Splitwise settlement
+// figures. See tests/utils.test.mjs for the regression cases.
+export function excludeCashSpend(entries) {
+  return entries.filter((e) => e.paymentMethod !== 'Cash');
+}
+
+// Same basis as computeMemberTotals, not Category Breakdown - card
+// entries plus the ATM withdrawal itself, never the itemized cash
+// purchases it funded. Total trip expense computed this way always
+// equals the sum of computeMemberTotals' per-person figures; Category
+// Breakdown can legitimately total less when some withdrawn cash is
+// still unspent, and that's not a mismatch to reconcile.
+export function computeTripTotalSpend(entries) {
+  return excludeCashSpend(entries)
+    .filter((e) => e.splitType !== 'settlement' && !e.isTripRollup)
+    .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+}
+
+// The trip's own last entry date, used as the default date for a new
+// household rollup line - a trip rolled up (or backfilled) well after it
+// happened should read as having happened then, not on whatever day
+// someone got around to clicking "Add to Main Ledger".
+export function getTripLastDate(entries) {
+  return entries.reduce((max, e) => (e.date && e.date > max ? e.date : max), '');
+}
+
 export function getMonthKey(dateStr) {
   if (!dateStr) return '';
   return dateStr.slice(0, 7);

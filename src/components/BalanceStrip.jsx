@@ -1,6 +1,15 @@
 import { useState, useMemo } from 'react';
 import { addExpense, updateExpense, deleteExpense, updateTripInDb } from '../firebase';
-import { formatCurrency, computeBalance, computeMemberTotals, todayISO, PERSON_COLORS } from '../utils';
+import {
+  formatCurrency,
+  computeBalance,
+  computeMemberTotals,
+  excludeCashSpend,
+  computeTripTotalSpend,
+  getTripLastDate,
+  todayISO,
+  PERSON_COLORS,
+} from '../utils';
 
 export default function BalanceStrip({
   entries,
@@ -12,30 +21,17 @@ export default function BalanceStrip({
   onSaveError,
 }) {
   const isTravel = ledger === 'travel';
-  // A cash withdrawal and the itemized purchases it funds both carry a real
-  // INR `amount`, but they're the SAME money once, not twice - the
-  // withdrawal already creates the shared debt for that cash (both people
-  // owe half of what was taken out), so re-splitting each individual
-  // Cash-tagged purchase on top double-counts it. This mirrors the
-  // memberTotals exclusion below for the same reason: it went unnoticed
-  // for trips where every cash purchase was personal (nothing shared to
-  // double-count) or where the discrepancy hid inside a blended real-life
-  // settlement figure, until South Korea's Splitwise-recorded settlement
-  // (₹23,736.98) didn't match the computed balance (₹17,090) by roughly
-  // the withdrawal's own amount - Kruti's cash purchases were shared, so
-  // the withdrawal and her itemized spending were both counted.
+  // See excludeCashSpend in utils.js for why every trip-level money figure
+  // (this balance, memberTotals, totalSpend below) excludes Cash-paid
+  // entries - a shared ATM withdrawal and the itemized cash purchases it
+  // funds are the same money counted once, not twice.
   const balanceEntries = useMemo(
-    () => (isTravel ? entries.filter((e) => e.paymentMethod !== 'Cash') : entries),
+    () => (isTravel ? excludeCashSpend(entries) : entries),
     [entries, isTravel],
   );
   const balance = useMemo(() => computeBalance(balanceEntries, ledger, dbMembers), [balanceEntries, ledger, dbMembers]);
   const ledgerLabel = isTravel ? 'Travel' : 'Household';
 
-  // Mirrors the Excel's "Total Kruti / Total Yash" panel: it only ever
-  // prices card-paid entries and the ATM withdrawal itself, never
-  // individual cash purchases - so this excludes every Cash-paid entry,
-  // personal or shared, and keeps the withdrawal (paid by card, not
-  // "Cash"). Same underlying reason as balanceEntries above.
   const memberTotals = useMemo(
     () => (isTravel ? computeMemberTotals(balanceEntries, dbMembers) : null),
     [balanceEntries, dbMembers, isTravel],
@@ -77,13 +73,8 @@ export default function BalanceStrip({
   // spend, and can legitimately show a smaller sum when some withdrawn
   // cash is still unspent (not a mismatch to reconcile).
   const totalSpend = useMemo(
-    () =>
-      isTravel
-        ? balanceEntries
-            .filter((e) => e.splitType !== 'settlement' && !e.isTripRollup)
-            .reduce((sum, e) => sum + Number(e.amount || 0), 0)
-        : null,
-    [balanceEntries, isTravel],
+    () => (isTravel ? computeTripTotalSpend(entries) : null),
+    [entries, isTravel],
   );
   // Settlements are always in real money (INR) - a trip's local-currency
   // figure is per-entry reference only, it doesn't drive who-owes-whom.
@@ -190,7 +181,7 @@ export default function BalanceStrip({
           // Defaults to the trip's own last entry date, not today - a trip
           // rolled up months after it happened (or backfilled well after
           // the fact) should still read as having happened when it did.
-          const lastEntryDate = entries.reduce((max, e) => (e.date && e.date > max ? e.date : max), '') || todayISO();
+          const lastEntryDate = getTripLastDate(entries) || todayISO();
           entryId = await addExpense({
             amount: balance.amount,
             payer: balance.creditor,

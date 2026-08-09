@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import {
   DEFAULT_PERSONS as PERSONS,
   computeBalance,
+  computeMemberTotals,
+  excludeCashSpend,
+  computeTripTotalSpend,
+  getTripLastDate,
   getLedgerCategories,
   getStoredHouseholdCategories,
   getStoredTrips,
@@ -109,4 +113,143 @@ test('stores and retrieves custom household categories', () => {
   const categories = ['Groceries', 'Rent', 'School'];
   setStoredHouseholdCategories(categories);
   assert.deepEqual(getStoredHouseholdCategories(), categories);
+});
+
+// --- Regression tests for the trip-balance double-counting bug ---
+//
+// A shared ATM withdrawal and the itemized Cash-tagged purchases it funds
+// both carry a real INR `amount`. The withdrawal already creates the
+// shared debt for that cash (both people owe half of what was taken
+// out) - re-splitting the itemized purchases on top double-counts the
+// same money. This silently broke Sri Lanka's and South Korea's real
+// balances (caught only by cross-checking against their actual Splitwise
+// settlement figures) while Taiwan looked fine, purely because Taiwan's
+// cash purchases all happened to be personal, not shared, so there was
+// nothing to double-count. These fixtures reproduce that exact shape -
+// a shared withdrawal fully spent on shared cash purchases - so a future
+// change that reintroduces the double-count fails loudly instead of
+// waiting for someone to notice a real-money mismatch.
+function tripFixtureWithSharedCashWithdrawal() {
+  return [
+    // Card-paid hotel, split 50/50 - not cash, always counted.
+    { amount: 4000, payer: 'Yash', split: true, splitType: 'shared', paymentMethod: 'Yash Diners', ledger: 'travel', tripName: 'Trip' },
+    // The withdrawal itself: real INR cost, split 50/50 - this alone
+    // creates the shared debt for the cash that follows.
+    { amount: 1000, payer: 'Yash', split: true, splitType: 'shared', paymentMethod: 'Yash Diners', isWithdrawal: true, localAmount: 100, ledger: 'travel', tripName: 'Trip' },
+    // Two shared cash purchases that together spend the entire
+    // withdrawal - re-splitting these on top of the withdrawal above is
+    // the double-count.
+    { amount: 300, payer: 'Yash', split: true, splitType: 'shared', paymentMethod: 'Cash', localAmount: 30, ledger: 'travel', tripName: 'Trip' },
+    { amount: 700, payer: 'Yash', split: true, splitType: 'shared', paymentMethod: 'Cash', localAmount: 70, ledger: 'travel', tripName: 'Trip' },
+  ];
+}
+
+test('excludeCashSpend drops only Cash-paid entries, keeping the withdrawal itself', () => {
+  const entries = tripFixtureWithSharedCashWithdrawal();
+  const filtered = excludeCashSpend(entries);
+  assert.equal(filtered.length, 2);
+  assert.ok(filtered.every((e) => e.paymentMethod !== 'Cash'));
+  assert.ok(filtered.some((e) => e.isWithdrawal));
+});
+
+test('a trip balance does not double-count a shared withdrawal and the shared cash purchases it funds', () => {
+  const entries = tripFixtureWithSharedCashWithdrawal();
+  const balance = computeBalance(excludeCashSpend(entries), 'travel', PERSONS);
+  // Only the hotel (4000) and the withdrawal (1000) should count - 5000
+  // total, split 50/50, so Kruti owes Yash 2500. If the double-count
+  // regresses, the 1000 KRW of cash purchases gets added back in on top
+  // of the withdrawal, inflating this to 3000.
+  assert.equal(balance.status, 'owes');
+  assert.equal(balance.debtor, 'Kruti');
+  assert.equal(balance.creditor, 'Yash');
+  assert.equal(balance.amount, 2500);
+});
+
+test('per-person totals do not double-count a shared withdrawal and the cash purchases it funds', () => {
+  const entries = tripFixtureWithSharedCashWithdrawal();
+  const totals = computeMemberTotals(excludeCashSpend(entries), PERSONS);
+  // Same 5000 total (hotel + withdrawal), split evenly.
+  assert.equal(totals.Yash, 2500);
+  assert.equal(totals.Kruti, 2500);
+});
+
+test('computeTripTotalSpend always equals the sum of per-person totals', () => {
+  const entries = tripFixtureWithSharedCashWithdrawal();
+  const totalSpend = computeTripTotalSpend(entries);
+  const totals = computeMemberTotals(excludeCashSpend(entries), PERSONS);
+  assert.equal(totalSpend, 5000);
+  assert.equal(totalSpend, totals.Yash + totals.Kruti);
+});
+
+test('computeTripTotalSpend excludes settlements and trip rollups', () => {
+  const entries = [
+    ...tripFixtureWithSharedCashWithdrawal(),
+    { amount: 2500, payer: 'Kruti', owedBy: 'Yash', split: true, splitType: 'settlement', paymentMethod: 'Yash Diners', ledger: 'travel', tripName: 'Trip' },
+    { amount: 2500, payer: 'Yash', owedBy: 'Kruti', split: true, splitType: 'owed', isTripRollup: true, ledger: 'household' },
+  ];
+  assert.equal(computeTripTotalSpend(entries), 5000);
+});
+
+test('a trip with only personal cash purchases has nothing to double-count (Taiwan-shaped)', () => {
+  const entries = [
+    { amount: 1000, payer: 'Yash', split: true, splitType: 'shared', paymentMethod: 'Yash Diners', isWithdrawal: true, localAmount: 100, ledger: 'travel', tripName: 'Trip' },
+    { amount: 400, payer: 'Yash', split: false, splitType: 'personal', paymentMethod: 'Cash', localAmount: 40, ledger: 'travel', tripName: 'Trip' },
+    { amount: 600, payer: 'Yash', split: false, splitType: 'personal', paymentMethod: 'Cash', localAmount: 60, ledger: 'travel', tripName: 'Trip' },
+  ];
+  const withCash = computeBalance(entries, 'travel', PERSONS);
+  const withoutCash = computeBalance(excludeCashSpend(entries), 'travel', PERSONS);
+  // Personal entries are skipped by computeBalance regardless (split:
+  // false), so excluding Cash changes nothing here - this is the exact
+  // reason Taiwan's real numbers stayed correct even before the fix.
+  assert.equal(withCash.amount, withoutCash.amount);
+  assert.equal(withoutCash.amount, 500);
+});
+
+test('getTripLastDate returns the latest date among a trip\'s entries', () => {
+  const entries = [
+    { date: '2025-04-01' },
+    { date: '2025-04-12' },
+    { date: '2025-03-30' },
+  ];
+  assert.equal(getTripLastDate(entries), '2025-04-12');
+});
+
+test('getTripLastDate returns an empty string for a trip with no entries', () => {
+  assert.equal(getTripLastDate([]), '');
+});
+
+// --- Regression tests for reward points ---
+//
+// A personal points redemption (e.g. paying for your own flight with
+// airline miles) shouldn't create a person-to-person points debt, even
+// though real points were spent - only a *shared* points-bearing entry
+// should. Getting this backwards is what caused a "settled" trip's
+// rollup to still show a points badge on its Payments-tab line.
+test('a personal points redemption creates no cross-person points debt', () => {
+  const entries = [
+    { amount: 10000, payer: 'Yash', split: false, splitType: 'personal', rewardPoints: 20000, ledger: 'travel', tripName: 'Trip' },
+  ];
+  const pointsBalance = computeBalance(entries, 'travel', PERSONS, 'rewardPoints');
+  assert.equal(pointsBalance.status, 'settled');
+});
+
+test('a shared points-bearing entry creates a real cross-person points debt', () => {
+  const entries = [
+    { amount: 10000, payer: 'Yash', split: true, splitType: 'shared', rewardPoints: 20000, ledger: 'travel', tripName: 'Trip' },
+  ];
+  const pointsBalance = computeBalance(entries, 'travel', PERSONS, 'rewardPoints');
+  assert.equal(pointsBalance.status, 'owes');
+  assert.equal(pointsBalance.debtor, 'Kruti');
+  assert.equal(pointsBalance.creditor, 'Yash');
+  assert.equal(pointsBalance.amount, 10000);
+});
+
+test('computeMemberTotals attributes a personal points redemption fully to its payer', () => {
+  const entries = [
+    { amount: 10000, payer: 'Yash', split: false, splitType: 'personal', rewardPoints: 20000, ledger: 'travel', tripName: 'Trip' },
+    { amount: 5000, payer: 'Kruti', split: false, splitType: 'personal', rewardPoints: 8000, ledger: 'travel', tripName: 'Trip' },
+  ];
+  const pointsTotals = computeMemberTotals(entries, PERSONS, 'rewardPoints');
+  assert.equal(pointsTotals.Yash, 20000);
+  assert.equal(pointsTotals.Kruti, 8000);
 });
