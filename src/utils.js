@@ -185,28 +185,28 @@ export function formatFifoBreakdownSummary(breakdown = [], currency = '') {
 // entries in whatever order Firestore happens to return them can silently
 // drift a total by a few paise depending on entry order - the same trip,
 // recomputed twice from the same data, isn't guaranteed to produce the same
-// float. Converting every amount to integer paise up front and only
-// dividing back to rupees once at the very end makes the arithmetic exact
-// and order-independent (integers add/subtract without rounding error).
+// float. Converting every amount to integer paise up front avoids that.
 function toPaise(value) {
   return Math.round(Number(value || 0) * 100);
 }
 
-// Splits integer paise across `count` shares that sum back to exactly
-// `totalPaise` - the remainder (which doesn't divide evenly) goes one
-// paisa at a time to the first few shares rather than getting rounded away,
-// so nothing is lost or invented. Mirrors splitAmountEvenly's approach.
-function splitPaiseEvenly(totalPaise, count) {
-  const base = Math.trunc(totalPaise / count);
-  const remainder = totalPaise - base * count;
-  return Array.from({ length: count }, (_, i) => base + (i < remainder ? 1 : 0));
-}
-
+// A shared expense's fair 1/N-per-member paise share is often fractional
+// (e.g. 641.23 split two ways is 320.615 paise each) - rounding each
+// member's share to a whole paisa per entry means giving the leftover
+// paisa to *someone*, and doing that the same way every time (e.g. always
+// the first member) quietly biases their balance by a paisa per entry,
+// compounding to real money over enough entries. Working in units of
+// "paise x member count" instead sidesteps the choice entirely: a shared
+// entry's contribution to each member's scaled balance is always the
+// whole-number valuePaise, with no remainder to assign. The only division
+// happens once per member at the very end (see the /scale below), so the
+// result is both exact and independent of entry order.
 export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PERSONS, valueField = 'amount') {
   const members = dynamicMembers && dynamicMembers.length > 0 ? dynamicMembers : DEFAULT_PERSONS;
   const targetLedger = ledger ? normalizeLedger(ledger) : null;
+  const scale = members.length;
 
-  const netByMemberPaise = Object.fromEntries(members.map((member) => [member, 0]));
+  const netByMemberScaled = Object.fromEntries(members.map((member) => [member, 0]));
   const resolveMember = (name) => {
     if (members.includes(name)) return name;
     if (name === 'Husband') return members[0];
@@ -222,32 +222,36 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
     const valuePaise = toPaise(entry[valueField]);
 
     if (!valuePaise || !payer) continue;
-    netByMemberPaise[payer] += valuePaise;
+    netByMemberScaled[payer] += valuePaise * scale;
 
     if ((entry.splitType === 'owed' || entry.splitType === 'settlement') && entry.owedBy) {
       const debtor = resolveMember(entry.owedBy);
-      if (debtor && debtor !== payer) netByMemberPaise[debtor] -= valuePaise;
+      if (debtor && debtor !== payer) netByMemberScaled[debtor] -= valuePaise * scale;
       continue;
     }
 
-    const shares = splitPaiseEvenly(valuePaise, members.length);
-    members.forEach((member, i) => {
-      netByMemberPaise[member] -= shares[i];
+    members.forEach((member) => {
+      netByMemberScaled[member] -= valuePaise;
     });
   }
 
+  // netByMemberScaled always sums to exactly 0 across all members (every
+  // entry moves money from payer to member(s), never creating or losing
+  // any) - so "settled" can be checked as an exact integer equality
+  // instead of a float tolerance, and the eventual /scale below is the
+  // only division in the whole function, done once per member.
   if (members.length === 2) {
-    const p0NetPaise = netByMemberPaise[members[0]];
-    const p1NetPaise = netByMemberPaise[members[1]];
+    const p0NetScaled = netByMemberScaled[members[0]];
+    const p1NetScaled = netByMemberScaled[members[1]];
 
-    if (p0NetPaise === 0 && p1NetPaise === 0) {
+    if (p0NetScaled === 0) {
       return { status: 'settled', amount: 0, debtor: null, creditor: null };
     }
 
-    if (p0NetPaise > 0) {
+    if (p0NetScaled > 0) {
       return {
         status: 'owes',
-        amount: p0NetPaise / 100,
+        amount: p0NetScaled / (100 * scale),
         debtor: members[1],
         creditor: members[0],
       };
@@ -255,7 +259,7 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
 
     return {
       status: 'owes',
-      amount: p1NetPaise / 100,
+      amount: p1NetScaled / (100 * scale),
       debtor: members[0],
       creditor: members[1],
     };
@@ -263,32 +267,32 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
 
   let maxDebtor = null;
   let maxCreditor = null;
-  let maxOwedPaise = 0;
+  let maxOwedScaled = 0;
 
   for (const m of members) {
-    const net = netByMemberPaise[m];
-    if (net > maxOwedPaise) {
-      maxOwedPaise = net;
+    const net = netByMemberScaled[m];
+    if (net > maxOwedScaled) {
+      maxOwedScaled = net;
       maxCreditor = m;
     }
   }
 
-  let minNetPaise = 0;
+  let minNetScaled = 0;
   for (const m of members) {
-    const net = netByMemberPaise[m];
-    if (net < minNetPaise) {
-      minNetPaise = net;
+    const net = netByMemberScaled[m];
+    if (net < minNetScaled) {
+      minNetScaled = net;
       maxDebtor = m;
     }
   }
 
-  if (maxOwedPaise < 1 || !maxDebtor || !maxCreditor) {
+  if (maxOwedScaled === 0 || !maxDebtor || !maxCreditor) {
     return { status: 'settled', amount: 0, debtor: null, creditor: null };
   }
 
   return {
     status: 'owes',
-    amount: maxOwedPaise / 100,
+    amount: maxOwedScaled / (100 * scale),
     debtor: maxDebtor,
     creditor: maxCreditor,
   };
@@ -302,22 +306,28 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
 // never assigns an INR cost to individual cash purchases, so neither does
 // this (see the exclusion in the caller).
 export function computeMemberTotals(entries, members, valueField = 'amount') {
-  const totalsPaise = Object.fromEntries(members.map((m) => [m, 0]));
+  // Same scaled-units approach as computeBalance, and for the same reason:
+  // a shared entry's 1/N-per-member paise share is often fractional, and
+  // rounding it per entry means picking someone to give the leftover
+  // paisa to - do that the same way every time and it compounds into a
+  // real, one-sided bias. Scaling by member count keeps every share a
+  // whole number with nothing to round until the final /scale below.
+  const scale = members.length;
+  const totalsScaled = Object.fromEntries(members.map((m) => [m, 0]));
   for (const entry of entries) {
     const amountPaise = toPaise(entry[valueField]);
     if (!amountPaise) continue;
     if (!entry.split) {
-      if (members.includes(entry.payer)) totalsPaise[entry.payer] += amountPaise;
+      if (members.includes(entry.payer)) totalsScaled[entry.payer] += amountPaise * scale;
     } else if (entry.splitType === 'owed' && entry.owedBy) {
-      if (members.includes(entry.owedBy)) totalsPaise[entry.owedBy] += amountPaise;
+      if (members.includes(entry.owedBy)) totalsScaled[entry.owedBy] += amountPaise * scale;
     } else {
-      const shares = splitPaiseEvenly(amountPaise, members.length);
-      members.forEach((m, i) => {
-        totalsPaise[m] += shares[i];
+      members.forEach((m) => {
+        totalsScaled[m] += amountPaise;
       });
     }
   }
-  return Object.fromEntries(members.map((m) => [m, totalsPaise[m] / 100]));
+  return Object.fromEntries(members.map((m) => [m, totalsScaled[m] / (100 * scale)]));
 }
 
 // A shared ATM withdrawal and the itemized Cash-tagged purchases it funds
