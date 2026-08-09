@@ -157,15 +157,25 @@ export default function BalanceStrip({
           });
         }
       } else {
+        // Only carry a points figure onto the rollup line when it's an
+        // actual person-to-person points debt (like the money amount is) -
+        // totalPointsSpent includes personal, non-owed redemptions too, and
+        // showing that on a "Kruti paid, Yash owes" line reads as if Yash
+        // owes points back as well, even when points are fully settled.
+        const rollupRewardPoints = hasPoints && pointsBalance.status !== 'settled' ? pointsBalance.amount : null;
         let entryId = tripRollup?.entryId;
         if (entryId) {
           await updateExpense(entryId, {
             amount: balance.amount,
             payer: balance.creditor,
             owedBy: balance.debtor,
-            rewardPoints: totalPointsSpent || null,
+            rewardPoints: rollupRewardPoints,
           });
         } else {
+          // Defaults to the trip's own last entry date, not today - a trip
+          // rolled up months after it happened (or backfilled well after
+          // the fact) should still read as having happened when it did.
+          const lastEntryDate = entries.reduce((max, e) => (e.date && e.date > max ? e.date : max), '') || todayISO();
           entryId = await addExpense({
             amount: balance.amount,
             payer: balance.creditor,
@@ -174,15 +184,11 @@ export default function BalanceStrip({
             split: true,
             category: 'Trip',
             note: `From ${tripName} trip`,
-            date: todayISO(),
+            date: lastEntryDate,
             ledger: 'household',
             tripName: '',
             isTripRollup: true,
-            // Carried along purely so the trip's total points usage stays
-            // visible in the Payments passbook (see EntryList's badge) -
-            // this is NOT a person-to-person points debt, just the same
-            // "how many points did this trip burn" figure shown above.
-            rewardPoints: totalPointsSpent || null,
+            rewardPoints: rollupRewardPoints,
           });
         }
         if (tripId) {
