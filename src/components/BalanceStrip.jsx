@@ -12,22 +12,33 @@ export default function BalanceStrip({
   onSaveError,
 }) {
   const isTravel = ledger === 'travel';
-  const balance = useMemo(() => computeBalance(entries, ledger, dbMembers), [entries, ledger, dbMembers]);
+  // A cash withdrawal and the itemized purchases it funds both carry a real
+  // INR `amount`, but they're the SAME money once, not twice - the
+  // withdrawal already creates the shared debt for that cash (both people
+  // owe half of what was taken out), so re-splitting each individual
+  // Cash-tagged purchase on top double-counts it. This mirrors the
+  // memberTotals exclusion below for the same reason: it went unnoticed
+  // for trips where every cash purchase was personal (nothing shared to
+  // double-count) or where the discrepancy hid inside a blended real-life
+  // settlement figure, until South Korea's Splitwise-recorded settlement
+  // (₹23,736.98) didn't match the computed balance (₹17,090) by roughly
+  // the withdrawal's own amount - Kruti's cash purchases were shared, so
+  // the withdrawal and her itemized spending were both counted.
+  const balanceEntries = useMemo(
+    () => (isTravel ? entries.filter((e) => e.paymentMethod !== 'Cash') : entries),
+    [entries, isTravel],
+  );
+  const balance = useMemo(() => computeBalance(balanceEntries, ledger, dbMembers), [balanceEntries, ledger, dbMembers]);
   const ledgerLabel = isTravel ? 'Travel' : 'Household';
 
-  // Mirrors the Excel's "Total Kruti / Total Yash" panel (see
-  // computeMemberTotals): it only ever prices card-paid entries and the
-  // ATM withdrawal itself, never individual cash purchases - so this
-  // excludes every Cash-paid entry, personal or shared, and keeps the
-  // withdrawal (paid by card, not "Cash"). A previous version of this
-  // filter only excluded *personal* cash entries, which happened to work
-  // when every cash purchase on a trip was personal (no shared ones to
-  // slip through) but double-counted the withdrawal on any trip - like
-  // one where the cash spend was entirely shared - that had shared cash
-  // purchases too.
+  // Mirrors the Excel's "Total Kruti / Total Yash" panel: it only ever
+  // prices card-paid entries and the ATM withdrawal itself, never
+  // individual cash purchases - so this excludes every Cash-paid entry,
+  // personal or shared, and keeps the withdrawal (paid by card, not
+  // "Cash"). Same underlying reason as balanceEntries above.
   const memberTotals = useMemo(
-    () => (isTravel ? computeMemberTotals(entries.filter((e) => e.paymentMethod !== 'Cash'), dbMembers) : null),
-    [entries, dbMembers, isTravel],
+    () => (isTravel ? computeMemberTotals(balanceEntries, dbMembers) : null),
+    [balanceEntries, dbMembers, isTravel],
   );
 
   // Reward points get their own balance, computed with the exact same
