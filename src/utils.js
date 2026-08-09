@@ -181,11 +181,32 @@ export function formatFifoBreakdownSummary(breakdown = [], currency = '') {
     .join(' + ');
 }
 
+// Rupee floating-point addition isn't associative, so summing hundreds of
+// entries in whatever order Firestore happens to return them can silently
+// drift a total by a few paise depending on entry order - the same trip,
+// recomputed twice from the same data, isn't guaranteed to produce the same
+// float. Converting every amount to integer paise up front and only
+// dividing back to rupees once at the very end makes the arithmetic exact
+// and order-independent (integers add/subtract without rounding error).
+function toPaise(value) {
+  return Math.round(Number(value || 0) * 100);
+}
+
+// Splits integer paise across `count` shares that sum back to exactly
+// `totalPaise` - the remainder (which doesn't divide evenly) goes one
+// paisa at a time to the first few shares rather than getting rounded away,
+// so nothing is lost or invented. Mirrors splitAmountEvenly's approach.
+function splitPaiseEvenly(totalPaise, count) {
+  const base = Math.trunc(totalPaise / count);
+  const remainder = totalPaise - base * count;
+  return Array.from({ length: count }, (_, i) => base + (i < remainder ? 1 : 0));
+}
+
 export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PERSONS, valueField = 'amount') {
   const members = dynamicMembers && dynamicMembers.length > 0 ? dynamicMembers : DEFAULT_PERSONS;
   const targetLedger = ledger ? normalizeLedger(ledger) : null;
 
-  const netByMember = Object.fromEntries(members.map((member) => [member, 0]));
+  const netByMemberPaise = Object.fromEntries(members.map((member) => [member, 0]));
   const resolveMember = (name) => {
     if (members.includes(name)) return name;
     if (name === 'Husband') return members[0];
@@ -198,35 +219,35 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
     if (targetLedger && normalizeLedger(entry.ledger) !== targetLedger) continue;
 
     const payer = resolveMember(entry.payer);
-    const value = Number(entry[valueField] || 0);
+    const valuePaise = toPaise(entry[valueField]);
 
-    if (!value || !payer) continue;
-    netByMember[payer] += value;
+    if (!valuePaise || !payer) continue;
+    netByMemberPaise[payer] += valuePaise;
 
     if ((entry.splitType === 'owed' || entry.splitType === 'settlement') && entry.owedBy) {
       const debtor = resolveMember(entry.owedBy);
-      if (debtor && debtor !== payer) netByMember[debtor] -= value;
+      if (debtor && debtor !== payer) netByMemberPaise[debtor] -= valuePaise;
       continue;
     }
 
-    const eachShare = value / members.length;
-    members.forEach((member) => {
-      netByMember[member] -= eachShare;
+    const shares = splitPaiseEvenly(valuePaise, members.length);
+    members.forEach((member, i) => {
+      netByMemberPaise[member] -= shares[i];
     });
   }
 
   if (members.length === 2) {
-    const p0Net = netByMember[members[0]];
-    const p1Net = netByMember[members[1]];
+    const p0NetPaise = netByMemberPaise[members[0]];
+    const p1NetPaise = netByMemberPaise[members[1]];
 
-    if (Math.abs(p0Net) < 0.01 && Math.abs(p1Net) < 0.01) {
+    if (p0NetPaise === 0 && p1NetPaise === 0) {
       return { status: 'settled', amount: 0, debtor: null, creditor: null };
     }
 
-    if (p0Net > 0) {
+    if (p0NetPaise > 0) {
       return {
         status: 'owes',
-        amount: p0Net,
+        amount: p0NetPaise / 100,
         debtor: members[1],
         creditor: members[0],
       };
@@ -234,7 +255,7 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
 
     return {
       status: 'owes',
-      amount: p1Net,
+      amount: p1NetPaise / 100,
       debtor: members[0],
       creditor: members[1],
     };
@@ -242,32 +263,32 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
 
   let maxDebtor = null;
   let maxCreditor = null;
-  let maxOwed = 0;
+  let maxOwedPaise = 0;
 
   for (const m of members) {
-    const net = netByMember[m];
-    if (net > maxOwed) {
-      maxOwed = net;
+    const net = netByMemberPaise[m];
+    if (net > maxOwedPaise) {
+      maxOwedPaise = net;
       maxCreditor = m;
     }
   }
 
-  let minNet = 0;
+  let minNetPaise = 0;
   for (const m of members) {
-    const net = netByMember[m];
-    if (net < minNet) {
-      minNet = net;
+    const net = netByMemberPaise[m];
+    if (net < minNetPaise) {
+      minNetPaise = net;
       maxDebtor = m;
     }
   }
 
-  if (maxOwed < 0.01 || !maxDebtor || !maxCreditor) {
+  if (maxOwedPaise < 1 || !maxDebtor || !maxCreditor) {
     return { status: 'settled', amount: 0, debtor: null, creditor: null };
   }
 
   return {
     status: 'owes',
-    amount: maxOwed,
+    amount: maxOwedPaise / 100,
     debtor: maxDebtor,
     creditor: maxCreditor,
   };
@@ -281,22 +302,22 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
 // never assigns an INR cost to individual cash purchases, so neither does
 // this (see the exclusion in the caller).
 export function computeMemberTotals(entries, members, valueField = 'amount') {
-  const totals = Object.fromEntries(members.map((m) => [m, 0]));
+  const totalsPaise = Object.fromEntries(members.map((m) => [m, 0]));
   for (const entry of entries) {
-    const amount = Number(entry[valueField] || 0);
-    if (!amount) continue;
+    const amountPaise = toPaise(entry[valueField]);
+    if (!amountPaise) continue;
     if (!entry.split) {
-      if (members.includes(entry.payer)) totals[entry.payer] += amount;
+      if (members.includes(entry.payer)) totalsPaise[entry.payer] += amountPaise;
     } else if (entry.splitType === 'owed' && entry.owedBy) {
-      if (members.includes(entry.owedBy)) totals[entry.owedBy] += amount;
+      if (members.includes(entry.owedBy)) totalsPaise[entry.owedBy] += amountPaise;
     } else {
-      const share = amount / members.length;
-      members.forEach((m) => {
-        totals[m] += share;
+      const shares = splitPaiseEvenly(amountPaise, members.length);
+      members.forEach((m, i) => {
+        totalsPaise[m] += shares[i];
       });
     }
   }
-  return totals;
+  return Object.fromEntries(members.map((m) => [m, totalsPaise[m] / 100]));
 }
 
 // A shared ATM withdrawal and the itemized Cash-tagged purchases it funds
@@ -328,9 +349,10 @@ export function excludeCashSpend(entries) {
 // Breakdown can legitimately total less when some withdrawn cash is
 // still unspent, and that's not a mismatch to reconcile.
 export function computeTripTotalSpend(entries) {
-  return excludeCashSpend(entries)
+  const totalPaise = excludeCashSpend(entries)
     .filter((e) => e.splitType !== 'settlement' && !e.isTripRollup)
-    .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+    .reduce((sum, e) => sum + toPaise(e.amount), 0);
+  return totalPaise / 100;
 }
 
 // The trip's own last entry date, used as the default date for a new
