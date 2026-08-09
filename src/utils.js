@@ -633,7 +633,6 @@ export const TRIPS_KEY = 'household-ledger-trips';
 export const CASH_MOVEMENTS_KEY = 'household-ledger-cash-movements';
 export const PAYMENT_METHODS_KEY = 'household-ledger-payment-methods';
 export const ACTIVE_LEDGER_KEY = 'household-ledger-active-ledger';
-export const SELECTED_TRIP_KEY = 'household-ledger-selected-trip';
 export const TRAVEL_CATEGORIES_KEY = 'household-ledger-travel-categories';
 export const MEMBERS_KEY = 'household-ledger-members';
 export const CURRENCIES_KEY = 'household-ledger-currencies';
@@ -726,14 +725,6 @@ export function getStoredActiveLedger() {
 
 export function setStoredActiveLedger(ledger) {
   setItem(ACTIVE_LEDGER_KEY, ledger === 'travel' || ledger === 'payments' ? ledger : 'household');
-}
-
-export function getStoredSelectedTrip() {
-  return getItem(SELECTED_TRIP_KEY) || '';
-}
-
-export function setStoredSelectedTrip(tripName) {
-  setItem(SELECTED_TRIP_KEY, tripName || '');
 }
 
 export function getStoredTravelCategories() {

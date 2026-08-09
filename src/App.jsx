@@ -31,8 +31,6 @@ import {
   getAvailableMonths,
   getStoredActiveLedger,
   setStoredActiveLedger,
-  getStoredSelectedTrip,
-  setStoredSelectedTrip,
   getPinConfig,
   getActiveTrip,
 } from './utils';
@@ -138,7 +136,11 @@ export default function App() {
   const [connectionStatus, setConnectionStatus] = useState('ok');
   const [errorMessage, setErrorMessage] = useState('');
   const [activeLedger, setActiveLedgerState] = useState(() => getStoredActiveLedger());
-  const [selectedTrip, setSelectedTripState] = useState(() => getStoredSelectedTrip());
+  // Deliberately not persisted (unlike activeLedger) - a trip should only
+  // ever come up automatically because it's actually in progress today
+  // (see the auto-select effect below), never because it's whatever was
+  // last looked at before the page was closed.
+  const [selectedTrip, setSelectedTrip] = useState('');
   const [currentCurrency, setCurrentCurrency] = useState('INR');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
@@ -151,11 +153,6 @@ export default function App() {
   const setActiveLedger = useCallback((ledger) => {
     setActiveLedgerState(ledger);
     setStoredActiveLedger(ledger);
-  }, []);
-
-  const setSelectedTrip = useCallback((tripName) => {
-    setSelectedTripState(tripName);
-    setStoredSelectedTrip(tripName);
   }, []);
 
   useEffect(() => {
@@ -171,14 +168,14 @@ export default function App() {
     setErrorMessage(err?.message || 'Failed to save');
   }, []);
 
-  // Restore the trip's currency after a reload, since only the trip *name*
-  // is persisted locally - the currency lives on the trip record itself,
-  // which only becomes available once the trips subscription loads. Only
-  // auto-picks a trip when one is genuinely in progress today by date
-  // range - it deliberately does NOT fall back to "most recent trip" the
-  // way it used to, so the Travel tab stays on its empty "search to pick a
-  // trip" state rather than silently opening some arbitrary old trip's
-  // summary/entries on every fresh visit.
+  // Keeps currentCurrency in sync with whatever trip is selected (its
+  // currency lives on the trip record itself, which only becomes available
+  // once the trips subscription loads). Also the only place a trip ever
+  // gets auto-selected, and only when one is genuinely in progress today by
+  // date range - selectedTrip is intentionally not persisted and has no
+  // "most recent trip" fallback, so every fresh visit lands on the empty
+  // "search to pick a trip" state unless a trip is actually active right
+  // now, never on whatever was last looked at.
   useEffect(() => {
     if (!dbTrips.length) return;
     const trip = dbTrips.find((t) => t.name === selectedTrip);
