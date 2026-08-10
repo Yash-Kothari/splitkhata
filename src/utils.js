@@ -190,21 +190,42 @@ function toPaise(value) {
   return Math.round(Number(value || 0) * 100);
 }
 
-// A shared expense's fair 1/N-per-member paise share is often fractional
-// (e.g. 641.23 split two ways is 320.615 paise each) - rounding each
-// member's share to a whole paisa per entry means giving the leftover
-// paisa to *someone*, and doing that the same way every time (e.g. always
-// the first member) quietly biases their balance by a paisa per entry,
-// compounding to real money over enough entries. Working in units of
-// "paise x member count" instead sidesteps the choice entirely: a shared
-// entry's contribution to each member's scaled balance is always the
-// whole-number valuePaise, with no remainder to assign. The only division
-// happens once per member at the very end (see the /scale below), so the
-// result is both exact and independent of entry order.
-export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PERSONS, valueField = 'amount') {
-  const members = dynamicMembers && dynamicMembers.length > 0 ? dynamicMembers : DEFAULT_PERSONS;
+function gcd(a, b) {
+  return b === 0 ? a : gcd(b, a % b);
+}
+
+// LCM(1, 2, ..., n) - the smallest number every group size from 1 up to n
+// people divides evenly. Used as the scale factor below so that splitting
+// an entry among any subset of the members (not just all of them) never
+// needs per-entry rounding.
+function lcmRange(n) {
+  let result = 1;
+  for (let i = 2; i <= n; i += 1) {
+    result = (result * i) / gcd(result, i);
+  }
+  return result;
+}
+
+// A shared expense's fair 1/k-per-member paise share (k = however many
+// people it's actually split among - everyone by default, or just a subset
+// via entry.splitAmong, e.g. a trip guest who wasn't in on this particular
+// expense) is often fractional. Rounding each member's share to a whole
+// paisa per entry means giving the leftover paisa to *someone*, and doing
+// that the same way every time (e.g. always the first member) quietly
+// biases their balance by a paisa per entry, compounding to real money over
+// enough entries. Working in units of "paise x LCM(1..memberCount)" instead
+// sidesteps the choice entirely: LCM(1..memberCount) divides evenly by
+// every possible subset size from 1 up to everyone, so a k-way split's
+// per-member share in these units is always the whole number
+// valuePaise * scale / k, with no remainder to assign regardless of k. The
+// only division happens once per member at the very end (see the /scale
+// below), so the result is both exact and independent of entry order.
+//
+// Shared by computeBalance and computeSettlements so the two can never
+// disagree on the same entries.
+function computeNetByMemberScaled(entries, ledger, members, valueField) {
   const targetLedger = ledger ? normalizeLedger(ledger) : null;
-  const scale = members.length;
+  const scale = lcmRange(members.length);
 
   const netByMemberScaled = Object.fromEntries(members.map((member) => [member, 0]));
   const resolveMember = (name) => {
@@ -230,10 +251,26 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
       continue;
     }
 
-    members.forEach((member) => {
-      netByMemberScaled[member] -= valuePaise;
+    // splitAmong narrows a shared entry to only some of the members (e.g.
+    // one trip guest wasn't part of this particular expense) - absent on
+    // every entry that predates this field, which is exactly why it
+    // defaults to "everyone" rather than needing a migration.
+    const splitSet = entry.splitAmong && entry.splitAmong.length > 0
+      ? entry.splitAmong.filter((m) => members.includes(m))
+      : members;
+    if (splitSet.length === 0) continue;
+    const share = (valuePaise * scale) / splitSet.length;
+    splitSet.forEach((member) => {
+      netByMemberScaled[member] -= share;
     });
   }
+
+  return { netByMemberScaled, scale };
+}
+
+export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PERSONS, valueField = 'amount') {
+  const members = dynamicMembers && dynamicMembers.length > 0 ? dynamicMembers : DEFAULT_PERSONS;
+  const { netByMemberScaled, scale } = computeNetByMemberScaled(entries, ledger, members, valueField);
 
   // netByMemberScaled always sums to exactly 0 across all members (every
   // entry moves money from payer to member(s), never creating or losing
@@ -298,6 +335,47 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
   };
 }
 
+// For 3+ people (e.g. a trip with a guest tagging along), there's no single
+// honest "X owes Y" figure the way there is for a two-person household -
+// multiple independent debts can exist at once, and computeBalance's
+// biggest-debtor-vs-biggest-creditor fallback above silently drops the
+// rest. This returns the actual minimal set of pairwise transfers that
+// settles everyone up, via the standard "debt simplification" approach:
+// repeatedly match whoever currently owes the most against whoever is
+// currently owed the most. For exactly 2 members this always produces the
+// same single settlement (or none) as computeBalance.
+export function computeSettlements(entries = [], ledger, dynamicMembers = DEFAULT_PERSONS, valueField = 'amount') {
+  const members = dynamicMembers && dynamicMembers.length > 0 ? dynamicMembers : DEFAULT_PERSONS;
+  const { netByMemberScaled, scale } = computeNetByMemberScaled(entries, ledger, members, valueField);
+
+  const creditors = [];
+  const debtors = [];
+  for (const m of members) {
+    const net = netByMemberScaled[m];
+    if (net > 0) creditors.push({ member: m, amount: net });
+    else if (net < 0) debtors.push({ member: m, amount: -net });
+  }
+  creditors.sort((a, b) => b.amount - a.amount);
+  debtors.sort((a, b) => b.amount - a.amount);
+
+  const settlements = [];
+  let ci = 0;
+  let di = 0;
+  while (ci < creditors.length && di < debtors.length) {
+    const c = creditors[ci];
+    const d = debtors[di];
+    const transfer = Math.min(c.amount, d.amount);
+    if (transfer > 0) {
+      settlements.push({ debtor: d.member, creditor: c.member, amount: transfer / (100 * scale) });
+    }
+    c.amount -= transfer;
+    d.amount -= transfer;
+    if (c.amount === 0) ci += 1;
+    if (d.amount === 0) di += 1;
+  }
+  return settlements;
+}
+
 // Each member's share of trip cost - not who paid, but who it's ultimately
 // attributed to: personal expenses count fully against the payer, "owed"
 // expenses count fully against whoever owes it back, and shared expenses
@@ -307,12 +385,13 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
 // this (see the exclusion in the caller).
 export function computeMemberTotals(entries, members, valueField = 'amount') {
   // Same scaled-units approach as computeBalance, and for the same reason:
-  // a shared entry's 1/N-per-member paise share is often fractional, and
-  // rounding it per entry means picking someone to give the leftover
+  // a k-way shared entry's 1/k-per-member paise share is often fractional,
+  // and rounding it per entry means picking someone to give the leftover
   // paisa to - do that the same way every time and it compounds into a
-  // real, one-sided bias. Scaling by member count keeps every share a
-  // whole number with nothing to round until the final /scale below.
-  const scale = members.length;
+  // real, one-sided bias. LCM(1..memberCount) divides evenly by any subset
+  // size (see splitAmong below), keeping every share a whole number with
+  // nothing to round until the final /scale below.
+  const scale = lcmRange(members.length);
   const totalsScaled = Object.fromEntries(members.map((m) => [m, 0]));
   for (const entry of entries) {
     const amountPaise = toPaise(entry[valueField]);
@@ -322,8 +401,13 @@ export function computeMemberTotals(entries, members, valueField = 'amount') {
     } else if (entry.splitType === 'owed' && entry.owedBy) {
       if (members.includes(entry.owedBy)) totalsScaled[entry.owedBy] += amountPaise * scale;
     } else {
-      members.forEach((m) => {
-        totalsScaled[m] += amountPaise;
+      const splitSet = entry.splitAmong && entry.splitAmong.length > 0
+        ? entry.splitAmong.filter((m) => members.includes(m))
+        : members;
+      if (splitSet.length === 0) continue;
+      const share = (amountPaise * scale) / splitSet.length;
+      splitSet.forEach((m) => {
+        totalsScaled[m] += share;
       });
     }
   }

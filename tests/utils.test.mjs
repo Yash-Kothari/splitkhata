@@ -4,6 +4,7 @@ import {
   DEFAULT_PERSONS as PERSONS,
   computeBalance,
   computeMemberTotals,
+  computeSettlements,
   excludeCashSpend,
   computeTripTotalSpend,
   getTripLastDate,
@@ -40,6 +41,147 @@ test('computes balances per ledger using the active pair names', () => {
   assert.equal(travelBalance.debtor, 'Kruti');
   assert.equal(travelBalance.creditor, 'Yash');
   assert.equal(travelBalance.amount, 200);
+});
+
+// --- Regression tests for computeSettlements (trip guests) ---
+//
+// A trip with a guest has 3+ members, where computeBalance's
+// biggest-debtor-vs-biggest-creditor fallback can silently drop a real
+// debt. computeSettlements is what the UI actually shows once a trip has
+// guests - it must produce the full, correct set of pairwise transfers.
+
+test('computeSettlements matches computeBalance exactly for two people', () => {
+  const entries = [
+    { amount: 600, payer: 'Yash', split: true, splitType: 'shared', ledger: 'travel', tripName: 'Trip' },
+    { amount: 300, payer: 'Kruti', split: true, splitType: 'shared', ledger: 'travel', tripName: 'Trip' },
+  ];
+  const balance = computeBalance(entries, 'travel', PERSONS);
+  const settlements = computeSettlements(entries, 'travel', PERSONS);
+
+  assert.equal(settlements.length, 1);
+  assert.equal(settlements[0].debtor, balance.debtor);
+  assert.equal(settlements[0].creditor, balance.creditor);
+  assert.equal(settlements[0].amount, balance.amount);
+});
+
+test('computeSettlements returns no transfers when three people are already settled', () => {
+  const entries = [
+    { amount: 300, payer: 'Yash', split: true, splitType: 'shared', ledger: 'travel', tripName: 'Trip' },
+    { amount: 300, payer: 'Kruti', split: true, splitType: 'shared', ledger: 'travel', tripName: 'Trip' },
+    { amount: 300, payer: 'Guest', split: true, splitType: 'shared', ledger: 'travel', tripName: 'Trip' },
+  ];
+  const settlements = computeSettlements(entries, 'travel', ['Yash', 'Kruti', 'Guest']);
+  assert.deepEqual(settlements, []);
+});
+
+// This is exactly the case computeBalance's 3+-member fallback gets wrong:
+// two separate people (Yash and Kruti) each owe the same third person
+// (Guest), but the fallback only ever reports the single biggest pair -
+// here it would report "Yash owes Guest 1000" and silently drop that
+// Kruti owes Guest 500 too. computeSettlements must report both.
+test('computeSettlements reports every real debt, not just the largest one', () => {
+  const entries = [
+    { amount: 3000, payer: 'Guest', split: true, splitType: 'shared', ledger: 'travel', tripName: 'Trip' },
+  ];
+  const members = ['Yash', 'Kruti', 'Guest'];
+  const settlements = computeSettlements(entries, 'travel', members);
+
+  assert.equal(settlements.length, 2);
+  const byDebtor = Object.fromEntries(settlements.map((s) => [s.debtor, s]));
+  assert.equal(byDebtor.Yash.creditor, 'Guest');
+  assert.equal(byDebtor.Yash.amount, 1000);
+  assert.equal(byDebtor.Kruti.creditor, 'Guest');
+  assert.equal(byDebtor.Kruti.amount, 1000);
+
+  // Sanity check against the actual bug: computeBalance's fallback drops one.
+  const lossyBalance = computeBalance(entries, 'travel', members);
+  assert.equal(lossyBalance.amount, 2000); // only sees one of the two 1000s owed
+});
+
+test('computeSettlements nets out a three-way mix to the minimal transfers', () => {
+  // Each of Yash/Kruti/Guest pays one 300 shared expense (net +200 for the
+  // payer, -100 for each of the other two), plus Yash separately covers a
+  // 90 expense that's owed back fully by Kruti. Hand-computed nets: Yash
+  // +90, Kruti -90, Guest exactly 0 - so Guest should need no settlement
+  // at all, and the whole thing should resolve to one clean transfer.
+  const entries = [
+    { amount: 300, payer: 'Yash', split: true, splitType: 'shared', ledger: 'travel', tripName: 'Trip' },
+    { amount: 300, payer: 'Kruti', split: true, splitType: 'shared', ledger: 'travel', tripName: 'Trip' },
+    { amount: 300, payer: 'Guest', split: true, splitType: 'shared', ledger: 'travel', tripName: 'Trip' },
+    { amount: 90, payer: 'Yash', split: true, splitType: 'owed', owedBy: 'Kruti', ledger: 'travel', tripName: 'Trip' },
+  ];
+  const members = ['Yash', 'Kruti', 'Guest'];
+  const settlements = computeSettlements(entries, 'travel', members);
+
+  assert.equal(settlements.length, 1);
+  assert.equal(settlements[0].debtor, 'Kruti');
+  assert.equal(settlements[0].creditor, 'Yash');
+  assert.equal(settlements[0].amount, 90);
+});
+
+// --- Regression tests for splitAmong (narrowing a shared entry to fewer
+// than all the trip's members - e.g. a guest who wasn't in on one specific
+// expense) ---
+
+test('a shared entry with no splitAmong still splits among everyone (unchanged legacy behavior)', () => {
+  const entries = [
+    { amount: 300, payer: 'Guest', split: true, splitType: 'shared', ledger: 'travel', tripName: 'Trip' },
+  ];
+  const members = ['Yash', 'Kruti', 'Guest'];
+  const settlements = computeSettlements(entries, 'travel', members);
+  assert.equal(settlements.length, 2);
+  assert.ok(settlements.every((s) => s.creditor === 'Guest' && s.amount === 100));
+});
+
+test('splitAmong excludes a guest from an expense that was never theirs', () => {
+  // Yash pays for a coffee that's just Yash+Kruti - Guest was elsewhere and
+  // shouldn't owe anything, even though Guest is on the trip generally.
+  const entries = [
+    {
+      amount: 300, payer: 'Yash', split: true, splitType: 'shared', splitAmong: ['Yash', 'Kruti'],
+      ledger: 'travel', tripName: 'Trip',
+    },
+  ];
+  const members = ['Yash', 'Kruti', 'Guest'];
+  const settlements = computeSettlements(entries, 'travel', members);
+  assert.equal(settlements.length, 1);
+  assert.equal(settlements[0].debtor, 'Kruti');
+  assert.equal(settlements[0].creditor, 'Yash');
+  assert.equal(settlements[0].amount, 150);
+});
+
+test('splitAmong works for odd totals across an odd-sized subset with no rounding bias', () => {
+  // 100.03 split 3 ways doesn't divide evenly in paise - confirm the total
+  // charged across the subset exactly equals the entry amount either way,
+  // whichever of the two possible "someone gets the extra fraction of a
+  // paisa" outcomes it lands on, and that computeMemberTotals agrees.
+  const members = ['Yash', 'Kruti', 'Guest', 'Extra'];
+  const entries = [
+    {
+      amount: 100.03, payer: 'Yash', split: true, splitType: 'shared', splitAmong: ['Yash', 'Kruti', 'Guest'],
+      ledger: 'travel', tripName: 'Trip',
+    },
+  ];
+  const totals = computeMemberTotals(entries, members);
+  assert.equal(
+    Math.round((totals.Yash + totals.Kruti + totals.Guest) * 100),
+    Math.round(100.03 * 100),
+  );
+  assert.equal(totals.Extra, 0);
+});
+
+test('computeMemberTotals respects splitAmong the same way computeBalance does', () => {
+  const members = ['Yash', 'Kruti', 'Guest'];
+  const entries = [
+    {
+      amount: 300, payer: 'Yash', split: true, splitType: 'shared', splitAmong: ['Yash', 'Kruti'],
+      ledger: 'travel', tripName: 'Trip',
+    },
+  ];
+  const totals = computeMemberTotals(entries, members);
+  assert.equal(totals.Yash, 150);
+  assert.equal(totals.Kruti, 150);
+  assert.equal(totals.Guest, 0);
 });
 
 test('computes previous month key correctly', () => {

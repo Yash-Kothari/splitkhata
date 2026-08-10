@@ -3,6 +3,7 @@ import { addExpense, updateExpense, deleteExpense, updateTripInDb } from '../fir
 import {
   formatCurrency,
   computeBalance,
+  computeSettlements,
   computeMemberTotals,
   excludeCashSpend,
   computeTripTotalSpend,
@@ -31,6 +32,18 @@ export default function BalanceStrip({
   );
   const balance = useMemo(() => computeBalance(balanceEntries, ledger, dbMembers), [balanceEntries, ledger, dbMembers]);
   const ledgerLabel = isTravel ? 'Travel' : 'Household';
+  // A trip with a guest has 3+ people on it - there's no single honest "X
+  // owes Y" figure once a third person is splitting bills (computeBalance's
+  // fallback for that case just reports the single biggest pair and drops
+  // the rest), so this switches to the real pairwise settlement list
+  // instead, and skips the household-rollup flow entirely below - there's
+  // no clean way to fold a 3-way trip split into the 2-person household
+  // balance, so a guest trip settles separately, outside this app.
+  const hasGuests = isTravel && dbMembers.length > 2;
+  const settlements = useMemo(
+    () => (hasGuests ? computeSettlements(balanceEntries, ledger, dbMembers) : null),
+    [hasGuests, balanceEntries, ledger, dbMembers],
+  );
 
   const memberTotals = useMemo(
     () => (isTravel ? computeMemberTotals(balanceEntries, dbMembers) : null),
@@ -43,8 +56,12 @@ export default function BalanceStrip({
   // earned (owed to the other person, since they sit in one account).
   const hasPoints = isTravel && entries.some((e) => Number(e.rewardPoints || 0) !== 0);
   const pointsBalance = useMemo(
-    () => (hasPoints ? computeBalance(entries, ledger, dbMembers, 'rewardPoints') : null),
-    [entries, ledger, dbMembers, hasPoints],
+    () => (hasPoints && !hasGuests ? computeBalance(entries, ledger, dbMembers, 'rewardPoints') : null),
+    [hasPoints, hasGuests, entries, ledger, dbMembers],
+  );
+  const pointsSettlements = useMemo(
+    () => (hasPoints && hasGuests ? computeSettlements(entries, ledger, dbMembers, 'rewardPoints') : null),
+    [hasPoints, hasGuests, entries, ledger, dbMembers],
   );
   // Total points spent on the trip, regardless of split - unlike
   // pointsBalance (which only counts split entries, so a personal
@@ -246,7 +263,27 @@ export default function BalanceStrip({
               {isTravel ? 'Trip Summary' : 'Household Net Balance'}
             </h2>
           </div>
-          {balance.status === 'settled' ? (
+          {hasGuests ? (
+            settlements.length === 0 ? (
+              <p className="text-base text-ledger-green font-semibold">
+                All settled up - no one owes anyone
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {settlements.map((s) => (
+                  <p key={`${s.debtor}-${s.creditor}`} className="text-base text-ink">
+                    <span className="font-semibold text-stamp-red">{s.debtor}</span>
+                    {' owes '}
+                    <span className="font-semibold text-ledger-green">{s.creditor}</span>
+                    {' '}
+                    <span className="font-mono font-bold text-lg text-ink">
+                      {formatCurrency(s.amount, displayCurrency)}
+                    </span>
+                  </p>
+                ))}
+              </div>
+            )
+          ) : balance.status === 'settled' ? (
             <p className="text-base text-ledger-green font-semibold">
               All settled up - no one owes anyone
             </p>
@@ -275,7 +312,24 @@ export default function BalanceStrip({
               </span>
             </p>
           )}
-          {hasPoints && (
+          {hasGuests && hasPoints && (
+            pointsSettlements.length === 0 ? (
+              <p className="text-sm text-ledger-green font-medium mt-1">💳 All settled up in points</p>
+            ) : (
+              pointsSettlements.map((s) => (
+                <p key={`pts-${s.debtor}-${s.creditor}`} className="text-sm text-muted-text mt-1">
+                  💳 <span className="font-semibold text-stamp-red">{s.debtor}</span>
+                  {' owes '}
+                  <span className="font-semibold text-ledger-green">{s.creditor}</span>
+                  {' '}
+                  <span className="font-mono font-semibold text-ink">
+                    {Math.round(s.amount).toLocaleString('en-IN')} pts
+                  </span>
+                </p>
+              ))
+            )
+          )}
+          {!hasGuests && hasPoints && (
             pointsBalance.status === 'settled' ? (
               <p className="text-sm text-ledger-green font-medium mt-1">💳 All settled up in points</p>
             ) : (
@@ -323,7 +377,11 @@ export default function BalanceStrip({
         </div>
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full sm:w-auto">
           {isTravel ? (
-            confirmingRollup ? null : rollupNowSettled ? (
+            hasGuests ? (
+              <div className="text-xs text-muted-text text-center sm:text-left sm:h-9 sm:flex sm:items-center sm:bg-paper sm:px-3 sm:rounded-lg sm:border sm:border-ink/10 sm:max-w-64">
+                Settle with guests separately - can't roll into household.
+              </div>
+            ) : confirmingRollup ? null : rollupNowSettled ? (
               <button
                 type="button"
                 onClick={() => setConfirmingRollup(true)}
@@ -371,7 +429,7 @@ export default function BalanceStrip({
         </div>
       </div>
 
-      {isTravel && confirmingRollup && (
+      {isTravel && !hasGuests && confirmingRollup && (
         <div className="mt-4 pt-4 border-t border-ink/10 space-y-3">
           <p className="text-sm text-ink">
             {rollupNowSettled ? (

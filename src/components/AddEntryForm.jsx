@@ -35,6 +35,7 @@ export default function AddEntryForm({
   const [category, setCategory] = useState(categories[0] || 'Groceries');
   const [splitType, setSplitType] = useState('shared');
   const [owedBy, setOwedBy] = useState(() => membersList.find((person) => person !== (deviceName || membersList[0])) || '');
+  const [splitAmong, setSplitAmong] = useState(membersList);
   const [paymentMethod, setPaymentMethod] = useState(paymentMethodsList[0] || 'Cash');
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
@@ -85,6 +86,28 @@ export default function AddEntryForm({
     }
   }, [membersList, owedBy, payer]);
 
+  // Resets to "everyone" whenever the *set* of available members actually
+  // changes (switching trips, a guest added/removed) - keyed on the joined
+  // names rather than the membersList array itself, since that's a fresh
+  // array reference from the parent on every render regardless of whether
+  // its contents changed, which would otherwise wipe out a manually
+  // narrowed selection while just typing elsewhere in the form.
+  const membersKey = membersList.join('|');
+  useEffect(() => {
+    setSplitAmong(membersList);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [membersKey]);
+
+  function toggleSplitAmong(name) {
+    setSplitAmong((prev) => {
+      if (prev.includes(name)) {
+        const next = prev.filter((p) => p !== name);
+        return next.length > 0 ? next : prev;
+      }
+      return [...prev, name];
+    });
+  }
+
   useEffect(() => {
     if (paymentMethodsList.length && !paymentMethodsList.includes(paymentMethod)) {
       setPaymentMethod(paymentMethodsList[0]);
@@ -110,6 +133,13 @@ export default function AddEntryForm({
     const months = splitAcrossMonths ? Math.max(2, Math.min(36, Math.round(monthsCount) || 2)) : 1;
     const parsedLocal = ledger === 'travel' && localAmount ? parseFloat(localAmount) : null;
     const parsedPoints = ledger === 'travel' && rewardPoints ? parseFloat(rewardPoints) : null;
+    // Only stored as a real subset when it actually IS one - every entry
+    // that predates this field has no splitAmong at all, and computeBalance
+    // already treats "no splitAmong" as "everyone", so there's no reason to
+    // write out the full member list when nothing was narrowed down.
+    const effectiveSplitAmong = splitType === 'shared' && splitAmong.length > 0 && splitAmong.length < membersList.length
+      ? splitAmong
+      : null;
 
     // Firestore's offline cache queues this write locally and syncs it in
     // the background - the entry is durable even if this tab closes before
@@ -126,6 +156,7 @@ export default function AddEntryForm({
         split: splitType !== 'personal',
         splitType,
         owedBy: splitType === 'owed' ? owedBy : null,
+        splitAmong: effectiveSplitAmong,
         note: trimmedNote ? `${trimmedNote} (${i + 1}/${months})` : `Installment ${i + 1}/${months}`,
         date: addMonthsToDateISO(date, i),
         ledger,
@@ -143,6 +174,7 @@ export default function AddEntryForm({
         split: splitType !== 'personal',
         splitType,
         owedBy: splitType === 'owed' ? owedBy : null,
+        splitAmong: effectiveSplitAmong,
         note: trimmedNote,
         date,
         ledger,
@@ -165,6 +197,7 @@ export default function AddEntryForm({
     setDate(todayISO());
     setSplitAcrossMonths(false);
     setMonthsCount(6);
+    setSplitAmong(membersList);
   }
 
   // Once the trip's withdrawals fully cover this Local Amount, a Cash
@@ -370,6 +403,33 @@ export default function AddEntryForm({
               />
             </div>
           </div>
+
+          {splitType === 'shared' && membersList.length > 2 && (
+            <div>
+              <label className={labelClass}>Split Among</label>
+              <div className="flex flex-wrap gap-2">
+                {membersList.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => toggleSplitAmong(m)}
+                    className={`min-h-10 px-3.5 rounded-lg border text-sm font-semibold transition-colors ${
+                      splitAmong.includes(m)
+                        ? 'bg-ledger-green border-ledger-green text-white'
+                        : 'border-ink/15 bg-paper text-ink hover:bg-paper-card'
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+              {splitAmong.length < membersList.length && (
+                <p className="text-xs text-muted-text mt-1.5">
+                  Only split between {splitAmong.join(' and ')} - not the whole trip.
+                </p>
+              )}
+            </div>
+          )}
 
           {ledger === 'travel' && paymentMethod === 'Cash' && splitType === 'personal' && (
             <p className="text-xs text-muted-text -mt-1.5 px-0.5">

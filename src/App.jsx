@@ -329,6 +329,15 @@ export default function App() {
       }
     : null;
 
+  // A trip's guests are scoped to that trip only (stored on the trip doc,
+  // never in the household `members` collection) - folded into the members
+  // list passed to entry-adding/balance components ONLY while on the travel
+  // ledger with that trip selected, so they can never surface as a
+  // payer/split option on the household ledger or Payments tab.
+  const activeLedgerMembersList = activeLedger === 'travel' && currentTrip?.guests?.length
+    ? [...activeMembersList, ...currentTrip.guests]
+    : activeMembersList;
+
   const pinConfig = getPinConfig();
 
   if (authLoading) {
@@ -562,6 +571,13 @@ export default function App() {
               onSaveError={handleSaveError}
             />
           )}
+          {/* TravelManager keeps dbMembers=activeMembersList (household only)
+              above - it needs the pure household list to dedupe a new guest
+              name against, and reads the current trip's own guest list
+              itself via selectedTripObj.guests. Everything below this point
+              (BalanceStrip in travel mode, AddEntryForm, EntryList) gets the
+              guest-merged list instead, since those are what actually let a
+              guest be picked as a payer/split target. */}
 
           {activeLedger === 'travel' && !currentTrip ? (
             dbTrips.length > 0 && (
@@ -575,7 +591,7 @@ export default function App() {
                 <BalanceStrip
                   entries={tripEntries}
                   ledger="travel"
-                  dbMembers={activeMembersList}
+                  dbMembers={activeLedgerMembersList}
                   tripName={selectedTrip}
                   tripId={currentTrip?.id}
                   tripRollup={tripRollup}
@@ -589,7 +605,7 @@ export default function App() {
                 ledger={activeLedger}
                 tripName={selectedTrip}
                 dbCategories={currentDbCategories}
-                dbMembers={activeMembersList}
+                dbMembers={activeLedgerMembersList}
                 currentCurrency={currentCurrency}
                 dbPaymentMethods={activePaymentMethodsList}
                 tripEntries={tripEntries}
@@ -621,7 +637,7 @@ export default function App() {
                 onSaveError={handleSaveError}
                 ledger={activeLedger}
                 dbCategories={currentDbCategories}
-                dbMembers={activeMembersList}
+                dbMembers={activeLedgerMembersList}
                 currentCurrency={currentCurrency}
                 dbPaymentMethods={activePaymentMethodsList}
                 excludePaymentEntries={activeLedger === 'household'}

@@ -39,6 +39,8 @@ export default function TravelManager({
   const [datesStartDraft, setDatesStartDraft] = useState('');
   const [datesEndDraft, setDatesEndDraft] = useState('');
   const [savingDates, setSavingDates] = useState(false);
+  const [guestDraft, setGuestDraft] = useState('');
+  const [savingGuest, setSavingGuest] = useState(false);
   const [categoryDraft, setCategoryDraft] = useState('');
   const [paymentMethodDraft, setPaymentMethodDraft] = useState('');
   const [openingCash, setOpeningCash] = useState('');
@@ -140,6 +142,40 @@ export default function TravelManager({
       onSaveError?.(err);
     } finally {
       setSavingDates(false);
+    }
+  }
+
+  // Guests are scoped to this one trip only - stored as a plain name array
+  // on the trip doc itself, never touching the household `members`
+  // collection, so they can never be picked as a payer/split target on the
+  // household ledger or in the Payments tab, and a trip that has any never
+  // gets a "Add to Main Ledger" option (see BalanceStrip).
+  const tripGuests = selectedTripObj?.guests || [];
+
+  async function handleAddGuest(event) {
+    event.preventDefault();
+    if (!selectedTripObj) return;
+    const trimmed = guestDraft.trim();
+    if (!trimmed) return;
+    const takenName = [...dbMembers, ...tripGuests].some((n) => n.toLowerCase() === trimmed.toLowerCase());
+    if (takenName) return;
+    setSavingGuest(true);
+    try {
+      await updateTripInDb(selectedTripObj.id, { guests: [...tripGuests, trimmed] });
+      setGuestDraft('');
+    } catch (err) {
+      onSaveError?.(err);
+    } finally {
+      setSavingGuest(false);
+    }
+  }
+
+  async function handleRemoveGuest(name) {
+    if (!selectedTripObj) return;
+    try {
+      await updateTripInDb(selectedTripObj.id, { guests: tripGuests.filter((g) => g !== name) });
+    } catch (err) {
+      onSaveError?.(err);
     }
   }
 
@@ -785,6 +821,49 @@ export default function TravelManager({
                       ✕
                     </button>
                   )}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-2 pt-2 border-t border-ink/10">
+            <p className="text-xs font-medium text-ink">Guests (this trip only)</p>
+            <p className="text-2xs text-muted-text -mt-1">
+              Someone who joined just this trip - they can be picked as a payer or split target on{' '}
+              {selectedTrip}'s entries, but never anywhere on the household ledger or Payments tab, and this trip
+              won't get an "Add to Main Ledger" option while it has any (there's no single honest "who owes whom"
+              once a third person is splitting bills, so settle with them separately).
+            </p>
+            <form onSubmit={handleAddGuest} className="flex gap-2">
+              <input
+                value={guestDraft}
+                onChange={(e) => setGuestDraft(e.target.value)}
+                className="flex-1 min-h-10 px-3 py-1.5 rounded-lg border border-ink/15 bg-paper text-ink text-xs focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                placeholder="e.g. Priya"
+              />
+              <button
+                type="submit"
+                disabled={savingGuest || !guestDraft.trim()}
+                className="min-h-10 rounded-lg border border-ink/15 bg-paper px-3 py-1.5 font-semibold text-xs text-ink hover:bg-paper-card transition-colors disabled:opacity-50"
+              >
+                Add Guest
+              </button>
+            </form>
+            <div className="flex flex-wrap gap-1.5">
+              {tripGuests.map((guest) => (
+                <span
+                  key={guest}
+                  className="inline-flex items-center gap-1 rounded-md border border-ink/10 bg-paper px-2.5 py-1 text-xs text-ink font-medium shadow-2xs"
+                >
+                  <span>{guest}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveGuest(guest)}
+                    className="text-muted-text hover:text-stamp-red text-xs font-bold px-1 py-0.2 rounded hover:bg-stamp-red/10 transition-colors"
+                    title={`Remove ${guest}`}
+                  >
+                    ✕
+                  </button>
                 </span>
               ))}
             </div>

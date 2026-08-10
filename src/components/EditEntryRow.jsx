@@ -34,6 +34,9 @@ export default function EditEntryRow({
       ? entry.owedBy
       : membersList.find((p) => p !== payer) || ''
   );
+  const [splitAmong, setSplitAmong] = useState(
+    entry.splitAmong && entry.splitAmong.length > 0 ? entry.splitAmong : membersList
+  );
   const [paymentMethod, setPaymentMethod] = useState(
     entry.paymentMethod && paymentMethodsList.includes(entry.paymentMethod)
       ? entry.paymentMethod
@@ -45,6 +48,16 @@ export default function EditEntryRow({
   const [slowSave, setSlowSave] = useState(false);
 
   const isSettlement = entry.splitType === 'settlement';
+
+  function toggleSplitAmong(name) {
+    setSplitAmong((prev) => {
+      if (prev.includes(name)) {
+        const next = prev.filter((p) => p !== name);
+        return next.length > 0 ? next : prev;
+      }
+      return [...prev, name];
+    });
+  }
 
   const tripWithdrawals = useMemo(() => tripEntries.filter((e) => e.isWithdrawal), [tripEntries]);
   const otherCashEntries = useMemo(
@@ -105,6 +118,9 @@ export default function EditEntryRow({
           date,
         });
       } else {
+        const effectiveSplitAmong = splitType === 'shared' && splitAmong.length > 0 && splitAmong.length < membersList.length
+          ? splitAmong
+          : null;
         await updateExpense(entry.id, {
           amount: parsed,
           payer,
@@ -112,6 +128,7 @@ export default function EditEntryRow({
           split: splitType !== 'personal',
           splitType,
           owedBy: splitType === 'owed' ? owedBy : null,
+          splitAmong: effectiveSplitAmong,
           note: note.trim(),
           date,
           paymentMethod: ledger === 'travel' ? paymentMethod : null,
@@ -312,6 +329,28 @@ export default function EditEntryRow({
                   <option key={p} value={p}>{p}</option>
                 ))}
               </select>
+            </div>
+          )}
+
+          {splitType === 'shared' && membersList.length > 2 && (
+            <div className="col-span-2 sm:col-span-3">
+              <label className={labelClass}>Split Among</label>
+              <div className="flex flex-wrap gap-2">
+                {membersList.map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => toggleSplitAmong(m)}
+                    className={`min-h-9 px-3 rounded-lg border text-xs font-semibold transition-colors ${
+                      splitAmong.includes(m)
+                        ? 'bg-ledger-green border-ledger-green text-white'
+                        : 'border-ink/15 bg-paper text-ink hover:bg-paper-card'
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
