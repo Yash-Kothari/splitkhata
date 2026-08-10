@@ -378,6 +378,14 @@ export default function App() {
     : activeLedger === 'payments'
       ? 'Payments tab (no single ledger in view - default to household)'
       : 'Household ledger';
+  // Short form of the same thing, for display in the Ask popup itself -
+  // askCurrentContext above is written as an instruction for the AI
+  // prompt, too verbose to show as a UI label.
+  const askCurrentContextLabel = activeLedger === 'travel'
+    ? (selectedTrip ? `Travel · ${selectedTrip}` : 'Travel (no trip selected)')
+    : activeLedger === 'payments'
+      ? 'Payments (defaults to Household)'
+      : 'Household';
 
   const pinConfig = getPinConfig();
 
@@ -590,6 +598,7 @@ export default function App() {
             dbCategories={askCategories}
             trips={askTripNames}
             currentContext={askCurrentContext}
+            currentContextLabel={askCurrentContextLabel}
           />
 
           {activeLedger === 'payments' && (

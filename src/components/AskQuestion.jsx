@@ -27,7 +27,14 @@ import {
 // question can name a trip that has nothing to do with the tab you're
 // actually on - currentContext just supplies the default scope for a
 // question that doesn't name one itself.
-export default function AskQuestion({ entries, dbMembers = [], dbCategories = [], trips = [], currentContext }) {
+export default function AskQuestion({
+  entries,
+  dbMembers = [],
+  dbCategories = [],
+  trips = [],
+  currentContext,
+  currentContextLabel,
+}) {
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState('');
   const [thread, setThread] = useState([]);
@@ -75,7 +82,14 @@ export default function AskQuestion({ entries, dbMembers = [], dbCategories = []
       {open && (
         <div className="fixed bottom-[5.5rem] sm:bottom-24 right-3 sm:right-6 left-3 sm:left-auto z-40 sm:w-96 max-h-[70vh] rounded-2xl bg-paper-card border border-ink/15 shadow-2xl flex flex-col overflow-hidden">
           <div className="px-4 py-3 border-b border-ink/10 flex items-center justify-between bg-paper/60 shrink-0">
-            <p className="font-display font-bold text-ink text-sm">✨ Ask about this data</p>
+            <div>
+              <p className="font-display font-bold text-ink text-sm">✨ Ask about this data</p>
+              {currentContextLabel && (
+                <p className="text-[11px] text-muted-text mt-0.5">
+                  Defaults to: <span className="font-semibold">{currentContextLabel}</span>
+                </p>
+              )}
+            </div>
             {thread.length > 0 && (
               <button
                 type="button"
