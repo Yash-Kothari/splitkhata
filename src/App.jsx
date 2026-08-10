@@ -386,6 +386,21 @@ export default function App() {
     : activeLedger === 'payments'
       ? 'Payments (defaults to Household)'
       : 'Household';
+  // Shown as clickable starter chips when the chat thread is empty -
+  // tailored per tab/trip instead of one static pair, and using real trip
+  // names when there are enough of them to make "compare" concrete instead
+  // of hypothetical.
+  const askExampleQuestions = activeLedger === 'travel'
+    ? (selectedTrip
+        ? [`Biggest expense of this trip`, `How much did we spend on Hotel here?`]
+        : askTripNames.length >= 2
+          ? [`Compare ${askTripNames[0]} and ${askTripNames[1]} trip expenses`, `In which trip did I spend more on Food?`]
+          : askTripNames.length === 1
+            ? [`Biggest expense of my ${askTripNames[0]} trip`, `Top 3 biggest travel expenses`]
+            : ['In which trip did I spend more on Food?', 'Top 3 biggest travel expenses'])
+    : activeLedger === 'payments'
+      ? ['Who owes who right now?', 'Total household spend this month']
+      : ['Top 3 Biggest Expense of the month', 'How is Grocery expense compared to last month'];
 
   const pinConfig = getPinConfig();
 
@@ -599,6 +614,7 @@ export default function App() {
             trips={askTripNames}
             currentContext={askCurrentContext}
             currentContextLabel={askCurrentContextLabel}
+            exampleQuestions={askExampleQuestions}
           />
 
           {activeLedger === 'payments' && (
