@@ -224,7 +224,6 @@ test('returns the expected category list for travel and household ledgers', () =
     'Souvenir',
     'Insurance',
     'Misc',
-    'Other',
   ]);
   assert.deepEqual(getLedgerCategories('household'), [
     'Groceries',
@@ -235,7 +234,6 @@ test('returns the expected category list for travel and household ledgers', () =
     'Household',
     'Health',
     'Entertainment',
-    'Other',
   ]);
 });
 
