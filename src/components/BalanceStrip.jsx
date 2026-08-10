@@ -293,7 +293,7 @@ export default function BalanceStrip({
 
   return (
     <section className="panel-card px-5 py-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <h2 className="font-display text-lg font-bold text-ink">
