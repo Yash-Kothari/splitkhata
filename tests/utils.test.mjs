@@ -17,6 +17,10 @@ import {
   getLast6MonthsData,
   getCategoryMoMComparison,
   buildTripDigestPrompt,
+  buildCategorySuggestionSchema,
+  buildCategorySuggestionPrompt,
+  buildQuickAddSchema,
+  buildQuickAddPrompt,
 } from '../src/utils.js';
 
 test('uses Yash and Kruti as default pair names', () => {
@@ -453,4 +457,47 @@ test('buildTripDigestPrompt reports "settled up" when given no settlement lines'
   });
   assert.match(prompt, /Everyone is settled up\./);
   assert.match(prompt, /No entries yet\./);
+});
+
+test('buildCategorySuggestionSchema constrains category to the given list', () => {
+  const schema = buildCategorySuggestionSchema(['Food', 'Hotel', 'Flight']);
+  assert.deepEqual(schema.properties.category.enum, ['Food', 'Hotel', 'Flight']);
+  assert.deepEqual(schema.required, ['category']);
+});
+
+test('buildCategorySuggestionPrompt includes the note and the category list', () => {
+  const prompt = buildCategorySuggestionPrompt('taxi to airport', ['Food', 'Commute']);
+  assert.match(prompt, /taxi to airport/);
+  assert.match(prompt, /Food, Commute/);
+});
+
+test('buildQuickAddSchema constrains category/payer/splitType to real values, and only adds paymentMethod for travel', () => {
+  const householdSchema = buildQuickAddSchema({
+    categories: ['Groceries', 'Rent'],
+    members: ['Yash', 'Kruti'],
+    paymentMethods: ['Cash', 'Card'],
+    isTravel: false,
+  });
+  assert.deepEqual(householdSchema.properties.category.enum, ['Groceries', 'Rent']);
+  assert.deepEqual(householdSchema.properties.payer.enum, ['Yash', 'Kruti']);
+  assert.deepEqual(householdSchema.properties.splitType.enum, ['shared', 'personal', 'owed']);
+  assert.equal(householdSchema.properties.paymentMethod, undefined);
+
+  const travelSchema = buildQuickAddSchema({
+    categories: ['Flight'],
+    members: ['Yash', 'Kruti'],
+    paymentMethods: ['Cash', 'Card'],
+    isTravel: true,
+  });
+  assert.deepEqual(travelSchema.properties.paymentMethod.enum, ['Cash', 'Card']);
+});
+
+test('buildQuickAddPrompt includes the free text, today\'s date, and the member list', () => {
+  const prompt = buildQuickAddPrompt('1200 dinner with Kruti last night', {
+    members: ['Yash', 'Kruti'],
+    today: '2026-08-10',
+  });
+  assert.match(prompt, /1200 dinner with Kruti last night/);
+  assert.match(prompt, /2026-08-10/);
+  assert.match(prompt, /Yash, Kruti/);
 });

@@ -99,6 +99,7 @@ let tripsRef = null;
 let cashMovementsRef = null;
 let paymentMethodsRef = null;
 let authInstance = null;
+let aiInstance = null;
 let aiModel = null;
 
 if (isFirebaseConfigured()) {
@@ -132,12 +133,12 @@ if (isFirebaseConfigured()) {
         provider: new ReCaptchaV3Provider(import.meta.env.VITE_RECAPTCHA_SITE_KEY),
         isTokenAutoRefreshEnabled: true,
       });
-      const ai = getAI(app, { backend: new GoogleAIBackend() });
+      aiInstance = getAI(app, { backend: new GoogleAIBackend() });
       // "-latest" alias, not a pinned version - Google retires versioned
       // model IDs for new usage on a rolling basis (gemini-2.5-flash just
       // did), and this always resolves to the current recommended flash
       // model instead of needing a code change each time that happens.
-      aiModel = getGenerativeModel(ai, { model: 'gemini-flash-latest' });
+      aiModel = getGenerativeModel(aiInstance, { model: 'gemini-flash-latest' });
     }
   } catch (err) {
     console.warn('Firebase initialization failed, falling back to local database:', err);
@@ -153,6 +154,24 @@ export async function generateDigest(prompt) {
   if (!aiModel) throw new Error('AI Logic is not configured yet - add VITE_RECAPTCHA_SITE_KEY to .env.');
   const result = await aiModel.generateContent(prompt);
   return result.response.text();
+}
+
+// Constrains Gemini to return JSON matching the given schema (see
+// buildQuickAddSchema / buildCategorySuggestionSchema in utils.js) - used
+// for quick-add parsing and category suggestion, where the result has to
+// be a value the form can actually use (e.g. a category that really is in
+// the trip's category list), not just plausible-looking text. A fresh
+// model is built per call since the schema differs every time (categories
+// and members vary by ledger/trip) - getGenerativeModel is a cheap local
+// client, not a network call.
+export async function generateStructured(prompt, schema) {
+  if (!aiInstance) throw new Error('AI Logic is not configured yet - add VITE_RECAPTCHA_SITE_KEY to .env.');
+  const jsonModel = getGenerativeModel(aiInstance, {
+    model: 'gemini-flash-latest',
+    generationConfig: { responseMimeType: 'application/json', responseSchema: schema },
+  });
+  const result = await jsonModel.generateContent(prompt);
+  return JSON.parse(result.response.text());
 }
 
 export function isAllowedUser(user) {

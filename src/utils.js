@@ -484,6 +484,57 @@ Settlement:
 ${settlementText}`;
 }
 
+// Constrains the category suggestion to a value that's actually in the
+// ledger's category list (via enum) - the model can't hallucinate a
+// category that doesn't exist, it can only pick from what's given.
+export function buildCategorySuggestionSchema(categories) {
+  return {
+    type: 'object',
+    properties: { category: { type: 'string', enum: categories } },
+    required: ['category'],
+  };
+}
+
+export function buildCategorySuggestionPrompt(note, categories) {
+  return `Given this expense note: "${note}"\n\nSuggest the single best matching category from this list: ${categories.join(', ')}.`;
+}
+
+// Same enum-constraint approach for quick-add: category/payer/splitType/
+// paymentMethod can only ever be a value that's actually valid for this
+// ledger, so a parsed entry never needs its own extra validation pass
+// before landing in the form.
+export function buildQuickAddSchema({ categories, members, paymentMethods = [], isTravel = false }) {
+  const properties = {
+    amount: { type: 'number', description: 'The expense amount as a plain number, no currency symbol.' },
+    category: { type: 'string', enum: categories },
+    payer: { type: 'string', enum: members },
+    splitType: { type: 'string', enum: ['shared', 'personal', 'owed'] },
+    owedBy: { type: 'string', enum: members },
+    note: { type: 'string' },
+    date: { type: 'string', description: 'ISO date YYYY-MM-DD, resolved from any relative date mentioned (e.g. yesterday).' },
+  };
+  const required = ['amount', 'category', 'payer', 'splitType', 'note', 'date'];
+  if (isTravel && paymentMethods.length > 0) {
+    properties.paymentMethod = { type: 'string', enum: paymentMethods };
+  }
+  return { type: 'object', properties, required };
+}
+
+export function buildQuickAddPrompt(text, { members, today }) {
+  return `Parse this casual expense description into structured fields. Today's date is ${today}.
+
+"${text}"
+
+Rules:
+- amount: the numeric amount only, no currency symbol.
+- category: pick the single best match from the allowed list - never invent a new one.
+- payer: who paid, from the allowed list of people (${members.join(', ')}). If not mentioned, default to ${members[0]}.
+- splitType: "shared" if the cost is split between everyone (the default for most expenses), "personal" if it's explicitly just for the payer alone, "owed" if one specific other person owes the full amount back.
+- owedBy: only set this when splitType is "owed" - who owes the money back. Must be different from payer.
+- date: resolve any relative date mentioned (e.g. "yesterday", "last Monday") against today's date, in YYYY-MM-DD format. Default to today if no date is mentioned.
+- note: a short cleaned-up description of what the expense was for.`;
+}
+
 // The trip's own last entry date, used as the default date for a new
 // household rollup line - a trip rolled up (or backfilled) well after it
 // happened should read as having happened then, not on whatever day

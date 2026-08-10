@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { addExpense, addExpensesBatch } from '../firebase';
+import { addExpense, addExpensesBatch, generateStructured } from '../firebase';
 import {
   getLedgerCategories,
   DEFAULT_PERSONS as PERSONS,
@@ -8,6 +8,10 @@ import {
   splitAmountEvenly,
   computeFifoCashAmount,
   formatFifoBreakdownSummary,
+  buildCategorySuggestionPrompt,
+  buildCategorySuggestionSchema,
+  buildQuickAddPrompt,
+  buildQuickAddSchema,
 } from '../utils';
 
 export default function AddEntryForm({
@@ -43,6 +47,10 @@ export default function AddEntryForm({
   const [expanded, setExpanded] = useState(true);
   const [splitAcrossMonths, setSplitAcrossMonths] = useState(false);
   const [monthsCount, setMonthsCount] = useState(6);
+  const [quickAddText, setQuickAddText] = useState('');
+  const [quickAddStatus, setQuickAddStatus] = useState({ state: 'idle', error: '' });
+  const [suggestingCategory, setSuggestingCategory] = useState(false);
+  const [categorySuggestError, setCategorySuggestError] = useState('');
 
   const tripWithdrawals = useMemo(() => tripEntries.filter((e) => e.isWithdrawal), [tripEntries]);
   const otherCashEntries = useMemo(
@@ -106,6 +114,60 @@ export default function AddEntryForm({
       }
       return [...prev, name];
     });
+  }
+
+  // Pre-fills the form from a casual sentence - never submits on its own.
+  // The user still reviews every field (amount, category, payer, ...) and
+  // clicks Add to Ledger themselves, same as if they'd typed it all by hand.
+  async function handleQuickAdd() {
+    const text = quickAddText.trim();
+    if (!text) return;
+    setQuickAddStatus({ state: 'loading', error: '' });
+    try {
+      const schema = buildQuickAddSchema({
+        categories,
+        members: membersList,
+        paymentMethods: paymentMethodsList,
+        isTravel: ledger === 'travel',
+      });
+      const prompt = buildQuickAddPrompt(text, { members: membersList, today: todayISO() });
+      const parsed = await generateStructured(prompt, schema);
+
+      setAmount(String(parsed.amount ?? ''));
+      if (parsed.category && categories.includes(parsed.category)) setCategory(parsed.category);
+      if (parsed.payer && membersList.includes(parsed.payer)) setPayer(parsed.payer);
+      if (parsed.splitType) setSplitType(parsed.splitType);
+      if (parsed.splitType === 'owed' && parsed.owedBy && membersList.includes(parsed.owedBy)) {
+        setOwedBy(parsed.owedBy);
+      }
+      if (parsed.note) setNote(parsed.note);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(parsed.date || '')) setDate(parsed.date);
+      if (ledger === 'travel' && parsed.paymentMethod && paymentMethodsList.includes(parsed.paymentMethod)) {
+        setPaymentMethod(parsed.paymentMethod);
+      }
+
+      setQuickAddStatus({ state: 'done', error: '' });
+      setQuickAddText('');
+    } catch (err) {
+      setQuickAddStatus({ state: 'error', error: err?.message || 'Could not parse that.' });
+    }
+  }
+
+  async function handleSuggestCategory() {
+    if (!note.trim()) return;
+    setSuggestingCategory(true);
+    setCategorySuggestError('');
+    try {
+      const result = await generateStructured(
+        buildCategorySuggestionPrompt(note.trim(), categories),
+        buildCategorySuggestionSchema(categories),
+      );
+      if (result.category && categories.includes(result.category)) setCategory(result.category);
+    } catch (err) {
+      setCategorySuggestError(err?.message || 'Could not suggest a category.');
+    } finally {
+      setSuggestingCategory(false);
+    }
   }
 
   useEffect(() => {
@@ -198,6 +260,7 @@ export default function AddEntryForm({
     setSplitAcrossMonths(false);
     setMonthsCount(6);
     setSplitAmong(membersList);
+    setQuickAddStatus({ state: 'idle', error: '' });
   }
 
   // Once the trip's withdrawals fully cover this Local Amount, a Cash
@@ -232,6 +295,42 @@ export default function AddEntryForm({
 
       {expanded && (
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          <div className="rounded-xl border border-ledger-green/20 bg-ledger-green/5 px-3.5 py-3">
+            <label htmlFor="quickAdd" className={labelClass}>
+              ✨ Quick Add - describe it in a sentence
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="quickAdd"
+                type="text"
+                value={quickAddText}
+                onChange={(e) => setQuickAddText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleQuickAdd();
+                  }
+                }}
+                className={inputClass}
+                placeholder="e.g. 1200 dinner with Kruti last night"
+              />
+              <button
+                type="button"
+                onClick={handleQuickAdd}
+                disabled={!quickAddText.trim() || quickAddStatus.state === 'loading'}
+                className="shrink-0 h-11 px-4 rounded-xl bg-ledger-green text-white font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
+              >
+                {quickAddStatus.state === 'loading' ? '...' : 'Parse'}
+              </button>
+            </div>
+            {quickAddStatus.state === 'done' && (
+              <p className="text-xs text-ledger-green mt-1.5">Filled in below - review and Add to Ledger.</p>
+            )}
+            {quickAddStatus.state === 'error' && (
+              <p className="text-xs text-stamp-red mt-1.5">{quickAddStatus.error}</p>
+            )}
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
             <div>
               <label htmlFor="amount" className={labelClass}>
@@ -342,9 +441,21 @@ export default function AddEntryForm({
             )}
 
             <div>
-              <label htmlFor="category" className={labelClass}>
-                Category
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label htmlFor="category" className={`${labelClass} mb-0`}>
+                  Category
+                </label>
+                {note.trim() && (
+                  <button
+                    type="button"
+                    onClick={handleSuggestCategory}
+                    disabled={suggestingCategory}
+                    className="text-xs font-semibold text-ledger-green hover:text-ledger-green/80 disabled:opacity-50"
+                  >
+                    {suggestingCategory ? 'Suggesting...' : '✨ Suggest'}
+                  </button>
+                )}
+              </div>
               <select
                 id="category"
                 value={category}
@@ -355,6 +466,9 @@ export default function AddEntryForm({
                   <option key={c} value={c}>{c}</option>
                 ))}
               </select>
+              {categorySuggestError && (
+                <p className="text-xs text-stamp-red mt-1">{categorySuggestError}</p>
+              )}
             </div>
 
             {ledger === 'travel' && (
