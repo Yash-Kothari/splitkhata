@@ -22,8 +22,12 @@ import {
 // the page, so it's reachable from anywhere without scrolling and doesn't
 // compete for space with Add Entry - z-40 keeps it below the app's
 // full-screen modals (Settings, Trip Settings, category drilldown), which
-// all use z-50.
-export default function AskQuestion({ entries, ledger, dbMembers = [], dbCategories = [], currentCurrency = 'INR' }) {
+// all use z-50. Mounted unconditionally (Household/Travel/Payments alike),
+// with the full household+travel entry set and every trip name, so a
+// question can name a trip that has nothing to do with the tab you're
+// actually on - currentContext just supplies the default scope for a
+// question that doesn't name one itself.
+export default function AskQuestion({ entries, dbMembers = [], dbCategories = [], trips = [], currentContext }) {
   const [open, setOpen] = useState(false);
   const [question, setQuestion] = useState('');
   const [thread, setThread] = useState([]);
@@ -35,10 +39,16 @@ export default function AskQuestion({ entries, ledger, dbMembers = [], dbCategor
     setThread((prev) => [...prev, { id, question: text, status: 'loading', answer: '', error: '' }]);
     setQuestion('');
     try {
-      const schema = buildAskQuestionSchema({ categories: dbCategories, members: dbMembers });
-      const prompt = buildAskQuestionPrompt(text, { categories: dbCategories, members: dbMembers, today: todayISO() });
+      const schema = buildAskQuestionSchema({ categories: dbCategories, members: dbMembers, trips });
+      const prompt = buildAskQuestionPrompt(text, {
+        categories: dbCategories,
+        members: dbMembers,
+        trips,
+        today: todayISO(),
+        currentContext,
+      });
       const { queries } = await generateStructured(prompt, schema);
-      const facts = queries.map((spec) => resolveAskQuery(spec, entries, ledger, dbMembers, currentCurrency));
+      const facts = queries.map((spec) => resolveAskQuery(spec, entries, dbMembers));
       const answer = await generateDigest(buildAskAnswerNarrationPrompt(text, facts));
       setThread((prev) => prev.map((t) => (t.id === id ? { ...t, status: 'done', answer } : t)));
     } catch (err) {

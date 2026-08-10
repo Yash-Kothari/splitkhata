@@ -538,11 +538,13 @@ Rules:
 // Constrains a natural-language question to a list of one or more fixed,
 // computable metrics - the AI's only job is figuring out WHAT the user is
 // asking for (breaking a compound question like "compare X and Y" into
-// several small queries) and which category/person/month each one refers
-// to, never computing an answer itself. resolveAskQuery below does the
-// actual math, with the same functions the rest of the app already uses
-// and trusts.
-export function buildAskQuestionSchema({ categories, members }) {
+// several small queries), WHICH ledger/trip each one is about, and which
+// category/person/month it refers to - never computing an answer itself.
+// resolveAskQuery below does the actual math, with the same functions the
+// rest of the app already uses and trusts. scope+trip make the chat usable
+// from anywhere (e.g. asking about a trip while sitting on the Payments
+// tab) instead of only ever answering about whatever's on screen.
+export function buildAskQuestionSchema({ categories, members, trips }) {
   return {
     type: 'object',
     properties: {
@@ -553,6 +555,8 @@ export function buildAskQuestionSchema({ categories, members }) {
         items: {
           type: 'object',
           properties: {
+            scope: { type: 'string', enum: ['household', 'travel'] },
+            trip: { type: 'string', enum: trips },
             metric: {
               type: 'string',
               enum: [
@@ -574,7 +578,7 @@ export function buildAskQuestionSchema({ categories, members }) {
               description: 'How many results for biggest_expense/smallest_expense, e.g. 3 for "top 3". Omit for just 1.',
             },
           },
-          required: ['metric'],
+          required: ['metric', 'scope'],
         },
       },
     },
@@ -582,12 +586,14 @@ export function buildAskQuestionSchema({ categories, members }) {
   };
 }
 
-export function buildAskQuestionPrompt(question, { categories, members, today }) {
-  return `Turn this question about an expense ledger into one or more structured queries. Today's date is ${today}. Break a compound question (e.g. "compare X and Y", "highest and lowest of each") into a separate query per distinct fact needed - don't try to cram multiple facts into one query.
+export function buildAskQuestionPrompt(question, { categories, members, trips, today, currentContext }) {
+  return `Turn this question about an expense ledger into one or more structured queries. Today's date is ${today}. You are currently viewing: ${currentContext}. Break a compound question (e.g. "compare X and Y", "highest and lowest of each") into a separate query per distinct fact needed - don't try to cram multiple facts into one query.
 
 "${question}"
 
 Rules:
+- scope: "household" or "travel" - which ledger this query is about. If the question doesn't name a specific trip or say "household", default to what's currently being viewed (above) rather than guessing.
+- trip: only when scope is "travel" and the question names a specific trip (e.g. "my Japan trip") - match it to the closest name in the allowed list (${trips.length > 0 ? trips.join(', ') : 'no trips yet'}) even if not spelled exactly the same. Omit for "travel overall, across every trip".
 - metric:
   - "total_spend" - overall total spend, optionally scoped to a month.
   - "category_total" - total for one specific category (needs category).
@@ -604,57 +610,70 @@ Rules:
 }
 
 // Resolves one query spec (an item from buildAskQuestionSchema's queries
-// array) against the real entries, using the same filters and aggregation
-// functions the rest of the app already uses (isCountableSpend,
-// computeMemberTotals, computeBalance/computeSettlements) - never the AI's
-// own arithmetic, so it can't report a figure that doesn't match the
-// ledger. Called once per query when a question decomposes into several.
-export function resolveAskQuery(spec, entries, ledger, members, currency = 'INR') {
-  const targetLedger = ledger ? normalizeLedger(ledger) : null;
+// array) against the full entry set - every household AND travel entry,
+// across every trip, since the chat is reachable from anywhere and a
+// question can name a trip that has nothing to do with whatever's
+// currently on screen. scope/trip narrow it down first, then the same
+// filters and aggregation functions the rest of the app already uses
+// (isCountableSpend, computeMemberTotals, computeBalance/
+// computeSettlements) do the actual math - never the AI's own arithmetic,
+// so it can't report a figure that doesn't match the ledger. Called once
+// per query when a question decomposes into several. Money is always
+// formatted in INR - that's the only currency amount/e.amount is ever
+// denominated in (a trip's localAmount is reference-only, never what
+// drives a total), so there's no per-trip currency to thread through here.
+export function resolveAskQuery(spec, allEntries, members) {
+  const currency = 'INR';
+  const scope = normalizeLedger(spec.scope || 'household');
   const month = spec.month || null;
   const scopeLabel = month ? formatMonthLabel(month) : 'all time';
-  const countable = entries.filter((e) => isCountableSpend(e, month, targetLedger));
+  let scoped = allEntries.filter((e) => normalizeLedger(e.ledger) === scope);
+  if (scope === 'travel' && spec.trip) {
+    scoped = scoped.filter((e) => e.tripName === spec.trip);
+  }
+  const tripLabel = scope === 'travel' && spec.trip ? ` (${spec.trip})` : '';
+  const countable = scoped.filter((e) => isCountableSpend(e, month, scope));
 
   switch (spec.metric) {
     case 'total_spend': {
       const total = countable.reduce((sum, e) => sum + Number(e.amount || 0), 0);
-      return `Total spend (${scopeLabel}): ${formatCurrency(total, currency)}.`;
+      return `Total spend${tripLabel} (${scopeLabel}): ${formatCurrency(total, currency)}.`;
     }
     case 'category_total': {
       if (!spec.category) return "I couldn't tell which category you meant.";
       const total = countable
         .filter((e) => e.category === spec.category)
         .reduce((sum, e) => sum + Number(e.amount || 0), 0);
-      return `${spec.category} (${scopeLabel}): ${formatCurrency(total, currency)}.`;
+      return `${spec.category}${tripLabel} (${scopeLabel}): ${formatCurrency(total, currency)}.`;
     }
     case 'member_total': {
       if (!spec.member) return "I couldn't tell which person you meant.";
-      const scoped = month ? entries.filter((e) => getMonthKey(e.date) === month) : entries;
-      const totals = computeMemberTotals(scoped, members);
-      return `${spec.member} (${scopeLabel}): ${formatCurrency(totals[spec.member] || 0, currency)}.`;
+      const monthScoped = month ? scoped.filter((e) => getMonthKey(e.date) === month) : scoped;
+      const totals = computeMemberTotals(monthScoped, members);
+      return `${spec.member}${tripLabel} (${scopeLabel}): ${formatCurrency(totals[spec.member] || 0, currency)}.`;
     }
     case 'balance': {
-      const balanceEntries = targetLedger === 'travel' ? excludeCashSpend(entries) : entries;
+      const balanceEntries = scope === 'travel' ? excludeCashSpend(scoped) : scoped;
       if (members.length > 2) {
-        const settlements = computeSettlements(balanceEntries, ledger, members);
+        const settlements = computeSettlements(balanceEntries, scope, members);
         return settlements.length === 0
-          ? 'Everyone is settled up.'
+          ? `Everyone is settled up${tripLabel}.`
           : `${settlements.map((s) => `${s.debtor} owes ${s.creditor} ${formatCurrency(s.amount, currency)}`).join('; ')}.`;
       }
-      const balance = computeBalance(balanceEntries, ledger, members);
+      const balance = computeBalance(balanceEntries, scope, members);
       return balance.status === 'settled'
-        ? 'Everyone is settled up.'
+        ? `Everyone is settled up${tripLabel}.`
         : `${balance.debtor} owes ${balance.creditor} ${formatCurrency(balance.amount, currency)}.`;
     }
     case 'entry_count': {
-      return `${countable.length} ${countable.length === 1 ? 'entry' : 'entries'} (${scopeLabel}).`;
+      return `${countable.length} ${countable.length === 1 ? 'entry' : 'entries'}${tripLabel} (${scopeLabel}).`;
     }
     case 'biggest_expense':
     case 'smallest_expense': {
       const pool = spec.category ? countable.filter((e) => e.category === spec.category) : countable;
       const label = spec.metric === 'biggest_expense' ? 'Biggest' : 'Smallest';
       const scopedIn = spec.category ? ` in ${spec.category}` : '';
-      if (pool.length === 0) return `No expenses recorded${scopedIn} (${scopeLabel}).`;
+      if (pool.length === 0) return `No expenses recorded${scopedIn}${tripLabel} (${scopeLabel}).`;
       // Clamped to a sane range - "top 3" is a normal ask, "top 500" isn't
       // and would just dump the whole ledger into one narration prompt.
       const count = Math.min(10, Math.max(1, Math.round(spec.count) || 1));
@@ -665,16 +684,16 @@ export function resolveAskQuery(spec, entries, ledger, members, currency = 'INR'
       if (picks.length === 1) {
         const picked = picks[0];
         const categoryPart = spec.category ? '' : ` on ${picked.category}`;
-        return `${label} expense${scopedIn} (${scopeLabel}): ${formatCurrency(picked.amount, currency)}${categoryPart}${picked.note ? ` (${picked.note})` : ''}, paid by ${picked.payer}.`;
+        return `${label} expense${scopedIn}${tripLabel} (${scopeLabel}): ${formatCurrency(picked.amount, currency)}${categoryPart}${picked.note ? ` (${picked.note})` : ''}, paid by ${picked.payer}.`;
       }
       const lines = picks.map((e, i) => {
         const categoryPart = spec.category ? '' : ` on ${e.category}`;
         return `${i + 1}. ${formatCurrency(e.amount, currency)}${categoryPart}${e.note ? ` (${e.note})` : ''}, paid by ${e.payer}`;
       });
-      return `Top ${picks.length} ${label.toLowerCase()} expenses${scopedIn} (${scopeLabel}): ${lines.join('; ')}.`;
+      return `Top ${picks.length} ${label.toLowerCase()} expenses${scopedIn}${tripLabel} (${scopeLabel}): ${lines.join('; ')}.`;
     }
     case 'monthly_trend': {
-      const monthly = getLast6MonthsData(entries, ledger);
+      const monthly = getLast6MonthsData(scoped, scope);
       return `${monthly.map((m) => `${m.label}: ${formatCurrency(m.total, currency)}`).join(', ')}.`;
     }
     default:

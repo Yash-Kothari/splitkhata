@@ -506,30 +506,36 @@ test('buildQuickAddPrompt includes the free text, today\'s date, and the member 
   assert.match(prompt, /Yash, Kruti/);
 });
 
-test('buildAskQuestionSchema wraps a per-item schema in a queries array, constraining metric/category/member', () => {
-  const schema = buildAskQuestionSchema({ categories: ['Food', 'Hotel'], members: ['Yash', 'Kruti'] });
+test('buildAskQuestionSchema wraps a per-item schema in a queries array, constraining scope/trip/metric/category/member', () => {
+  const schema = buildAskQuestionSchema({ categories: ['Food', 'Hotel'], members: ['Yash', 'Kruti'], trips: ['Japan', 'Vietnam'] });
   assert.deepEqual(schema.required, ['queries']);
   assert.equal(schema.properties.queries.type, 'array');
   const item = schema.properties.queries.items;
+  assert.deepEqual(item.properties.scope.enum, ['household', 'travel']);
+  assert.deepEqual(item.properties.trip.enum, ['Japan', 'Vietnam']);
   assert.deepEqual(item.properties.metric.enum, [
     'total_spend', 'category_total', 'member_total', 'balance', 'entry_count',
     'biggest_expense', 'smallest_expense', 'monthly_trend',
   ]);
   assert.deepEqual(item.properties.category.enum, ['Food', 'Hotel']);
   assert.deepEqual(item.properties.member.enum, ['Yash', 'Kruti']);
-  assert.deepEqual(item.required, ['metric']);
+  assert.deepEqual(item.required, ['metric', 'scope']);
 });
 
-test('buildAskQuestionPrompt includes the question, today\'s date, and both allowed lists', () => {
+test('buildAskQuestionPrompt includes the question, today\'s date, current context, and every allowed list', () => {
   const prompt = buildAskQuestionPrompt('how much did we spend on Food this month?', {
     categories: ['Food', 'Hotel'],
     members: ['Yash', 'Kruti'],
+    trips: ['Japan', 'Vietnam'],
     today: '2026-08-10',
+    currentContext: 'Payments tab (no single ledger in view - default to household)',
   });
   assert.match(prompt, /how much did we spend on Food this month\?/);
   assert.match(prompt, /2026-08-10/);
+  assert.match(prompt, /Payments tab \(no single ledger in view - default to household\)/);
   assert.match(prompt, /Food, Hotel/);
   assert.match(prompt, /Yash, Kruti/);
+  assert.match(prompt, /Japan, Vietnam/);
 });
 
 test('resolveAskQuery: total_spend sums countable entries and respects a month filter', () => {
@@ -539,10 +545,33 @@ test('resolveAskQuery: total_spend sums countable entries and respects a month f
     { amount: 50, category: 'Food', date: '2026-07-01', ledger: 'household', splitType: 'shared' },
     { amount: 999, category: 'Transfer', date: '2026-08-01', ledger: 'household', splitType: 'settlement' },
   ];
-  const all = resolveAskQuery({ metric: 'total_spend' }, entries, 'household', PERSONS);
+  const all = resolveAskQuery({ metric: 'total_spend', scope: 'household' }, entries, PERSONS);
   assert.match(all, /₹350\.00/);
-  const august = resolveAskQuery({ metric: 'total_spend', month: '2026-08' }, entries, 'household', PERSONS);
+  const august = resolveAskQuery({ metric: 'total_spend', scope: 'household', month: '2026-08' }, entries, PERSONS);
   assert.match(august, /₹300\.00/);
+});
+
+test('resolveAskQuery: scope picks out only that ledger\'s entries, even from a combined household+travel array', () => {
+  const entries = [
+    { amount: 100, category: 'Groceries', date: '2026-08-01', ledger: 'household', splitType: 'shared' },
+    { amount: 5000, category: 'Flight', date: '2026-08-01', ledger: 'travel', tripName: 'Japan', splitType: 'shared' },
+  ];
+  const household = resolveAskQuery({ metric: 'total_spend', scope: 'household' }, entries, PERSONS);
+  assert.match(household, /₹100\.00/);
+  const travel = resolveAskQuery({ metric: 'total_spend', scope: 'travel' }, entries, PERSONS);
+  assert.match(travel, /₹5,000\.00/);
+});
+
+test('resolveAskQuery: trip narrows travel scope to just that trip, regardless of which ledger/tab is currently open', () => {
+  const entries = [
+    { amount: 5000, category: 'Flight', date: '2026-08-01', ledger: 'travel', tripName: 'Japan', splitType: 'shared' },
+    { amount: 3000, category: 'Hotel', date: '2026-08-01', ledger: 'travel', tripName: 'Vietnam', splitType: 'shared' },
+  ];
+  const japan = resolveAskQuery({ metric: 'total_spend', scope: 'travel', trip: 'Japan' }, entries, PERSONS);
+  assert.match(japan, /₹5,000\.00/);
+  assert.match(japan, /\(Japan\)/);
+  const vietnam = resolveAskQuery({ metric: 'total_spend', scope: 'travel', trip: 'Vietnam' }, entries, PERSONS);
+  assert.match(vietnam, /₹3,000\.00/);
 });
 
 test('resolveAskQuery: category_total only sums the matching category', () => {
@@ -551,7 +580,7 @@ test('resolveAskQuery: category_total only sums the matching category', () => {
     { amount: 200, category: 'Hotel', date: '2026-08-05', ledger: 'household', splitType: 'shared' },
     { amount: 40, category: 'Food', date: '2026-08-10', ledger: 'household', splitType: 'shared' },
   ];
-  const answer = resolveAskQuery({ metric: 'category_total', category: 'Food' }, entries, 'household', PERSONS);
+  const answer = resolveAskQuery({ metric: 'category_total', scope: 'household', category: 'Food' }, entries, PERSONS);
   assert.match(answer, /₹140\.00/);
 });
 
@@ -559,16 +588,16 @@ test('resolveAskQuery: member_total matches computeMemberTotals', () => {
   const entries = [
     { amount: 200, payer: 'Yash', split: true, splitType: 'shared', date: '2026-08-01', ledger: 'household' },
   ];
-  const answer = resolveAskQuery({ metric: 'member_total', member: 'Yash' }, entries, 'household', PERSONS);
+  const answer = resolveAskQuery({ metric: 'member_total', scope: 'household', member: 'Yash' }, entries, PERSONS);
   assert.match(answer, /₹100\.00/);
 });
 
 test('resolveAskQuery: balance reports "settled up" or the real debtor/creditor for a 2-person ledger', () => {
-  const settled = resolveAskQuery({ metric: 'balance' }, [], 'household', PERSONS);
+  const settled = resolveAskQuery({ metric: 'balance', scope: 'household' }, [], PERSONS);
   assert.equal(settled, 'Everyone is settled up.');
 
   const entries = [{ amount: 600, payer: 'Yash', split: true, splitType: 'shared', ledger: 'household' }];
-  const owed = resolveAskQuery({ metric: 'balance' }, entries, 'household', PERSONS);
+  const owed = resolveAskQuery({ metric: 'balance', scope: 'household' }, entries, PERSONS);
   assert.match(owed, /Kruti owes Yash ₹300\.00/);
 });
 
@@ -577,7 +606,7 @@ test('resolveAskQuery: balance lists every real debt for a 3+ person (guest) led
   const entries = [
     { amount: 300, payer: 'Yash', split: true, splitType: 'shared', ledger: 'travel' },
   ];
-  const answer = resolveAskQuery({ metric: 'balance' }, entries, 'travel', members);
+  const answer = resolveAskQuery({ metric: 'balance', scope: 'travel' }, entries, members);
   assert.match(answer, /owes Yash/);
 });
 
@@ -587,7 +616,7 @@ test('resolveAskQuery: entry_count excludes settlements/withdrawals/rollups', ()
     { amount: 200, category: 'Hotel', date: '2026-08-01', ledger: 'household', splitType: 'shared' },
     { amount: 999, date: '2026-08-01', ledger: 'household', splitType: 'settlement' },
   ];
-  const answer = resolveAskQuery({ metric: 'entry_count' }, entries, 'household', PERSONS);
+  const answer = resolveAskQuery({ metric: 'entry_count', scope: 'household' }, entries, PERSONS);
   assert.match(answer, /^2 entries/);
 });
 
@@ -596,7 +625,7 @@ test('resolveAskQuery: biggest_expense picks the largest countable entry', () =>
     { amount: 100, category: 'Food', date: '2026-08-01', ledger: 'household', splitType: 'shared', payer: 'Yash' },
     { amount: 500, category: 'Hotel', date: '2026-08-05', ledger: 'household', splitType: 'shared', payer: 'Kruti', note: 'Resort' },
   ];
-  const answer = resolveAskQuery({ metric: 'biggest_expense' }, entries, 'household', PERSONS);
+  const answer = resolveAskQuery({ metric: 'biggest_expense', scope: 'household' }, entries, PERSONS);
   assert.match(answer, /₹500\.00/);
   assert.match(answer, /Hotel/);
   assert.match(answer, /Kruti/);
@@ -607,7 +636,7 @@ test('resolveAskQuery: smallest_expense picks the smallest countable entry', () 
     { amount: 100, category: 'Food', date: '2026-08-01', ledger: 'household', splitType: 'shared', payer: 'Yash' },
     { amount: 500, category: 'Hotel', date: '2026-08-05', ledger: 'household', splitType: 'shared', payer: 'Kruti' },
   ];
-  const answer = resolveAskQuery({ metric: 'smallest_expense' }, entries, 'household', PERSONS);
+  const answer = resolveAskQuery({ metric: 'smallest_expense', scope: 'household' }, entries, PERSONS);
   assert.match(answer, /₹100\.00/);
   assert.match(answer, /Food/);
   assert.match(answer, /Yash/);
@@ -619,10 +648,10 @@ test('resolveAskQuery: biggest_expense/smallest_expense scope to a category when
     { amount: 40, category: 'Food', date: '2026-08-02', ledger: 'household', splitType: 'shared', payer: 'Kruti' },
     { amount: 500, category: 'Hotel', date: '2026-08-05', ledger: 'household', splitType: 'shared', payer: 'Kruti' },
   ];
-  const biggestFood = resolveAskQuery({ metric: 'biggest_expense', category: 'Food' }, entries, 'household', PERSONS);
+  const biggestFood = resolveAskQuery({ metric: 'biggest_expense', scope: 'household', category: 'Food' }, entries, PERSONS);
   assert.match(biggestFood, /₹100\.00/);
   assert.doesNotMatch(biggestFood, /on Food/);
-  const smallestFood = resolveAskQuery({ metric: 'smallest_expense', category: 'Food' }, entries, 'household', PERSONS);
+  const smallestFood = resolveAskQuery({ metric: 'smallest_expense', scope: 'household', category: 'Food' }, entries, PERSONS);
   assert.match(smallestFood, /₹40\.00/);
 });
 
@@ -633,7 +662,7 @@ test('resolveAskQuery: biggest_expense with count returns that many, ranked, big
     { amount: 250, category: 'Transport', date: '2026-08-03', ledger: 'household', splitType: 'shared', payer: 'Yash' },
     { amount: 10, category: 'Food', date: '2026-08-04', ledger: 'household', splitType: 'shared', payer: 'Kruti' },
   ];
-  const answer = resolveAskQuery({ metric: 'biggest_expense', count: 3 }, entries, 'household', PERSONS);
+  const answer = resolveAskQuery({ metric: 'biggest_expense', scope: 'household', count: 3 }, entries, PERSONS);
   assert.match(answer, /Top 3 biggest expenses/);
   const iHotel = answer.indexOf('₹500.00');
   const iTransport = answer.indexOf('₹250.00');
@@ -647,12 +676,18 @@ test('resolveAskQuery: biggest_expense count is clamped to the available pool an
     { amount: 100, category: 'Food', date: '2026-08-01', ledger: 'household', splitType: 'shared', payer: 'Yash' },
     { amount: 50, category: 'Food', date: '2026-08-02', ledger: 'household', splitType: 'shared', payer: 'Kruti' },
   ];
-  const answer = resolveAskQuery({ metric: 'biggest_expense', count: 500 }, entries, 'household', PERSONS);
+  const answer = resolveAskQuery({ metric: 'biggest_expense', scope: 'household', count: 500 }, entries, PERSONS);
   assert.match(answer, /Top 2 biggest expenses/);
 });
 
+test('resolveAskQuery: defaults to household scope when a spec somehow omits it', () => {
+  const entries = [{ amount: 100, category: 'Food', date: '2026-08-01', ledger: 'household', splitType: 'shared' }];
+  const answer = resolveAskQuery({ metric: 'total_spend' }, entries, PERSONS);
+  assert.match(answer, /₹100\.00/);
+});
+
 test('resolveAskQuery: unknown metric falls back to a plain message instead of throwing', () => {
-  const answer = resolveAskQuery({ metric: 'nonsense' }, [], 'household', PERSONS);
+  const answer = resolveAskQuery({ metric: 'nonsense', scope: 'household' }, [], PERSONS);
   assert.equal(answer, "I couldn't understand that question.");
 });
 

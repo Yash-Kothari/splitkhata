@@ -128,6 +128,8 @@ export default function App() {
   });
   const [entries, setEntries] = useState([]);
   const [paymentsTravelEntries, setPaymentsTravelEntries] = useState([]);
+  const [askHouseholdEntries, setAskHouseholdEntries] = useState([]);
+  const [askTravelEntries, setAskTravelEntries] = useState([]);
   const [dbCategories, setDbCategories] = useState({ household: [], travel: [], rawDocs: [] });
   const [dbCurrencies, setDbCurrencies] = useState({ currencies: [], rawDocs: [] });
   const [dbMembers, setDbMembers] = useState({ members: [], rawDocs: [] });
@@ -299,6 +301,32 @@ export default function App() {
     );
   }, [activeLedger, deviceName, currentUser]);
 
+  // Ask (the floating chat) is reachable from every tab, so it needs both
+  // ledgers' full data at all times - not just whichever one `entries`
+  // above happens to be scoped to right now - so a question can name a
+  // trip that has nothing to do with the tab you're actually on.
+  useEffect(() => {
+    if (!deviceName || (isFirebaseConfigured() && !isAllowedUser(currentUser))) {
+      setAskHouseholdEntries([]);
+      setAskTravelEntries([]);
+      return undefined;
+    }
+    const unsubHousehold = subscribeToExpenses(
+      'household',
+      (data) => setAskHouseholdEntries(data),
+      (err) => console.warn('Ask household-entries sync warning:', err),
+    );
+    const unsubTravel = subscribeToExpenses(
+      'travel',
+      (data) => setAskTravelEntries(data),
+      (err) => console.warn('Ask travel-entries sync warning:', err),
+    );
+    return () => {
+      unsubHousehold();
+      unsubTravel();
+    };
+  }, [deviceName, currentUser]);
+
   const availableMonths = getAvailableMonths(entries);
 
   useEffect(() => {
@@ -338,6 +366,18 @@ export default function App() {
   const activeLedgerMembersList = activeLedger === 'travel' && currentTrip?.guests?.length
     ? [...activeMembersList, ...currentTrip.guests]
     : activeMembersList;
+
+  // Everything Ask needs to answer a question about ANY ledger/trip,
+  // regardless of which tab is actually open - see the askHouseholdEntries/
+  // askTravelEntries subscriptions above.
+  const askAllEntries = [...askHouseholdEntries, ...askTravelEntries];
+  const askCategories = Array.from(new Set([...dbCategories.household, ...dbCategories.travel]));
+  const askTripNames = dbTrips.map((t) => t.name);
+  const askCurrentContext = activeLedger === 'travel'
+    ? (selectedTrip ? `Travel ledger, trip: ${selectedTrip}` : 'Travel ledger (no specific trip selected)')
+    : activeLedger === 'payments'
+      ? 'Payments tab (no single ledger in view - default to household)'
+      : 'Household ledger';
 
   const pinConfig = getPinConfig();
 
@@ -544,6 +584,14 @@ export default function App() {
         </div>
 
         <main className="px-3 sm:px-4 max-w-5xl mx-auto space-y-4 sm:space-y-6">
+          <AskQuestion
+            entries={askAllEntries}
+            dbMembers={activeMembersList}
+            dbCategories={askCategories}
+            trips={askTripNames}
+            currentContext={askCurrentContext}
+          />
+
           {activeLedger === 'payments' && (
             <PaymentsCenter
               entries={entries}
@@ -610,14 +658,6 @@ export default function App() {
                 currentCurrency={currentCurrency}
                 dbPaymentMethods={activePaymentMethodsList}
                 tripEntries={tripEntries}
-              />
-
-              <AskQuestion
-                entries={tripEntries}
-                ledger={activeLedger}
-                dbMembers={activeLedgerMembersList}
-                dbCategories={currentDbCategories}
-                currentCurrency={currentCurrency}
               />
 
               <div className={activeLedger === 'travel' ? '' : 'grid grid-cols-1 lg:grid-cols-2 gap-6'}>
