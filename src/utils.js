@@ -568,6 +568,7 @@ export function buildAskQuestionSchema({ categories, members, trips }) {
                 'biggest_expense',
                 'smallest_expense',
                 'monthly_trend',
+                'trip_comparison',
               ],
             },
             category: { type: 'string', enum: categories },
@@ -603,6 +604,7 @@ Rules:
   - "biggest_expense" - the largest expense(s), optionally scoped to a category and/or month.
   - "smallest_expense" - the smallest expense(s), optionally scoped to a category and/or month.
   - "monthly_trend" - spend total for each of the last 6 months.
+  - "trip_comparison" - breaks spend down per trip (optionally scoped to one category), ranked highest first. Use this - not category_total - whenever the question asks "which trip", "compare trips", or wants a per-trip breakdown rather than one combined number. Ignores trip/scope (always compares across every trip).
 - category: from the allowed list (${categories.join(', ')}) - only when relevant to that query.
 - member: from the allowed list (${members.join(', ')}) - only when relevant to that query.
 - month: resolve any month/date mentioned into YYYY-MM format against today's date. Omit entirely if that query isn't time-scoped.
@@ -695,6 +697,28 @@ export function resolveAskQuery(spec, allEntries, members) {
     case 'monthly_trend': {
       const monthly = getLast6MonthsData(scoped, scope);
       return `${monthly.map((m) => `${m.label}: ${formatCurrency(m.total, currency)}`).join(', ')}.`;
+    }
+    case 'trip_comparison': {
+      // Deliberately ignores scope/trip above (scoped/countable) - the
+      // whole point is comparing across every trip, so it re-derives its
+      // own travel-only slice from allEntries instead.
+      const travelEntries = allEntries.filter((e) => normalizeLedger(e.ledger) === 'travel');
+      const tripNames = Array.from(new Set(travelEntries.map((e) => e.tripName).filter(Boolean)));
+      const categoryPart = spec.category ? ` on ${spec.category}` : '';
+      if (tripNames.length === 0) return `No trips recorded yet.`;
+      const perTrip = tripNames
+        .map((tripName) => {
+          const total = travelEntries
+            .filter((e) => e.tripName === tripName && isCountableSpend(e, month, 'travel') && (!spec.category || e.category === spec.category))
+            .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+          return { tripName, total };
+        })
+        .filter((t) => t.total > 0)
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 10);
+      if (perTrip.length === 0) return `No${categoryPart} expenses recorded across any trip (${scopeLabel}).`;
+      const lines = perTrip.map((t) => `${t.tripName}: ${formatCurrency(t.total, currency)}`);
+      return `Spend${categoryPart} by trip (${scopeLabel}): ${lines.join(', ')}.`;
     }
     default:
       return "I couldn't understand that question.";

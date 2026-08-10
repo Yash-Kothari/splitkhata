@@ -515,7 +515,7 @@ test('buildAskQuestionSchema wraps a per-item schema in a queries array, constra
   assert.deepEqual(item.properties.trip.enum, ['Japan', 'Vietnam']);
   assert.deepEqual(item.properties.metric.enum, [
     'total_spend', 'category_total', 'member_total', 'balance', 'entry_count',
-    'biggest_expense', 'smallest_expense', 'monthly_trend',
+    'biggest_expense', 'smallest_expense', 'monthly_trend', 'trip_comparison',
   ]);
   assert.deepEqual(item.properties.category.enum, ['Food', 'Hotel']);
   assert.deepEqual(item.properties.member.enum, ['Yash', 'Kruti']);
@@ -684,6 +684,37 @@ test('resolveAskQuery: defaults to household scope when a spec somehow omits it'
   const entries = [{ amount: 100, category: 'Food', date: '2026-08-01', ledger: 'household', splitType: 'shared' }];
   const answer = resolveAskQuery({ metric: 'total_spend' }, entries, PERSONS);
   assert.match(answer, /₹100\.00/);
+});
+
+test('resolveAskQuery: trip_comparison ranks every trip highest first, scoped to a category', () => {
+  const entries = [
+    { amount: 3000, category: 'Food', date: '2026-08-01', ledger: 'travel', tripName: 'Japan', splitType: 'shared' },
+    { amount: 1000, category: 'Food', date: '2026-08-01', ledger: 'travel', tripName: 'Vietnam', splitType: 'shared' },
+    { amount: 5000, category: 'Flight', date: '2026-08-01', ledger: 'travel', tripName: 'Japan', splitType: 'shared' },
+    { amount: 2000, category: 'Food', date: '2026-08-01', ledger: 'travel', tripName: 'Taiwan', splitType: 'shared' },
+  ];
+  const answer = resolveAskQuery({ metric: 'trip_comparison', scope: 'travel', category: 'Food' }, entries, PERSONS);
+  assert.match(answer, /Spend on Food by trip/);
+  const iJapan = answer.indexOf('Japan: ₹3,000.00');
+  const iTaiwan = answer.indexOf('Taiwan: ₹2,000.00');
+  const iVietnam = answer.indexOf('Vietnam: ₹1,000.00');
+  assert.ok(iJapan >= 0 && iTaiwan > iJapan && iVietnam > iTaiwan, 'expected Japan, Taiwan, Vietnam in that order');
+  assert.doesNotMatch(answer, /₹5,000\.00/, 'Flight spend should not leak into a Food-scoped comparison');
+});
+
+test('resolveAskQuery: trip_comparison ignores a trip filter, since comparing across trips is the whole point', () => {
+  const entries = [
+    { amount: 100, category: 'Food', date: '2026-08-01', ledger: 'travel', tripName: 'Japan', splitType: 'shared' },
+    { amount: 200, category: 'Food', date: '2026-08-01', ledger: 'travel', tripName: 'Vietnam', splitType: 'shared' },
+  ];
+  const answer = resolveAskQuery({ metric: 'trip_comparison', scope: 'travel', trip: 'Japan' }, entries, PERSONS);
+  assert.match(answer, /Japan: ₹100\.00/);
+  assert.match(answer, /Vietnam: ₹200\.00/);
+});
+
+test('resolveAskQuery: trip_comparison reports no trips when there are none', () => {
+  const answer = resolveAskQuery({ metric: 'trip_comparison', scope: 'travel' }, [], PERSONS);
+  assert.equal(answer, 'No trips recorded yet.');
 });
 
 test('resolveAskQuery: unknown metric falls back to a plain message instead of throwing', () => {
