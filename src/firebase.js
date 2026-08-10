@@ -1,6 +1,4 @@
 import { initializeApp } from 'firebase/app';
-import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
-import { getAI, GoogleAIBackend, getGenerativeModel } from 'firebase/ai';
 import {
   getAuth,
   GoogleAuthProvider,
@@ -99,8 +97,7 @@ let tripsRef = null;
 let cashMovementsRef = null;
 let paymentMethodsRef = null;
 let authInstance = null;
-let aiInstance = null;
-let aiModel = null;
+let firebaseAppInstance = null;
 
 if (isFirebaseConfigured()) {
   try {
@@ -112,9 +109,9 @@ if (isFirebaseConfigured()) {
       messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
       appId: import.meta.env.VITE_FIREBASE_APP_ID,
     };
-    const app = initializeApp(firebaseConfig);
-    authInstance = getAuth(app);
-    dbInstance = getFirestore(app);
+    firebaseAppInstance = initializeApp(firebaseConfig);
+    authInstance = getAuth(firebaseAppInstance);
+    dbInstance = getFirestore(firebaseAppInstance);
     enableIndexedDbPersistence(dbInstance).catch((err) => {
       if (err.code !== 'failed-precondition' && err.code !== 'unimplemented') {
         console.warn('Firestore persistence error:', err);
@@ -127,19 +124,6 @@ if (isFirebaseConfigured()) {
     tripsRef = collection(dbInstance, 'trips');
     cashMovementsRef = collection(dbInstance, 'cashMovements');
     paymentMethodsRef = collection(dbInstance, 'paymentMethods');
-
-    if (isAiConfigured()) {
-      initializeAppCheck(app, {
-        provider: new ReCaptchaV3Provider(import.meta.env.VITE_RECAPTCHA_SITE_KEY),
-        isTokenAutoRefreshEnabled: true,
-      });
-      aiInstance = getAI(app, { backend: new GoogleAIBackend() });
-      // "-latest" alias, not a pinned version - Google retires versioned
-      // model IDs for new usage on a rolling basis (gemini-2.5-flash just
-      // did), and this always resolves to the current recommended flash
-      // model instead of needing a code change each time that happens.
-      aiModel = getGenerativeModel(aiInstance, { model: 'gemini-flash-latest' });
-    }
   } catch (err) {
     console.warn('Firebase initialization failed, falling back to local database:', err);
   }
@@ -147,12 +131,42 @@ if (isFirebaseConfigured()) {
 
 export const db = dbInstance;
 
+// firebase/ai and firebase/app-check pull in a meaningful chunk of extra
+// code that most page loads never touch (most visits are plain ledger
+// entry, not an AI feature) - dynamic import() here means Vite ships them
+// as their own chunk, fetched only the first time an AI feature is
+// actually used, not on every app load. Memoized so App Check and the
+// model only ever get initialized once, no matter how many AI calls happen.
+let aiInitPromise = null;
+function ensureAi() {
+  if (!isAiConfigured()) return Promise.resolve(null);
+  if (!aiInitPromise) {
+    aiInitPromise = Promise.all([import('firebase/app-check'), import('firebase/ai')]).then(
+      ([{ initializeAppCheck, ReCaptchaV3Provider }, { getAI, GoogleAIBackend, getGenerativeModel }]) => {
+        initializeAppCheck(firebaseAppInstance, {
+          provider: new ReCaptchaV3Provider(import.meta.env.VITE_RECAPTCHA_SITE_KEY),
+          isTokenAutoRefreshEnabled: true,
+        });
+        const ai = getAI(firebaseAppInstance, { backend: new GoogleAIBackend() });
+        // "-latest" alias, not a pinned version - Google retires versioned
+        // model IDs for new usage on a rolling basis (gemini-2.5-flash just
+        // did), and this always resolves to the current recommended flash
+        // model instead of needing a code change each time that happens.
+        const model = getGenerativeModel(ai, { model: 'gemini-flash-latest' });
+        return { ai, model, getGenerativeModel };
+      },
+    );
+  }
+  return aiInitPromise;
+}
+
 // Narrates an already-computed summary (see buildDigestPrompt in utils.js)
 // into plain English - the app does the math, Gemini just writes it up, so
 // there's no risk of the AI inventing numbers that don't match the ledger.
 export async function generateDigest(prompt) {
-  if (!aiModel) throw new Error('AI Logic is not configured yet - add VITE_RECAPTCHA_SITE_KEY to .env.');
-  const result = await aiModel.generateContent(prompt);
+  const ctx = await ensureAi();
+  if (!ctx) throw new Error('AI Logic is not configured yet - add VITE_RECAPTCHA_SITE_KEY to .env.');
+  const result = await ctx.model.generateContent(prompt);
   return result.response.text();
 }
 
@@ -165,8 +179,9 @@ export async function generateDigest(prompt) {
 // and members vary by ledger/trip) - getGenerativeModel is a cheap local
 // client, not a network call.
 export async function generateStructured(prompt, schema) {
-  if (!aiInstance) throw new Error('AI Logic is not configured yet - add VITE_RECAPTCHA_SITE_KEY to .env.');
-  const jsonModel = getGenerativeModel(aiInstance, {
+  const ctx = await ensureAi();
+  if (!ctx) throw new Error('AI Logic is not configured yet - add VITE_RECAPTCHA_SITE_KEY to .env.');
+  const jsonModel = ctx.getGenerativeModel(ctx.ai, {
     model: 'gemini-flash-latest',
     generationConfig: { responseMimeType: 'application/json', responseSchema: schema },
   });
