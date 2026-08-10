@@ -80,7 +80,7 @@ export default function AskQuestion({ entries, ledger, dbMembers = [], dbCategor
           <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 min-h-24">
             {thread.length === 0 ? (
               <p className="text-xs text-muted-text">
-                Try "compare Food and Groceries this month" or "top 3 biggest expenses".
+                Try "Top 3 Biggest Expense of the month" or "How is Grocery expense compared to last month".
               </p>
             ) : (
               thread.map((t) => (
