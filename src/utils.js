@@ -535,6 +535,105 @@ Rules:
 - note: a short cleaned-up description of what the expense was for.`;
 }
 
+// Constrains a natural-language question to one of a fixed set of
+// computable metrics - the AI's only job is figuring out WHAT the user is
+// asking for (and which category/person/month it refers to), never
+// computing the answer itself. resolveAskQuery below does the actual math,
+// with the same functions the rest of the app already uses and trusts.
+export function buildAskQuestionSchema({ categories, members }) {
+  return {
+    type: 'object',
+    properties: {
+      metric: {
+        type: 'string',
+        enum: ['total_spend', 'category_total', 'member_total', 'balance', 'entry_count', 'biggest_expense', 'monthly_trend'],
+      },
+      category: { type: 'string', enum: categories },
+      member: { type: 'string', enum: members },
+      month: { type: 'string', description: 'YYYY-MM, e.g. 2026-08. Omit for all-time.' },
+    },
+    required: ['metric'],
+  };
+}
+
+export function buildAskQuestionPrompt(question, { categories, members, today }) {
+  return `Turn this question about an expense ledger into a structured query. Today's date is ${today}.
+
+"${question}"
+
+Rules:
+- metric:
+  - "total_spend" - overall total spend, optionally scoped to a month.
+  - "category_total" - total for one specific category (needs category).
+  - "member_total" - total for one specific person (needs member).
+  - "balance" - who currently owes whom.
+  - "entry_count" - how many entries/transactions there are.
+  - "biggest_expense" - the single largest expense.
+  - "monthly_trend" - spend total for each of the last 6 months.
+- category: from the allowed list (${categories.join(', ')}) - only when the question names a category.
+- member: from the allowed list (${members.join(', ')}) - only when the question names a person.
+- month: resolve any month/date mentioned into YYYY-MM format against today's date. Omit entirely if the question doesn't mention a time period.`;
+}
+
+// Resolves a query spec (from buildAskQuestionSchema) against the real
+// entries, using the same filters and aggregation functions the rest of
+// the app already uses (isCountableSpend, computeMemberTotals,
+// computeBalance/computeSettlements) - never the AI's own arithmetic, so
+// it can't report a figure that doesn't match the ledger.
+export function resolveAskQuery(spec, entries, ledger, members, currency = 'INR') {
+  const targetLedger = ledger ? normalizeLedger(ledger) : null;
+  const month = spec.month || null;
+  const scopeLabel = month ? formatMonthLabel(month) : 'all time';
+  const countable = entries.filter((e) => isCountableSpend(e, month, targetLedger));
+
+  switch (spec.metric) {
+    case 'total_spend': {
+      const total = countable.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+      return `Total spend (${scopeLabel}): ${formatCurrency(total, currency)}.`;
+    }
+    case 'category_total': {
+      if (!spec.category) return "I couldn't tell which category you meant.";
+      const total = countable
+        .filter((e) => e.category === spec.category)
+        .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+      return `${spec.category} (${scopeLabel}): ${formatCurrency(total, currency)}.`;
+    }
+    case 'member_total': {
+      if (!spec.member) return "I couldn't tell which person you meant.";
+      const scoped = month ? entries.filter((e) => getMonthKey(e.date) === month) : entries;
+      const totals = computeMemberTotals(scoped, members);
+      return `${spec.member} (${scopeLabel}): ${formatCurrency(totals[spec.member] || 0, currency)}.`;
+    }
+    case 'balance': {
+      const balanceEntries = targetLedger === 'travel' ? excludeCashSpend(entries) : entries;
+      if (members.length > 2) {
+        const settlements = computeSettlements(balanceEntries, ledger, members);
+        return settlements.length === 0
+          ? 'Everyone is settled up.'
+          : `${settlements.map((s) => `${s.debtor} owes ${s.creditor} ${formatCurrency(s.amount, currency)}`).join('; ')}.`;
+      }
+      const balance = computeBalance(balanceEntries, ledger, members);
+      return balance.status === 'settled'
+        ? 'Everyone is settled up.'
+        : `${balance.debtor} owes ${balance.creditor} ${formatCurrency(balance.amount, currency)}.`;
+    }
+    case 'entry_count': {
+      return `${countable.length} ${countable.length === 1 ? 'entry' : 'entries'} (${scopeLabel}).`;
+    }
+    case 'biggest_expense': {
+      if (countable.length === 0) return `No expenses recorded (${scopeLabel}).`;
+      const biggest = countable.reduce((max, e) => (Number(e.amount) > Number(max.amount) ? e : max));
+      return `Biggest expense (${scopeLabel}): ${formatCurrency(biggest.amount, currency)} on ${biggest.category}${biggest.note ? ` (${biggest.note})` : ''}, paid by ${biggest.payer}.`;
+    }
+    case 'monthly_trend': {
+      const monthly = getLast6MonthsData(entries, ledger);
+      return `${monthly.map((m) => `${m.label}: ${formatCurrency(m.total, currency)}`).join(', ')}.`;
+    }
+    default:
+      return "I couldn't understand that question.";
+  }
+}
+
 // The trip's own last entry date, used as the default date for a new
 // household rollup line - a trip rolled up (or backfilled) well after it
 // happened should read as having happened then, not on whatever day
@@ -724,7 +823,7 @@ export function groupByMonth(entries = [], dynamicMembers = DEFAULT_PERSONS) {
 // Shared by anything that totals up "real spend" (Category Breakdown, the
 // per-category drill-down, monthly totals) - a settlement/withdrawal/rollup
 // isn't a new expense, it's money already accounted for elsewhere.
-function isCountableSpend(entry, monthKey, targetLedger) {
+export function isCountableSpend(entry, monthKey, targetLedger) {
   if (monthKey && getMonthKey(entry.date) !== monthKey) return false;
   if (targetLedger && normalizeLedger(entry.ledger) !== targetLedger) return false;
   if (entry.splitType === 'settlement') return false;

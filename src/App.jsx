@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import BalanceStrip from './components/BalanceStrip';
 import AddEntryForm from './components/AddEntryForm';
+import AskQuestion from './components/AskQuestion';
 import EntryList from './components/EntryList';
 import ConnectionState from './components/ConnectionState';
 import TravelManager from './components/TravelManager';
@@ -609,6 +610,14 @@ export default function App() {
                 currentCurrency={currentCurrency}
                 dbPaymentMethods={activePaymentMethodsList}
                 tripEntries={tripEntries}
+              />
+
+              <AskQuestion
+                entries={tripEntries}
+                ledger={activeLedger}
+                dbMembers={activeLedgerMembersList}
+                dbCategories={currentDbCategories}
+                currentCurrency={currentCurrency}
               />
 
               <div className={activeLedger === 'travel' ? '' : 'grid grid-cols-1 lg:grid-cols-2 gap-6'}>
