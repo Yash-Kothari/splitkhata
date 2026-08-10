@@ -569,6 +569,10 @@ export function buildAskQuestionSchema({ categories, members }) {
             category: { type: 'string', enum: categories },
             member: { type: 'string', enum: members },
             month: { type: 'string', description: 'YYYY-MM, e.g. 2026-08. Omit for all-time.' },
+            count: {
+              type: 'integer',
+              description: 'How many results for biggest_expense/smallest_expense, e.g. 3 for "top 3". Omit for just 1.',
+            },
           },
           required: ['metric'],
         },
@@ -590,12 +594,13 @@ Rules:
   - "member_total" - total for one specific person (needs member).
   - "balance" - who currently owes whom.
   - "entry_count" - how many entries/transactions there are.
-  - "biggest_expense" - the single largest expense, optionally scoped to a category and/or month.
-  - "smallest_expense" - the single smallest expense, optionally scoped to a category and/or month.
+  - "biggest_expense" - the largest expense(s), optionally scoped to a category and/or month.
+  - "smallest_expense" - the smallest expense(s), optionally scoped to a category and/or month.
   - "monthly_trend" - spend total for each of the last 6 months.
 - category: from the allowed list (${categories.join(', ')}) - only when relevant to that query.
 - member: from the allowed list (${members.join(', ')}) - only when relevant to that query.
-- month: resolve any month/date mentioned into YYYY-MM format against today's date. Omit entirely if that query isn't time-scoped.`;
+- month: resolve any month/date mentioned into YYYY-MM format against today's date. Omit entirely if that query isn't time-scoped.
+- count: only for biggest_expense/smallest_expense - set this when the question asks for more than one (e.g. "top 3", "5 biggest"). Omit for just the single highest/lowest.`;
 }
 
 // Resolves one query spec (an item from buildAskQuestionSchema's queries
@@ -650,13 +655,23 @@ export function resolveAskQuery(spec, entries, ledger, members, currency = 'INR'
       const label = spec.metric === 'biggest_expense' ? 'Biggest' : 'Smallest';
       const scopedIn = spec.category ? ` in ${spec.category}` : '';
       if (pool.length === 0) return `No expenses recorded${scopedIn} (${scopeLabel}).`;
-      const picked = pool.reduce((best, e) =>
-        (spec.metric === 'biggest_expense' ? Number(e.amount) > Number(best.amount) : Number(e.amount) < Number(best.amount))
-          ? e
-          : best,
+      // Clamped to a sane range - "top 3" is a normal ask, "top 500" isn't
+      // and would just dump the whole ledger into one narration prompt.
+      const count = Math.min(10, Math.max(1, Math.round(spec.count) || 1));
+      const sorted = [...pool].sort((a, b) =>
+        spec.metric === 'biggest_expense' ? Number(b.amount) - Number(a.amount) : Number(a.amount) - Number(b.amount),
       );
-      const categoryPart = spec.category ? '' : ` on ${picked.category}`;
-      return `${label} expense${scopedIn} (${scopeLabel}): ${formatCurrency(picked.amount, currency)}${categoryPart}${picked.note ? ` (${picked.note})` : ''}, paid by ${picked.payer}.`;
+      const picks = sorted.slice(0, count);
+      if (picks.length === 1) {
+        const picked = picks[0];
+        const categoryPart = spec.category ? '' : ` on ${picked.category}`;
+        return `${label} expense${scopedIn} (${scopeLabel}): ${formatCurrency(picked.amount, currency)}${categoryPart}${picked.note ? ` (${picked.note})` : ''}, paid by ${picked.payer}.`;
+      }
+      const lines = picks.map((e, i) => {
+        const categoryPart = spec.category ? '' : ` on ${e.category}`;
+        return `${i + 1}. ${formatCurrency(e.amount, currency)}${categoryPart}${e.note ? ` (${e.note})` : ''}, paid by ${e.payer}`;
+      });
+      return `Top ${picks.length} ${label.toLowerCase()} expenses${scopedIn} (${scopeLabel}): ${lines.join('; ')}.`;
     }
     case 'monthly_trend': {
       const monthly = getLast6MonthsData(entries, ledger);

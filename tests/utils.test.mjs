@@ -626,6 +626,31 @@ test('resolveAskQuery: biggest_expense/smallest_expense scope to a category when
   assert.match(smallestFood, /₹40\.00/);
 });
 
+test('resolveAskQuery: biggest_expense with count returns that many, ranked, biggest first', () => {
+  const entries = [
+    { amount: 100, category: 'Food', date: '2026-08-01', ledger: 'household', splitType: 'shared', payer: 'Yash' },
+    { amount: 500, category: 'Hotel', date: '2026-08-02', ledger: 'household', splitType: 'shared', payer: 'Kruti' },
+    { amount: 250, category: 'Transport', date: '2026-08-03', ledger: 'household', splitType: 'shared', payer: 'Yash' },
+    { amount: 10, category: 'Food', date: '2026-08-04', ledger: 'household', splitType: 'shared', payer: 'Kruti' },
+  ];
+  const answer = resolveAskQuery({ metric: 'biggest_expense', count: 3 }, entries, 'household', PERSONS);
+  assert.match(answer, /Top 3 biggest expenses/);
+  const iHotel = answer.indexOf('₹500.00');
+  const iTransport = answer.indexOf('₹250.00');
+  const iFood = answer.indexOf('₹100.00');
+  assert.ok(iHotel < iTransport && iTransport < iFood, 'expected biggest-first ordering');
+  assert.doesNotMatch(answer, /₹10\.00/);
+});
+
+test('resolveAskQuery: biggest_expense count is clamped to the available pool and to a max of 10', () => {
+  const entries = [
+    { amount: 100, category: 'Food', date: '2026-08-01', ledger: 'household', splitType: 'shared', payer: 'Yash' },
+    { amount: 50, category: 'Food', date: '2026-08-02', ledger: 'household', splitType: 'shared', payer: 'Kruti' },
+  ];
+  const answer = resolveAskQuery({ metric: 'biggest_expense', count: 500 }, entries, 'household', PERSONS);
+  assert.match(answer, /Top 2 biggest expenses/);
+});
+
 test('resolveAskQuery: unknown metric falls back to a plain message instead of throwing', () => {
   const answer = resolveAskQuery({ metric: 'nonsense' }, [], 'household', PERSONS);
   assert.equal(answer, "I couldn't understand that question.");
