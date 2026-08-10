@@ -23,6 +23,7 @@ import {
   buildQuickAddPrompt,
   buildAskQuestionSchema,
   buildAskQuestionPrompt,
+  buildAskAnswerNarrationPrompt,
   resolveAskQuery,
 } from '../src/utils.js';
 
@@ -505,14 +506,18 @@ test('buildQuickAddPrompt includes the free text, today\'s date, and the member 
   assert.match(prompt, /Yash, Kruti/);
 });
 
-test('buildAskQuestionSchema constrains metric to the fixed list, category/member to the given lists', () => {
+test('buildAskQuestionSchema wraps a per-item schema in a queries array, constraining metric/category/member', () => {
   const schema = buildAskQuestionSchema({ categories: ['Food', 'Hotel'], members: ['Yash', 'Kruti'] });
-  assert.deepEqual(schema.properties.metric.enum, [
-    'total_spend', 'category_total', 'member_total', 'balance', 'entry_count', 'biggest_expense', 'monthly_trend',
+  assert.deepEqual(schema.required, ['queries']);
+  assert.equal(schema.properties.queries.type, 'array');
+  const item = schema.properties.queries.items;
+  assert.deepEqual(item.properties.metric.enum, [
+    'total_spend', 'category_total', 'member_total', 'balance', 'entry_count',
+    'biggest_expense', 'smallest_expense', 'monthly_trend',
   ]);
-  assert.deepEqual(schema.properties.category.enum, ['Food', 'Hotel']);
-  assert.deepEqual(schema.properties.member.enum, ['Yash', 'Kruti']);
-  assert.deepEqual(schema.required, ['metric']);
+  assert.deepEqual(item.properties.category.enum, ['Food', 'Hotel']);
+  assert.deepEqual(item.properties.member.enum, ['Yash', 'Kruti']);
+  assert.deepEqual(item.required, ['metric']);
 });
 
 test('buildAskQuestionPrompt includes the question, today\'s date, and both allowed lists', () => {
@@ -597,7 +602,42 @@ test('resolveAskQuery: biggest_expense picks the largest countable entry', () =>
   assert.match(answer, /Kruti/);
 });
 
+test('resolveAskQuery: smallest_expense picks the smallest countable entry', () => {
+  const entries = [
+    { amount: 100, category: 'Food', date: '2026-08-01', ledger: 'household', splitType: 'shared', payer: 'Yash' },
+    { amount: 500, category: 'Hotel', date: '2026-08-05', ledger: 'household', splitType: 'shared', payer: 'Kruti' },
+  ];
+  const answer = resolveAskQuery({ metric: 'smallest_expense' }, entries, 'household', PERSONS);
+  assert.match(answer, /₹100\.00/);
+  assert.match(answer, /Food/);
+  assert.match(answer, /Yash/);
+});
+
+test('resolveAskQuery: biggest_expense/smallest_expense scope to a category when given one, and drop the redundant "on X"', () => {
+  const entries = [
+    { amount: 100, category: 'Food', date: '2026-08-01', ledger: 'household', splitType: 'shared', payer: 'Yash' },
+    { amount: 40, category: 'Food', date: '2026-08-02', ledger: 'household', splitType: 'shared', payer: 'Kruti' },
+    { amount: 500, category: 'Hotel', date: '2026-08-05', ledger: 'household', splitType: 'shared', payer: 'Kruti' },
+  ];
+  const biggestFood = resolveAskQuery({ metric: 'biggest_expense', category: 'Food' }, entries, 'household', PERSONS);
+  assert.match(biggestFood, /₹100\.00/);
+  assert.doesNotMatch(biggestFood, /on Food/);
+  const smallestFood = resolveAskQuery({ metric: 'smallest_expense', category: 'Food' }, entries, 'household', PERSONS);
+  assert.match(smallestFood, /₹40\.00/);
+});
+
 test('resolveAskQuery: unknown metric falls back to a plain message instead of throwing', () => {
   const answer = resolveAskQuery({ metric: 'nonsense' }, [], 'household', PERSONS);
   assert.equal(answer, "I couldn't understand that question.");
+});
+
+test('buildAskAnswerNarrationPrompt includes the question, every fact, and a never-invent guardrail', () => {
+  const prompt = buildAskAnswerNarrationPrompt('compare Food and Hotel', [
+    'Food (all time): ₹140.00.',
+    'Hotel (all time): ₹500.00.',
+  ]);
+  assert.match(prompt, /compare Food and Hotel/);
+  assert.match(prompt, /Food \(all time\): ₹140\.00\./);
+  assert.match(prompt, /Hotel \(all time\): ₹500\.00\./);
+  assert.match(prompt, /never invent/);
 });

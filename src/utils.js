@@ -535,29 +535,51 @@ Rules:
 - note: a short cleaned-up description of what the expense was for.`;
 }
 
-// Constrains a natural-language question to one of a fixed set of
+// Constrains a natural-language question to a list of one or more fixed,
 // computable metrics - the AI's only job is figuring out WHAT the user is
-// asking for (and which category/person/month it refers to), never
-// computing the answer itself. resolveAskQuery below does the actual math,
-// with the same functions the rest of the app already uses and trusts.
+// asking for (breaking a compound question like "compare X and Y" into
+// several small queries) and which category/person/month each one refers
+// to, never computing an answer itself. resolveAskQuery below does the
+// actual math, with the same functions the rest of the app already uses
+// and trusts.
 export function buildAskQuestionSchema({ categories, members }) {
   return {
     type: 'object',
     properties: {
-      metric: {
-        type: 'string',
-        enum: ['total_spend', 'category_total', 'member_total', 'balance', 'entry_count', 'biggest_expense', 'monthly_trend'],
+      queries: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 6,
+        items: {
+          type: 'object',
+          properties: {
+            metric: {
+              type: 'string',
+              enum: [
+                'total_spend',
+                'category_total',
+                'member_total',
+                'balance',
+                'entry_count',
+                'biggest_expense',
+                'smallest_expense',
+                'monthly_trend',
+              ],
+            },
+            category: { type: 'string', enum: categories },
+            member: { type: 'string', enum: members },
+            month: { type: 'string', description: 'YYYY-MM, e.g. 2026-08. Omit for all-time.' },
+          },
+          required: ['metric'],
+        },
       },
-      category: { type: 'string', enum: categories },
-      member: { type: 'string', enum: members },
-      month: { type: 'string', description: 'YYYY-MM, e.g. 2026-08. Omit for all-time.' },
     },
-    required: ['metric'],
+    required: ['queries'],
   };
 }
 
 export function buildAskQuestionPrompt(question, { categories, members, today }) {
-  return `Turn this question about an expense ledger into a structured query. Today's date is ${today}.
+  return `Turn this question about an expense ledger into one or more structured queries. Today's date is ${today}. Break a compound question (e.g. "compare X and Y", "highest and lowest of each") into a separate query per distinct fact needed - don't try to cram multiple facts into one query.
 
 "${question}"
 
@@ -568,18 +590,20 @@ Rules:
   - "member_total" - total for one specific person (needs member).
   - "balance" - who currently owes whom.
   - "entry_count" - how many entries/transactions there are.
-  - "biggest_expense" - the single largest expense.
+  - "biggest_expense" - the single largest expense, optionally scoped to a category and/or month.
+  - "smallest_expense" - the single smallest expense, optionally scoped to a category and/or month.
   - "monthly_trend" - spend total for each of the last 6 months.
-- category: from the allowed list (${categories.join(', ')}) - only when the question names a category.
-- member: from the allowed list (${members.join(', ')}) - only when the question names a person.
-- month: resolve any month/date mentioned into YYYY-MM format against today's date. Omit entirely if the question doesn't mention a time period.`;
+- category: from the allowed list (${categories.join(', ')}) - only when relevant to that query.
+- member: from the allowed list (${members.join(', ')}) - only when relevant to that query.
+- month: resolve any month/date mentioned into YYYY-MM format against today's date. Omit entirely if that query isn't time-scoped.`;
 }
 
-// Resolves a query spec (from buildAskQuestionSchema) against the real
-// entries, using the same filters and aggregation functions the rest of
-// the app already uses (isCountableSpend, computeMemberTotals,
-// computeBalance/computeSettlements) - never the AI's own arithmetic, so
-// it can't report a figure that doesn't match the ledger.
+// Resolves one query spec (an item from buildAskQuestionSchema's queries
+// array) against the real entries, using the same filters and aggregation
+// functions the rest of the app already uses (isCountableSpend,
+// computeMemberTotals, computeBalance/computeSettlements) - never the AI's
+// own arithmetic, so it can't report a figure that doesn't match the
+// ledger. Called once per query when a question decomposes into several.
 export function resolveAskQuery(spec, entries, ledger, members, currency = 'INR') {
   const targetLedger = ledger ? normalizeLedger(ledger) : null;
   const month = spec.month || null;
@@ -620,10 +644,19 @@ export function resolveAskQuery(spec, entries, ledger, members, currency = 'INR'
     case 'entry_count': {
       return `${countable.length} ${countable.length === 1 ? 'entry' : 'entries'} (${scopeLabel}).`;
     }
-    case 'biggest_expense': {
-      if (countable.length === 0) return `No expenses recorded (${scopeLabel}).`;
-      const biggest = countable.reduce((max, e) => (Number(e.amount) > Number(max.amount) ? e : max));
-      return `Biggest expense (${scopeLabel}): ${formatCurrency(biggest.amount, currency)} on ${biggest.category}${biggest.note ? ` (${biggest.note})` : ''}, paid by ${biggest.payer}.`;
+    case 'biggest_expense':
+    case 'smallest_expense': {
+      const pool = spec.category ? countable.filter((e) => e.category === spec.category) : countable;
+      const label = spec.metric === 'biggest_expense' ? 'Biggest' : 'Smallest';
+      const scopedIn = spec.category ? ` in ${spec.category}` : '';
+      if (pool.length === 0) return `No expenses recorded${scopedIn} (${scopeLabel}).`;
+      const picked = pool.reduce((best, e) =>
+        (spec.metric === 'biggest_expense' ? Number(e.amount) > Number(best.amount) : Number(e.amount) < Number(best.amount))
+          ? e
+          : best,
+      );
+      const categoryPart = spec.category ? '' : ` on ${picked.category}`;
+      return `${label} expense${scopedIn} (${scopeLabel}): ${formatCurrency(picked.amount, currency)}${categoryPart}${picked.note ? ` (${picked.note})` : ''}, paid by ${picked.payer}.`;
     }
     case 'monthly_trend': {
       const monthly = getLast6MonthsData(entries, ledger);
@@ -632,6 +665,21 @@ export function resolveAskQuery(spec, entries, ledger, members, currency = 'INR'
     default:
       return "I couldn't understand that question.";
   }
+}
+
+// Turns a list of already-computed, already-correct facts (one string per
+// resolveAskQuery call) into one natural-sounding answer to the original
+// question - the app has already done every calculation by this point,
+// this call only phrases them. "Never invent" keeps a compound question
+// (e.g. "compare X and Y") from getting a made-up comparison sentence
+// layered on top of facts that don't actually say which one is bigger.
+export function buildAskAnswerNarrationPrompt(question, facts) {
+  return `Answer this question in a short, natural sentence or two, using ONLY the facts listed below - never invent, estimate, or infer any number, comparison, or conclusion that isn't directly supported by them.
+
+Question: "${question}"
+
+Facts:
+${facts.map((f) => `- ${f}`).join('\n')}`;
 }
 
 // The trip's own last entry date, used as the default date for a new

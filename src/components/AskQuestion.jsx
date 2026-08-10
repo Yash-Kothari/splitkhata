@@ -1,28 +1,42 @@
 import { useState } from 'react';
-import { generateStructured } from '../firebase';
-import { buildAskQuestionSchema, buildAskQuestionPrompt, resolveAskQuery, todayISO } from '../utils';
+import { generateStructured, generateDigest } from '../firebase';
+import {
+  buildAskQuestionSchema,
+  buildAskQuestionPrompt,
+  buildAskAnswerNarrationPrompt,
+  resolveAskQuery,
+  todayISO,
+} from '../utils';
 
-// Read-only by design: the AI only ever decides WHAT to compute (via a
-// schema-constrained query spec), never computes or phrases the answer
-// itself - resolveAskQuery in utils.js does the actual math with the same
-// functions the rest of the app already trusts, and never writes anything
-// back to the ledger.
+// Read-only by design, even for a compound question: the AI decides WHAT
+// to look up (a list of schema-constrained query specs, so a question
+// like "compare X and Y, highest and lowest of each" becomes several
+// small queries instead of one), resolveAskQuery computes every fact
+// deterministically with the same functions the rest of the app already
+// trusts, and only the phrasing of the final sentence is left to the AI -
+// constrained to just those already-correct facts. Never writes anything
+// back to the ledger, and each question's answer never depends on a
+// previous one, so there's no hidden context to reason about.
 export default function AskQuestion({ entries, ledger, dbMembers = [], dbCategories = [], currentCurrency = 'INR' }) {
   const [question, setQuestion] = useState('');
-  const [status, setStatus] = useState({ state: 'idle', answer: '', error: '' });
+  const [thread, setThread] = useState([]);
 
   async function handleAsk() {
     const text = question.trim();
     if (!text) return;
-    setStatus({ state: 'loading', answer: '', error: '' });
+    const id = crypto.randomUUID();
+    setThread((prev) => [...prev, { id, question: text, status: 'loading', answer: '', error: '' }]);
+    setQuestion('');
     try {
       const schema = buildAskQuestionSchema({ categories: dbCategories, members: dbMembers });
       const prompt = buildAskQuestionPrompt(text, { categories: dbCategories, members: dbMembers, today: todayISO() });
-      const spec = await generateStructured(prompt, schema);
-      const answer = resolveAskQuery(spec, entries, ledger, dbMembers, currentCurrency);
-      setStatus({ state: 'done', answer, error: '' });
+      const { queries } = await generateStructured(prompt, schema);
+      const facts = queries.map((spec) => resolveAskQuery(spec, entries, ledger, dbMembers, currentCurrency));
+      const answer = await generateDigest(buildAskAnswerNarrationPrompt(text, facts));
+      setThread((prev) => prev.map((t) => (t.id === id ? { ...t, status: 'done', answer } : t)));
     } catch (err) {
-      setStatus({ state: 'error', answer: '', error: err?.message || 'Could not answer that.' });
+      const error = err?.message || 'Could not answer that.';
+      setThread((prev) => prev.map((t) => (t.id === id ? { ...t, status: 'error', error } : t)));
     }
   }
 
@@ -32,9 +46,20 @@ export default function AskQuestion({ entries, ledger, dbMembers = [], dbCategor
 
   return (
     <section className="panel-card px-4 sm:px-5 py-4">
-      <label htmlFor="askQuestion" className={labelClass}>
-        ✨ Ask about this data
-      </label>
+      <div className="flex items-center justify-between mb-1.5">
+        <label htmlFor="askQuestion" className={`${labelClass} mb-0`}>
+          ✨ Ask about this data
+        </label>
+        {thread.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setThread([])}
+            className="text-xs font-semibold text-muted-text hover:text-ink underline"
+          >
+            Clear
+          </button>
+        )}
+      </div>
       <div className="flex gap-2">
         <input
           id="askQuestion"
@@ -48,22 +73,35 @@ export default function AskQuestion({ entries, ledger, dbMembers = [], dbCategor
             }
           }}
           className={inputClass}
-          placeholder="e.g. how much did we spend on Food this month?"
+          placeholder="e.g. compare Food and Groceries this month"
         />
         <button
           type="button"
           onClick={handleAsk}
-          disabled={!question.trim() || status.state === 'loading'}
+          disabled={!question.trim()}
           className="shrink-0 h-11 px-4 rounded-xl bg-ledger-green text-white font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-ledger-green/90 transition-colors"
         >
-          {status.state === 'loading' ? '...' : 'Ask'}
+          Ask
         </button>
       </div>
-      {status.state === 'done' && (
-        <p className="text-sm text-ink mt-2 font-medium">{status.answer}</p>
-      )}
-      {status.state === 'error' && (
-        <p className="text-xs text-stamp-red mt-1.5">{status.error}</p>
+
+      {thread.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-ink/10 space-y-3">
+          {thread.map((t) => (
+            <div key={t.id}>
+              <p className="text-sm font-semibold text-ink">{t.question}</p>
+              {t.status === 'loading' && (
+                <p className="text-xs text-muted-text mt-0.5">✨ Thinking...</p>
+              )}
+              {t.status === 'done' && (
+                <p className="text-sm text-ink mt-0.5">{t.answer}</p>
+              )}
+              {t.status === 'error' && (
+                <p className="text-xs text-stamp-red mt-0.5">{t.error}</p>
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </section>
   );
