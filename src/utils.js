@@ -449,6 +449,41 @@ export function computeTripTotalSpend(entries) {
   return totalPaise / 100;
 }
 
+// Turns already-computed trip figures into a plain-text prompt for the AI
+// digest - the model only narrates these numbers, it never sees raw
+// entries or does any math itself, so it can't invent a figure that
+// doesn't match the ledger.
+export function buildTripDigestPrompt({
+  tripName,
+  currency = 'INR',
+  totalSpend,
+  memberTotals = {},
+  categoryBreakdown = [],
+  settlementLines = [],
+}) {
+  const memberLines = Object.entries(memberTotals)
+    .map(([name, amount]) => `- ${name}: ${formatCurrency(amount, currency)}`)
+    .join('\n');
+  const categoryLines = categoryBreakdown
+    .map((c) => `- ${c.category}: ${formatCurrency(c.amount, currency)}`)
+    .join('\n');
+  const settlementText = settlementLines.length > 0 ? settlementLines.join('\n') : 'Everyone is settled up.';
+
+  return `You are summarizing a trip's expenses for a small group of friends/family. Write a short, warm, plain-English digest (3-5 sentences, no headers or bullet points in your answer) covering: total spend, which category dominated, and who owes whom. Use only the numbers given below - never invent or estimate a number that isn't listed.
+
+Trip: ${tripName}
+Total spend: ${formatCurrency(totalSpend, currency)}
+
+Per-person totals:
+${memberLines || 'No entries yet.'}
+
+Category breakdown:
+${categoryLines || 'No entries yet.'}
+
+Settlement:
+${settlementText}`;
+}
+
 // The trip's own last entry date, used as the default date for a new
 // household rollup line - a trip rolled up (or backfilled) well after it
 // happened should read as having happened then, not on whatever day

@@ -16,6 +16,7 @@ import {
   getPreviousMonthKey,
   getLast6MonthsData,
   getCategoryMoMComparison,
+  buildTripDigestPrompt,
 } from '../src/utils.js';
 
 test('uses Yash and Kruti as default pair names', () => {
@@ -422,4 +423,34 @@ test('computeMemberTotals attributes a personal points redemption fully to its p
   const pointsTotals = computeMemberTotals(entries, PERSONS, 'rewardPoints');
   assert.equal(pointsTotals.Yash, 20000);
   assert.equal(pointsTotals.Kruti, 8000);
+});
+
+test('buildTripDigestPrompt includes every figure it was given and nothing it wasn\'t', () => {
+  const prompt = buildTripDigestPrompt({
+    tripName: 'Vietnam',
+    currency: 'INR',
+    totalSpend: 12000,
+    memberTotals: { Yash: 6000, Kruti: 6000 },
+    categoryBreakdown: [{ category: 'Food', amount: 8000 }, { category: 'Hotel', amount: 4000 }],
+    settlementLines: ['Kruti owes Yash ₹3,000.00'],
+  });
+  assert.match(prompt, /Vietnam/);
+  assert.match(prompt, /₹12,000\.00/);
+  assert.match(prompt, /Yash: ₹6,000\.00/);
+  assert.match(prompt, /Kruti: ₹6,000\.00/);
+  assert.match(prompt, /Food: ₹8,000\.00/);
+  assert.match(prompt, /Kruti owes Yash ₹3,000\.00/);
+  assert.match(prompt, /never invent or estimate/);
+});
+
+test('buildTripDigestPrompt reports "settled up" when given no settlement lines', () => {
+  const prompt = buildTripDigestPrompt({
+    tripName: 'Vietnam',
+    totalSpend: 0,
+    memberTotals: {},
+    categoryBreakdown: [],
+    settlementLines: [],
+  });
+  assert.match(prompt, /Everyone is settled up\./);
+  assert.match(prompt, /No entries yet\./);
 });

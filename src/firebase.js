@@ -1,4 +1,6 @@
 import { initializeApp } from 'firebase/app';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
+import { getAI, GoogleAIBackend, getGenerativeModel } from 'firebase/ai';
 import {
   getAuth,
   GoogleAuthProvider,
@@ -80,6 +82,14 @@ export function isFirebaseConfigured() {
   );
 }
 
+// AI Logic needs App Check (to prove requests come from this app, not a
+// scraped config) on top of the base Firebase config, so it's gated
+// separately - a deploy can have Firestore working with AI Logic still
+// showing "not configured" until the reCAPTCHA site key is added.
+export function isAiConfigured() {
+  return isFirebaseConfigured() && Boolean(import.meta.env.VITE_RECAPTCHA_SITE_KEY);
+}
+
 let dbInstance = null;
 let expensesRef = null;
 let categoriesRef = null;
@@ -89,6 +99,7 @@ let tripsRef = null;
 let cashMovementsRef = null;
 let paymentMethodsRef = null;
 let authInstance = null;
+let aiModel = null;
 
 if (isFirebaseConfigured()) {
   try {
@@ -115,12 +126,34 @@ if (isFirebaseConfigured()) {
     tripsRef = collection(dbInstance, 'trips');
     cashMovementsRef = collection(dbInstance, 'cashMovements');
     paymentMethodsRef = collection(dbInstance, 'paymentMethods');
+
+    if (isAiConfigured()) {
+      initializeAppCheck(app, {
+        provider: new ReCaptchaV3Provider(import.meta.env.VITE_RECAPTCHA_SITE_KEY),
+        isTokenAutoRefreshEnabled: true,
+      });
+      const ai = getAI(app, { backend: new GoogleAIBackend() });
+      // "-latest" alias, not a pinned version - Google retires versioned
+      // model IDs for new usage on a rolling basis (gemini-2.5-flash just
+      // did), and this always resolves to the current recommended flash
+      // model instead of needing a code change each time that happens.
+      aiModel = getGenerativeModel(ai, { model: 'gemini-flash-latest' });
+    }
   } catch (err) {
     console.warn('Firebase initialization failed, falling back to local database:', err);
   }
 }
 
 export const db = dbInstance;
+
+// Narrates an already-computed summary (see buildDigestPrompt in utils.js)
+// into plain English - the app does the math, Gemini just writes it up, so
+// there's no risk of the AI inventing numbers that don't match the ledger.
+export async function generateDigest(prompt) {
+  if (!aiModel) throw new Error('AI Logic is not configured yet - add VITE_RECAPTCHA_SITE_KEY to .env.');
+  const result = await aiModel.generateContent(prompt);
+  return result.response.text();
+}
 
 export function isAllowedUser(user) {
   return Boolean(user?.email && user.emailVerified && ALLOWED_EMAILS.has(user.email.toLowerCase()));

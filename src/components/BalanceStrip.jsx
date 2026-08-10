@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { addExpense, updateExpense, deleteExpense, updateTripInDb } from '../firebase';
+import { addExpense, updateExpense, deleteExpense, updateTripInDb, generateDigest } from '../firebase';
 import {
   formatCurrency,
   computeBalance,
@@ -10,6 +10,8 @@ import {
   getTripLastDate,
   todayISO,
   PERSON_COLORS,
+  groupByCategory,
+  buildTripDigestPrompt,
 } from '../utils';
 
 export default function BalanceStrip({
@@ -97,6 +99,30 @@ export default function BalanceStrip({
   // figure is per-entry reference only, it doesn't drive who-owes-whom.
   const displayCurrency = 'INR';
 
+  // Same entries/basis as the real Category Breakdown card (raw entries,
+  // not balanceEntries) so the digest's category mix matches what's shown
+  // elsewhere on the page - monthKey null means "whole trip", not one month.
+  const categoryBreakdown = useMemo(
+    () => (isTravel ? groupByCategory(entries, null, 'travel') : null),
+    [entries, isTravel],
+  );
+  const digestPrompt = useMemo(() => {
+    if (!isTravel) return null;
+    const settlementLines = hasGuests
+      ? (settlements || []).map((s) => `${s.debtor} owes ${s.creditor} ${formatCurrency(s.amount, displayCurrency)}`)
+      : balance.status !== 'settled'
+        ? [`${balance.debtor} owes ${balance.creditor} ${formatCurrency(balance.amount, displayCurrency)}`]
+        : [];
+    return buildTripDigestPrompt({
+      tripName,
+      currency: displayCurrency,
+      totalSpend,
+      memberTotals,
+      categoryBreakdown,
+      settlementLines,
+    });
+  }, [isTravel, hasGuests, settlements, balance, tripName, displayCurrency, totalSpend, memberTotals, categoryBreakdown]);
+
   // Editing/adding/deleting an entry after a trip's been rolled up changes
   // this trip's live balance without touching the snapshot that got copied
   // into the main ledger - compare against that snapshot (cached on the
@@ -118,6 +144,17 @@ export default function BalanceStrip({
   const [saving, setSaving] = useState(false);
   const [confirmingRollup, setConfirmingRollup] = useState(false);
   const [rollingUp, setRollingUp] = useState(false);
+  const [digest, setDigest] = useState({ status: 'idle', text: '', error: '' });
+
+  async function handleGenerateDigest() {
+    setDigest({ status: 'loading', text: '', error: '' });
+    try {
+      const text = await generateDigest(digestPrompt);
+      setDigest({ status: 'done', text, error: '' });
+    } catch (err) {
+      setDigest({ status: 'error', text: '', error: err?.message || 'Could not generate digest.' });
+    }
+  }
 
   const inputClass =
     'w-full h-10 px-3 text-sm rounded-lg border border-ink/15 bg-paper text-ink font-medium focus:outline-none focus:ring-2 focus:ring-ledger-green/40';
@@ -372,6 +409,35 @@ export default function BalanceStrip({
                   </span>
                 </div>
               ))}
+            </div>
+          )}
+          {isTravel && totalSpend > 0 && (
+            <div className="mt-3 pt-3 border-t border-ink/10">
+              {digest.status === 'idle' || digest.status === 'error' ? (
+                <button
+                  type="button"
+                  onClick={handleGenerateDigest}
+                  className="h-8 px-3 rounded-lg border border-ledger-green/30 bg-ledger-green/10 text-ledger-green font-semibold text-xs hover:bg-ledger-green/20 transition-colors"
+                >
+                  ✨ AI Digest
+                </button>
+              ) : digest.status === 'loading' ? (
+                <p className="text-xs text-muted-text">✨ Writing digest...</p>
+              ) : (
+                <div className="rounded-lg border border-ledger-green/20 bg-ledger-green/5 px-3 py-2.5">
+                  <p className="text-sm text-ink leading-relaxed">{digest.text}</p>
+                  <button
+                    type="button"
+                    onClick={() => setDigest({ status: 'idle', text: '', error: '' })}
+                    className="mt-2 text-xs text-muted-text hover:text-ink underline"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              )}
+              {digest.status === 'error' && (
+                <p className="text-xs text-stamp-red mt-1.5">{digest.error}</p>
+              )}
             </div>
           )}
         </div>
