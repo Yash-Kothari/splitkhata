@@ -5,11 +5,12 @@ import {
   getCategoryEntries,
   formatMonthLabel,
   formatCurrency,
+  computeBudgetStatus,
   CATEGORY_COLORS,
   DEFAULT_CATEGORIES as CATEGORIES,
 } from '../utils';
 
-function CategoryDrilldownModal({ category, entries, currency, isTravel, selectedMonth, onClose }) {
+function CategoryDrilldownModal({ category, entries, currency, isTravel, selectedMonth, budgetStatus, onClose }) {
   const total = entries.reduce((sum, e) => sum + Number(e.amount || 0), 0);
   const biggest = entries[0];
 
@@ -40,6 +41,26 @@ function CategoryDrilldownModal({ category, entries, currency, isTravel, selecte
         </div>
 
         <div className="overflow-y-auto px-4 sm:px-5 py-4 space-y-3">
+          {budgetStatus && (
+            <div className="space-y-1 rounded-xl border border-ink/10 bg-paper px-3.5 py-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-muted-text">Budget</p>
+                <span className="text-xs text-muted-text">{Math.round(budgetStatus.pctUsed * 100)}%</span>
+              </div>
+              <div className="w-full h-1.5 rounded-full bg-ink/10 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    budgetStatus.pctUsed >= 1 ? 'bg-stamp-red' : budgetStatus.pctUsed >= 0.8 ? 'bg-mustard' : 'bg-ledger-green'
+                  }`}
+                  style={{ width: `${Math.min(budgetStatus.pctUsed * 100, 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-muted-text">
+                {formatCurrency(budgetStatus.spent, currency)} of {formatCurrency(budgetStatus.limit, currency)}
+              </p>
+            </div>
+          )}
+
           {biggest && (
             <div className="rounded-xl border border-ledger-green/30 bg-ledger-green/10 px-3.5 py-3">
               <p className="text-[10px] font-bold uppercase tracking-wider text-ledger-green mb-1">
@@ -112,7 +133,7 @@ function DonutTooltip({ active, payload, currency, showTrend }) {
   );
 }
 
-export default function CategoryChart({ entries, selectedMonth, onMonthChange, availableMonths, ledger }) {
+export default function CategoryChart({ entries, selectedMonth, onMonthChange, availableMonths, ledger, budgets = {} }) {
   const isTravel = ledger === 'travel';
   // A trip is usually days, not months - skip month filtering and the MoM
   // comparison entirely for travel, and just show the trip's full breakdown.
@@ -135,6 +156,16 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
     () => (selectedCategory ? getCategoryEntries(entries, isTravel ? null : selectedMonth, ledger, selectedCategory) : []),
     [entries, isTravel, selectedMonth, ledger, selectedCategory],
   );
+  // Always shown regardless of how close to the limit it is (unlike the
+  // Budget Alerts banner, which only surfaces >=80%) - you asked to see
+  // this specific category, so its status is worth showing outright.
+  // Filtered to just the one budget so computeBudgetStatus's "no limit
+  // set" skip logic naturally makes this null when there's nothing to show.
+  const budgetStatus = useMemo(() => {
+    if (!selectedCategory || !budgets?.[selectedCategory]) return null;
+    const [status] = computeBudgetStatus(data, { [selectedCategory]: budgets[selectedCategory] });
+    return status || null;
+  }, [selectedCategory, budgets, data]);
 
   return (
     <section className="panel-card px-4 sm:px-5 py-4">
@@ -292,6 +323,7 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
           currency={currency}
           isTravel={isTravel}
           selectedMonth={selectedMonth}
+          budgetStatus={budgetStatus}
           onClose={() => setSelectedCategory(null)}
         />
       )}

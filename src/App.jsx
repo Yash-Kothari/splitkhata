@@ -725,6 +725,7 @@ export default function App() {
                     onMonthChange={setSelectedMonth}
                     availableMonths={availableMonths}
                     ledger={activeLedger}
+                    budgets={activeLedger === 'travel' ? (currentTrip?.categoryBudgets || {}) : dbHouseholdBudgets}
                   />
                 </Suspense>
               </div>
