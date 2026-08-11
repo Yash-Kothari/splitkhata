@@ -18,19 +18,23 @@ export default function BudgetAlerts({ entries, ledger, month = null, budgets = 
 
   return (
     <section className="panel-card px-4 sm:px-5 py-4 border-l-4 border-stamp-red/60">
-      <h3 className="font-display text-sm font-bold text-ink mb-2">⚠️ Budget Alerts</h3>
-      <div className="space-y-1.5">
+      <h3 className="font-display text-sm font-bold text-ink mb-3">⚠️ Budget Alerts</h3>
+      <div className="space-y-3">
         {alerts.map((a) => (
-          <div key={a.category} className="flex items-center justify-between gap-3 text-sm">
-            <span className="flex items-center gap-1.5 min-w-0">
-              <span
-                className={`w-2 h-2 rounded-full shrink-0 ${a.status === 'over' ? 'bg-stamp-red' : 'bg-mustard'}`}
+          <div key={a.category} className="space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium text-ink">{a.category}</span>
+              <span className="text-xs text-muted-text shrink-0">{Math.round(a.pctUsed * 100)}%</span>
+            </div>
+            <div className="w-full h-1.5 rounded-full bg-ink/10 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${a.status === 'over' ? 'bg-stamp-red' : 'bg-mustard'}`}
+                style={{ width: `${Math.min(a.pctUsed * 100, 100)}%` }}
               />
-              <span className="text-ink font-medium truncate">{a.category}</span>
-            </span>
-            <span className="font-mono text-xs text-muted-text shrink-0">
-              {formatCurrency(a.spent)} / {formatCurrency(a.limit)} ({Math.round(a.pctUsed * 100)}%)
-            </span>
+            </div>
+            <p className="text-2xs text-muted-text">
+              {formatCurrency(a.spent)} of {formatCurrency(a.limit)}
+            </p>
           </div>
         ))}
       </div>
