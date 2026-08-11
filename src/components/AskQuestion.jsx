@@ -76,20 +76,15 @@ export default function AskQuestion({
 
   return (
     <>
-      <div className="fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-40 w-14 h-14">
-        {!open && thread.length === 0 && (
-          <span className="absolute inset-0 rounded-full bg-ledger-green/60 animate-ping pointer-events-none" />
-        )}
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="relative w-14 h-14 rounded-full bg-gradient-to-br from-ledger-green to-ledger-green/80 text-white shadow-lg ring-1 ring-white/20 hover:from-ledger-green/90 hover:to-ledger-green/70 active:scale-95 transition-all flex items-center justify-center text-2xl"
-          aria-label={open ? 'Close chat' : 'Ask about this data'}
-          aria-expanded={open}
-        >
-          {open ? '✕' : '✨'}
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="fixed bottom-5 right-5 sm:bottom-6 sm:right-6 z-40 w-14 h-14 rounded-full bg-gradient-to-br from-ledger-green to-ledger-green/80 text-white shadow-lg ring-1 ring-white/20 hover:from-ledger-green/90 hover:to-ledger-green/70 active:scale-95 transition-all flex items-center justify-center text-2xl"
+        aria-label={open ? 'Close chat' : 'Ask about this data'}
+        aria-expanded={open}
+      >
+        {open ? '✕' : '✨'}
+      </button>
 
       {open && (
         <div className="fixed bottom-[5.5rem] sm:bottom-24 right-3 sm:right-6 left-3 sm:left-auto z-40 sm:w-96 max-h-[70vh] rounded-2xl bg-paper-card border border-ink/15 shadow-2xl flex flex-col overflow-hidden">
