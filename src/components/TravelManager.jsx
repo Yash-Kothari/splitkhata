@@ -179,6 +179,45 @@ export default function TravelManager({
     }
   }
 
+  // Budgets are scoped to this one trip only - stored directly on the trip
+  // doc (categoryBudgets), same pattern as guests, applied against the
+  // trip's whole spend (no month boundary, unlike household's recurring
+  // monthly limit). Re-seeded from the trip whenever the selected trip
+  // changes, since this component stays mounted across trip switches.
+  const [tripBudgetDrafts, setTripBudgetDrafts] = useState({});
+  const [savingTripBudgets, setSavingTripBudgets] = useState(false);
+  const [tripBudgetMessage, setTripBudgetMessage] = useState('');
+
+  useEffect(() => {
+    setTripBudgetDrafts({ ...(selectedTripObj?.categoryBudgets || {}) });
+    setTripBudgetMessage('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTripObj?.id]);
+
+  function handleTripBudgetInputChange(category, value) {
+    setTripBudgetDrafts((prev) => ({ ...prev, [category]: value }));
+  }
+
+  async function handleSaveTripBudgets() {
+    if (!selectedTripObj) return;
+    setSavingTripBudgets(true);
+    setTripBudgetMessage('');
+    try {
+      const cleaned = {};
+      for (const [cat, val] of Object.entries(tripBudgetDrafts)) {
+        const num = Number(val);
+        if (val !== '' && val != null && num > 0) cleaned[cat] = num;
+      }
+      await updateTripInDb(selectedTripObj.id, { categoryBudgets: cleaned });
+      setTripBudgetDrafts(cleaned);
+      setTripBudgetMessage('Budgets saved.');
+    } catch (err) {
+      onSaveError?.(err);
+    } finally {
+      setSavingTripBudgets(false);
+    }
+  }
+
   const selectedTripCashStats = useMemo(() => {
     const relevant = cashMovements.filter((movement) => movement.tripName === selectedTrip);
     const opening = relevant.filter((movement) => movement.type === 'opening').reduce((sum, movement) => sum + Number(movement.amount || 0), 0);
@@ -786,6 +825,45 @@ export default function TravelManager({
                 </span>
               ))}
             </div>
+          </div>
+
+          <div className="space-y-2 pt-2 border-t border-ink/10">
+            <p className="text-xs font-medium text-ink">Category Budgets (this trip)</p>
+            <p className="text-2xs text-muted-text -mt-1">
+              A spending limit for the whole trip, not per month - a category with no limit set is never
+              flagged. Warns at 80% of the limit, alerts once it's exceeded.
+            </p>
+            {tripBudgetMessage && (
+              <p className="text-2xs text-ledger-green font-semibold">{tripBudgetMessage}</p>
+            )}
+            <div className="space-y-1.5">
+              {displayCategories.map((category) => (
+                <div key={category} className="flex items-center justify-between gap-2">
+                  <span className="text-xs text-ink">{category}</span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span className="text-2xs text-muted-text">₹</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="any"
+                      value={tripBudgetDrafts[category] ?? ''}
+                      onChange={(e) => handleTripBudgetInputChange(category, e.target.value)}
+                      placeholder="No limit"
+                      className="w-24 min-h-8 px-2 py-1 rounded-lg border border-ink/15 bg-paper text-ink text-xs text-right focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={handleSaveTripBudgets}
+              disabled={savingTripBudgets}
+              className="min-h-9 rounded-lg bg-ledger-green px-3.5 py-1.5 font-semibold text-xs text-white hover:bg-ledger-green/90 disabled:opacity-50 transition-colors"
+            >
+              {savingTripBudgets ? 'Saving...' : 'Save Budgets'}
+            </button>
           </div>
 
           <div className="space-y-2 pt-2 border-t border-ink/10">

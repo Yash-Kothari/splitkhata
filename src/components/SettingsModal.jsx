@@ -9,6 +9,7 @@ import {
   deleteMemberFromDb,
   isFirebaseConfigured,
   savePinConfigToDb,
+  saveHouseholdBudgetsToDb,
   seedSampleExpenses,
   wipeAllExpenses,
 } from '../firebase';
@@ -24,6 +25,7 @@ export default function SettingsModal({
   dbMembers = [],
   rawMemberDocs = [],
   activeLedger = 'household',
+  householdBudgets = {},
 }) {
   const [activeTab, setActiveTab] = useState('categories');
   const [categoryLedger, setCategoryLedger] = useState(activeLedger);
@@ -39,6 +41,10 @@ export default function SettingsModal({
   const [pinConfig, setPinConfigState] = useState(() => getPinConfig());
   const [newPin, setNewPin] = useState(pinConfig.pin || '');
   const [pinMessage, setPinMessage] = useState('');
+
+  const [budgetDrafts, setBudgetDrafts] = useState(() => ({ ...householdBudgets }));
+  const [savingBudgets, setSavingBudgets] = useState(false);
+  const [budgetMessage, setBudgetMessage] = useState('');
 
   const [seeding, setSeeding] = useState(false);
   const [wiping, setWiping] = useState(false);
@@ -84,6 +90,31 @@ export default function SettingsModal({
     await savePinConfigToDb(updated);
     setPinConfigState(updated);
     setPinMessage(enabled ? 'Security PIN saved & synced to cloud!' : 'Security PIN disabled.');
+  }
+
+  function handleBudgetInputChange(category, value) {
+    setBudgetDrafts((prev) => ({ ...prev, [category]: value }));
+  }
+
+  async function handleSaveBudgets() {
+    setSavingBudgets(true);
+    setBudgetMessage('');
+    try {
+      // Blank/zero/invalid collapses back to "no limit" rather than being
+      // saved as a real (and confusing) 0-rupee budget.
+      const cleaned = {};
+      for (const [cat, val] of Object.entries(budgetDrafts)) {
+        const num = Number(val);
+        if (val !== '' && val != null && num > 0) cleaned[cat] = num;
+      }
+      await saveHouseholdBudgetsToDb(cleaned);
+      setBudgetDrafts(cleaned);
+      setBudgetMessage('Budgets saved.');
+    } catch (err) {
+      setBudgetMessage(`Failed to save budgets: ${err?.message || err}`);
+    } finally {
+      setSavingBudgets(false);
+    }
   }
 
   const categoriesList =
@@ -208,6 +239,17 @@ export default function SettingsModal({
           </button>
           <button
             type="button"
+            onClick={() => setActiveTab('budgets')}
+            className={`px-3 py-2 text-xs sm:text-sm font-semibold border-b-2 transition-colors shrink-0 whitespace-nowrap flex items-center min-h-[38px] ${
+              activeTab === 'budgets'
+                ? 'border-ledger-green text-ledger-green'
+                : 'border-transparent text-muted-text hover:text-ink'
+            }`}
+          >
+            Budgets
+          </button>
+          <button
+            type="button"
             onClick={() => setActiveTab('currencies')}
             className={`px-3 py-2 text-xs sm:text-sm font-semibold border-b-2 transition-colors shrink-0 whitespace-nowrap flex items-center min-h-[38px] ${
               activeTab === 'currencies'
@@ -318,6 +360,60 @@ export default function SettingsModal({
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'budgets' && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-ink mb-0.5">
+                  Household Category Budgets
+                </h3>
+                <p className="text-xs text-muted-text">
+                  Set a monthly spending limit per category - it applies every month, not just this one. A
+                  category with no limit set is never flagged, no matter how much is spent. You'll see a warning
+                  once spend reaches 80% of the limit, and an alert once it's exceeded.
+                </p>
+              </div>
+
+              {budgetMessage && (
+                <div className="p-3 rounded-xl bg-ledger-green/10 border border-ledger-green/30 text-ledger-green text-xs font-semibold">
+                  {budgetMessage}
+                </div>
+              )}
+
+              <div className="space-y-2 max-h-72 overflow-y-auto p-1">
+                {(dbCategories?.household || []).map((cat) => (
+                  <div key={cat} className="flex items-center justify-between gap-3">
+                    <span className="text-sm text-ink font-medium">{cat}</span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className="text-xs text-muted-text">₹</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="any"
+                        value={budgetDrafts[cat] ?? ''}
+                        onChange={(e) => handleBudgetInputChange(cat, e.target.value)}
+                        placeholder="No limit"
+                        className="w-28 min-h-9 px-2.5 py-1 rounded-lg border border-ink/15 bg-paper text-ink text-sm text-right focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                      />
+                    </div>
+                  </div>
+                ))}
+                {(!dbCategories?.household || dbCategories.household.length === 0) && (
+                  <p className="text-xs text-muted-text">No household categories yet - add some in the Categories tab first.</p>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSaveBudgets}
+                disabled={savingBudgets}
+                className="min-h-11 px-5 py-2 rounded-xl bg-ledger-green text-white font-semibold text-sm hover:bg-ledger-green/90 disabled:opacity-50 transition-colors w-full sm:w-auto"
+              >
+                {savingBudgets ? 'Saving...' : 'Save Budgets'}
+              </button>
             </div>
           )}
 

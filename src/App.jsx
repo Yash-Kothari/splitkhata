@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import BalanceStrip from './components/BalanceStrip';
 import AddEntryForm from './components/AddEntryForm';
 import AskQuestion from './components/AskQuestion';
+import BudgetAlerts from './components/BudgetAlerts';
 import EntryList from './components/EntryList';
 import ConnectionState from './components/ConnectionState';
 import TravelManager from './components/TravelManager';
@@ -17,6 +18,7 @@ import {
   subscribeToCashMovements,
   subscribeToPaymentMethods,
   subscribeToPinConfig,
+  subscribeToHouseholdBudgets,
   isFirebaseConfigured,
   subscribeToAuth,
   signInWithGoogle,
@@ -34,6 +36,8 @@ import {
   setStoredActiveLedger,
   getPinConfig,
   getActiveTrip,
+  getMonthKey,
+  todayISO,
 } from './utils';
 
 // recharts pulls in a lot of weight for content that's below the fold on
@@ -136,6 +140,7 @@ export default function App() {
   const [dbTrips, setDbTrips] = useState([]);
   const [dbCashMovements, setDbCashMovements] = useState([]);
   const [dbPaymentMethods, setDbPaymentMethods] = useState({ methods: [], rawDocs: [] });
+  const [dbHouseholdBudgets, setDbHouseholdBudgets] = useState({});
   const [connectionStatus, setConnectionStatus] = useState('ok');
   const [errorMessage, setErrorMessage] = useState('');
   const [activeLedger, setActiveLedgerState] = useState(() => getStoredActiveLedger());
@@ -226,6 +231,8 @@ export default function App() {
       }
     });
 
+    const unsubBudgets = subscribeToHouseholdBudgets((budgets) => setDbHouseholdBudgets(budgets));
+
     // Real-time subscriptions initialized
     return () => {
       unsubCurrencies();
@@ -234,6 +241,7 @@ export default function App() {
       unsubCashMovements();
       unsubPaymentMethods();
       unsubPin();
+      unsubBudgets();
     };
   }, [currentUser]);
 
@@ -484,6 +492,7 @@ export default function App() {
           dbMembers={activeMembersList}
           rawMemberDocs={dbMembers.rawDocs}
           activeLedger={activeLedger}
+          householdBudgets={dbHouseholdBudgets}
         />
       )}
 
@@ -617,6 +626,15 @@ export default function App() {
             exampleQuestions={askExampleQuestions}
           />
 
+          {activeLedger === 'household' && (
+            <BudgetAlerts
+              entries={entries}
+              ledger="household"
+              month={getMonthKey(todayISO())}
+              budgets={dbHouseholdBudgets}
+            />
+          )}
+
           {activeLedger === 'payments' && (
             <PaymentsCenter
               entries={entries}
@@ -670,6 +688,14 @@ export default function App() {
                   tripId={currentTrip?.id}
                   tripRollup={tripRollup}
                   onSaveError={handleSaveError}
+                />
+              )}
+
+              {activeLedger === 'travel' && (
+                <BudgetAlerts
+                  entries={tripEntries}
+                  ledger="travel"
+                  budgets={currentTrip?.categoryBudgets || {}}
                 />
               )}
 

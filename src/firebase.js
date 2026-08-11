@@ -45,6 +45,8 @@ import {
   setStoredPaymentMethods,
   getPinConfig,
   setPinConfig,
+  getHouseholdBudgets,
+  setHouseholdBudgets,
   normalizeLedger,
   HOUSEHOLD_CATEGORIES_KEY,
   TRAVEL_CATEGORIES_KEY,
@@ -53,6 +55,7 @@ import {
   TRIPS_KEY,
   CASH_MOVEMENTS_KEY,
   PAYMENT_METHODS_KEY,
+  HOUSEHOLD_BUDGETS_KEY,
 } from './utils';
 
 // Firestore write batches are capped at 500 operations.
@@ -220,6 +223,7 @@ const memberListeners = new Set();
 const tripListeners = new Set();
 const cashMovementListeners = new Set();
 const paymentMethodListeners = new Set();
+const budgetListeners = new Set();
 
 let categoriesSeededFlag = false;
 
@@ -1083,6 +1087,61 @@ export async function savePinConfigToDb(config) {
       });
     } catch (err) {
       console.error('Error saving PIN config to Firestore:', err);
+    }
+  }
+}
+
+// Household category budgets - a single settings doc holding the whole
+// { category: limit } map, same shape as getHouseholdBudgets()/
+// setHouseholdBudgets() in utils.js. Trip-scoped budgets don't go through
+// here at all - they live directly on the trip document (categoryBudgets
+// field, same pattern as guests), updated via updateTripInDb.
+export function subscribeToHouseholdBudgets(callback) {
+  if (dbInstance) {
+    const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+    return onSnapshot(
+      budgetsDocRef,
+      (docSnap) => {
+        const budgets = docSnap.exists() && docSnap.data().budgets ? docSnap.data().budgets : {};
+        setHouseholdBudgets(budgets);
+        callback(budgets);
+      },
+      (err) => {
+        console.warn('Household budgets subscription error:', err);
+        callback(getHouseholdBudgets());
+      },
+    );
+  } else {
+    // Same-tab reactivity (budgetListeners, notified by
+    // saveHouseholdBudgetsToDb below) and cross-tab reactivity (the
+    // 'storage' event) - without both, a subscriber mounted before a save
+    // happens (e.g. App.jsx's BudgetAlerts) would only ever see the value
+    // from the moment it first subscribed, same bug this was written to fix.
+    const handler = (data) => callback(data);
+    budgetListeners.add(handler);
+    callback(getHouseholdBudgets());
+
+    const storageListener = (e) => {
+      if (e.key === HOUSEHOLD_BUDGETS_KEY) callback(getHouseholdBudgets());
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      budgetListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+export async function saveHouseholdBudgetsToDb(budgets) {
+  setHouseholdBudgets(budgets);
+  budgetListeners.forEach((fn) => fn(budgets));
+  if (dbInstance) {
+    try {
+      const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+      await setDoc(budgetsDocRef, { budgets, updatedAt: serverTimestamp() });
+    } catch (err) {
+      console.error('Error saving household budgets to Firestore:', err);
     }
   }
 }

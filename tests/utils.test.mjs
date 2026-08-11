@@ -25,6 +25,10 @@ import {
   buildAskQuestionPrompt,
   buildAskAnswerNarrationPrompt,
   resolveAskQuery,
+  computeBudgetAlerts,
+  getHouseholdBudgets,
+  setHouseholdBudgets,
+  groupByCategory,
 } from '../src/utils.js';
 
 test('uses Yash and Kruti as default pair names', () => {
@@ -731,4 +735,70 @@ test('buildAskAnswerNarrationPrompt includes the question, every fact, and a nev
   assert.match(prompt, /Food \(all time\): ₹140\.00\./);
   assert.match(prompt, /Hotel \(all time\): ₹500\.00\./);
   assert.match(prompt, /never invent/);
+});
+
+test('computeBudgetAlerts ignores categories with no budget set', () => {
+  const totals = [{ category: 'Food', amount: 9000 }];
+  const alerts = computeBudgetAlerts(totals, {});
+  assert.deepEqual(alerts, []);
+});
+
+test('computeBudgetAlerts ignores a zero or invalid limit (still counts as "no limit")', () => {
+  const totals = [{ category: 'Food', amount: 9000 }];
+  const alerts = computeBudgetAlerts(totals, { Food: 0, Hotel: -5, Transport: 'not a number' });
+  assert.deepEqual(alerts, []);
+});
+
+test('computeBudgetAlerts flags "warning" at the 80% threshold, before it\'s actually over', () => {
+  const totals = [{ category: 'Food', amount: 8000 }];
+  const alerts = computeBudgetAlerts(totals, { Food: 10000 });
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].status, 'warning');
+  assert.equal(alerts[0].spent, 8000);
+  assert.equal(alerts[0].limit, 10000);
+  assert.equal(alerts[0].pctUsed, 0.8);
+});
+
+test('computeBudgetAlerts flags "over" once spend exceeds the limit', () => {
+  const totals = [{ category: 'Food', amount: 12000 }];
+  const alerts = computeBudgetAlerts(totals, { Food: 10000 });
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].status, 'over');
+});
+
+test('computeBudgetAlerts says nothing for a category comfortably under its limit', () => {
+  const totals = [{ category: 'Food', amount: 1000 }];
+  const alerts = computeBudgetAlerts(totals, { Food: 10000 });
+  assert.deepEqual(alerts, []);
+});
+
+test('computeBudgetAlerts treats a budgeted category with zero actual spend as 0% used, not an alert', () => {
+  const alerts = computeBudgetAlerts([], { Food: 10000 });
+  assert.deepEqual(alerts, []);
+});
+
+test('computeBudgetAlerts ranks worst (highest % used) first', () => {
+  const totals = [
+    { category: 'Food', amount: 8500 },
+    { category: 'Hotel', amount: 25000 },
+  ];
+  const alerts = computeBudgetAlerts(totals, { Food: 10000, Hotel: 20000 });
+  assert.deepEqual(alerts.map((a) => a.category), ['Hotel', 'Food']);
+});
+
+test('computeBudgetAlerts works directly with groupByCategory\'s output shape', () => {
+  const entries = [
+    { amount: 9500, category: 'Groceries', date: '2026-08-01', ledger: 'household', splitType: 'shared' },
+  ];
+  const totals = groupByCategory(entries, '2026-08', 'household');
+  const alerts = computeBudgetAlerts(totals, { Groceries: 10000 });
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].status, 'warning');
+});
+
+test('getHouseholdBudgets/setHouseholdBudgets round-trip through storage, defaulting to {}', () => {
+  setHouseholdBudgets({ Groceries: 10000 });
+  assert.deepEqual(getHouseholdBudgets(), { Groceries: 10000 });
+  setHouseholdBudgets({});
+  assert.deepEqual(getHouseholdBudgets(), {});
 });

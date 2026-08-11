@@ -976,6 +976,32 @@ export function groupByCategory(entries = [], monthKey, ledger, customCategories
     .map((category) => ({ category, amount: groups[category] }));
 }
 
+// A category never appears here unless it has an explicit limit set (the
+// default is "no limit", not zero) and spend has actually reached the
+// warning threshold - most categories, most months, produce nothing to
+// show at all.
+export const BUDGET_WARNING_THRESHOLD = 0.8;
+
+// categoryTotals: the output of groupByCategory - [{ category, amount }].
+// budgets: { [category]: limitNumber }, from getHouseholdBudgets() or a
+// trip's own categoryBudgets field. Ranked worst-first (closest to/over
+// its limit first) so the most urgent alert is always on top.
+export function computeBudgetAlerts(categoryTotals, budgets) {
+  const alerts = [];
+  for (const [category, limit] of Object.entries(budgets || {})) {
+    const numericLimit = Number(limit);
+    if (!numericLimit || numericLimit <= 0) continue;
+    const spent = categoryTotals.find((c) => c.category === category)?.amount || 0;
+    const pctUsed = spent / numericLimit;
+    if (pctUsed >= 1) {
+      alerts.push({ category, spent, limit: numericLimit, pctUsed, status: 'over' });
+    } else if (pctUsed >= BUDGET_WARNING_THRESHOLD) {
+      alerts.push({ category, spent, limit: numericLimit, pctUsed, status: 'warning' });
+    }
+  }
+  return alerts.sort((a, b) => b.pctUsed - a.pctUsed);
+}
+
 // Local storage helpers
 let memoryStorage = {};
 
@@ -1156,6 +1182,28 @@ export function verifyPin(inputPin) {
   const { pin, enabled } = getPinConfig();
   if (!enabled || !pin) return true;
   return inputPin === pin;
+}
+
+export const HOUSEHOLD_BUDGETS_KEY = 'splitkhata_household_budgets';
+
+// A category with no entry here has no limit - the default, and the only
+// state every pre-existing category starts in. Household budgets are a
+// single recurring monthly cap per category (not a specific month's
+// figure), checked against whatever the current month's spend happens to
+// be - so setting "Groceries: 10000" applies every month, not just once.
+export function getHouseholdBudgets() {
+  const raw = getItem(HOUSEHOLD_BUDGETS_KEY);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function setHouseholdBudgets(budgets) {
+  setItem(HOUSEHOLD_BUDGETS_KEY, JSON.stringify(budgets || {}));
 }
 
 export function getStoredCurrencies() {
