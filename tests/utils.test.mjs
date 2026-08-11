@@ -26,6 +26,7 @@ import {
   buildAskAnswerNarrationPrompt,
   resolveAskQuery,
   computeBudgetAlerts,
+  computeBudgetStatus,
   getHouseholdBudgets,
   setHouseholdBudgets,
   groupByCategory,
@@ -793,6 +794,42 @@ test('computeBudgetAlerts works directly with groupByCategory\'s output shape', 
   const totals = groupByCategory(entries, '2026-08', 'household');
   const alerts = computeBudgetAlerts(totals, { Groceries: 10000 });
   assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].status, 'warning');
+});
+
+test('computeBudgetStatus returns every budgeted category, even one comfortably under its limit', () => {
+  const totals = [{ category: 'Food', amount: 1000 }];
+  const status = computeBudgetStatus(totals, { Food: 10000 });
+  assert.equal(status.length, 1);
+  assert.equal(status[0].spent, 1000);
+  assert.equal(status[0].limit, 10000);
+  assert.equal(status[0].pctUsed, 0.1);
+  assert.equal(status[0].status, undefined, 'computeBudgetStatus rows have no over/warning label - that\'s computeBudgetAlerts\' job');
+});
+
+test('computeBudgetStatus still excludes categories with no budget or an invalid one', () => {
+  const totals = [{ category: 'Food', amount: 1000 }, { category: 'Hotel', amount: 500 }];
+  const status = computeBudgetStatus(totals, { Food: 10000, Hotel: 0 });
+  assert.deepEqual(status.map((s) => s.category), ['Food']);
+});
+
+test('computeBudgetStatus ranks worst first, same as computeBudgetAlerts', () => {
+  const totals = [
+    { category: 'Food', amount: 1000 },
+    { category: 'Hotel', amount: 18000 },
+  ];
+  const status = computeBudgetStatus(totals, { Food: 10000, Hotel: 20000 });
+  assert.deepEqual(status.map((s) => s.category), ['Hotel', 'Food']);
+});
+
+test('computeBudgetAlerts is computeBudgetStatus filtered to >=80% and labeled', () => {
+  const totals = [{ category: 'Food', amount: 1000 }, { category: 'Hotel', amount: 18000 }];
+  const budgets = { Food: 10000, Hotel: 20000 };
+  const status = computeBudgetStatus(totals, budgets);
+  const alerts = computeBudgetAlerts(totals, budgets);
+  assert.equal(status.length, 2);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].category, 'Hotel');
   assert.equal(alerts[0].status, 'warning');
 });
 

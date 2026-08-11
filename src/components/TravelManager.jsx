@@ -10,7 +10,15 @@ import {
   deletePaymentMethodFromDb,
   addExpense,
 } from '../firebase';
-import { DEFAULT_CURRENCIES as CURRENCIES, normalizeLedger, todayISO, getActiveTrip } from '../utils';
+import {
+  DEFAULT_CURRENCIES as CURRENCIES,
+  normalizeLedger,
+  todayISO,
+  getActiveTrip,
+  groupByCategory,
+  computeBudgetStatus,
+  formatCurrency,
+} from '../utils';
 
 export default function TravelManager({
   onTripSelect,
@@ -185,37 +193,69 @@ export default function TravelManager({
   // monthly limit). Re-seeded from the trip whenever the selected trip
   // changes, since this component stays mounted across trip switches.
   const [tripBudgetDrafts, setTripBudgetDrafts] = useState({});
-  const [savingTripBudgets, setSavingTripBudgets] = useState(false);
+  const [newTripBudgetCategory, setNewTripBudgetCategory] = useState('');
+  const [newTripBudgetAmount, setNewTripBudgetAmount] = useState('');
+  const [savingTripBudgetCat, setSavingTripBudgetCat] = useState('');
   const [tripBudgetMessage, setTripBudgetMessage] = useState('');
 
   useEffect(() => {
     setTripBudgetDrafts({ ...(selectedTripObj?.categoryBudgets || {}) });
+    setNewTripBudgetCategory('');
+    setNewTripBudgetAmount('');
     setTripBudgetMessage('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTripObj?.id]);
 
-  function handleTripBudgetInputChange(category, value) {
-    setTripBudgetDrafts((prev) => ({ ...prev, [category]: value }));
-  }
+  // Whole-trip spend per category (no month boundary, unlike household) -
+  // what the live status bars below are measured against.
+  const tripCategoryTotals = useMemo(
+    () => groupByCategory(entries.filter((e) => normalizeLedger(e.ledger) === 'travel' && e.tripName === selectedTrip), null, 'travel'),
+    [entries, selectedTrip],
+  );
+  const tripBudgetStatus = useMemo(
+    () => computeBudgetStatus(tripCategoryTotals, tripBudgetDrafts),
+    [tripCategoryTotals, tripBudgetDrafts],
+  );
+  const budgetedTripCategoryNames = new Set(tripBudgetStatus.map((s) => s.category));
+  const unbudgetedTripCategories = displayCategories.filter((c) => !budgetedTripCategoryNames.has(c));
 
-  async function handleSaveTripBudgets() {
+  async function persistTripBudgets(nextBudgets, category) {
     if (!selectedTripObj) return;
-    setSavingTripBudgets(true);
+    setSavingTripBudgetCat(category);
     setTripBudgetMessage('');
     try {
-      const cleaned = {};
-      for (const [cat, val] of Object.entries(tripBudgetDrafts)) {
-        const num = Number(val);
-        if (val !== '' && val != null && num > 0) cleaned[cat] = num;
-      }
-      await updateTripInDb(selectedTripObj.id, { categoryBudgets: cleaned });
-      setTripBudgetDrafts(cleaned);
-      setTripBudgetMessage('Budgets saved.');
+      await updateTripInDb(selectedTripObj.id, { categoryBudgets: nextBudgets });
+      setTripBudgetDrafts(nextBudgets);
     } catch (err) {
       onSaveError?.(err);
     } finally {
-      setSavingTripBudgets(false);
+      setSavingTripBudgetCat('');
     }
+  }
+
+  async function handleAddTripBudget(event) {
+    event.preventDefault();
+    const amount = Number(newTripBudgetAmount);
+    if (!newTripBudgetCategory || !amount || amount <= 0) return;
+    await persistTripBudgets({ ...tripBudgetDrafts, [newTripBudgetCategory]: amount }, newTripBudgetCategory);
+    setNewTripBudgetCategory('');
+    setNewTripBudgetAmount('');
+  }
+
+  function handleTripBudgetAmountChange(category, value) {
+    setTripBudgetDrafts((prev) => ({ ...prev, [category]: value }));
+  }
+
+  async function handleTripBudgetAmountBlur(category) {
+    const amount = Number(tripBudgetDrafts[category]);
+    if (!amount || amount <= 0) return;
+    await persistTripBudgets({ ...tripBudgetDrafts, [category]: amount }, category);
+  }
+
+  async function handleRemoveTripBudget(category) {
+    const next = { ...tripBudgetDrafts };
+    delete next[category];
+    await persistTripBudgets(next, category);
   }
 
   const selectedTripCashStats = useMemo(() => {
@@ -830,40 +870,92 @@ export default function TravelManager({
           <div className="space-y-2 pt-2 border-t border-ink/10">
             <p className="text-xs font-medium text-ink">Category Budgets (this trip)</p>
             <p className="text-2xs text-muted-text -mt-1">
-              A spending limit for the whole trip, not per month - a category with no limit set is never
-              flagged. Warns at 80% of the limit, alerts once it's exceeded.
+              Pick a category and set a limit for the whole trip, not per month. Nothing is flagged until you
+              set one. Warns at 80% of the limit, alerts once it's exceeded.
             </p>
             {tripBudgetMessage && (
-              <p className="text-2xs text-ledger-green font-semibold">{tripBudgetMessage}</p>
+              <p className="text-2xs text-stamp-red font-semibold">{tripBudgetMessage}</p>
             )}
-            <div className="space-y-1.5">
-              {displayCategories.map((category) => (
-                <div key={category} className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-ink">{category}</span>
-                  <div className="flex items-center gap-1 shrink-0">
-                    <span className="text-2xs text-muted-text">₹</span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      step="any"
-                      value={tripBudgetDrafts[category] ?? ''}
-                      onChange={(e) => handleTripBudgetInputChange(category, e.target.value)}
-                      placeholder="No limit"
-                      className="w-24 min-h-8 px-2 py-1 rounded-lg border border-ink/15 bg-paper text-ink text-xs text-right focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
-                    />
+
+            <form onSubmit={handleAddTripBudget} className="flex gap-2">
+              <select
+                value={newTripBudgetCategory}
+                onChange={(e) => setNewTripBudgetCategory(e.target.value)}
+                className="flex-1 min-h-10 px-3 py-1.5 rounded-lg border border-ink/15 bg-paper text-ink text-xs focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+              >
+                <option value="">Select a category...</option>
+                {unbudgetedTripCategories.map((category) => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+              <div className="flex items-center gap-1 w-24 shrink-0">
+                <span className="text-2xs text-muted-text">₹</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  value={newTripBudgetAmount}
+                  onChange={(e) => setNewTripBudgetAmount(e.target.value)}
+                  placeholder="Limit"
+                  className="w-full min-h-10 px-2 py-1.5 rounded-lg border border-ink/15 bg-paper text-ink text-xs focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={!newTripBudgetCategory || !newTripBudgetAmount || savingTripBudgetCat === newTripBudgetCategory}
+                className="min-h-10 rounded-lg border border-ink/15 bg-paper px-3 py-1.5 font-semibold text-xs text-ink hover:bg-paper-card disabled:opacity-50 transition-colors shrink-0"
+              >
+                Add
+              </button>
+            </form>
+            {displayCategories.length > 0 && unbudgetedTripCategories.length === 0 && (
+              <p className="text-2xs text-muted-text">Every category already has a budget set.</p>
+            )}
+
+            {tripBudgetStatus.length > 0 && (
+              <div className="space-y-3 pt-2">
+                {tripBudgetStatus.map((s) => (
+                  <div key={s.category} className="space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-ink">{s.category}</span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="text-2xs text-muted-text">₹</span>
+                        <input
+                          type="number"
+                          inputMode="decimal"
+                          min="0"
+                          step="any"
+                          value={tripBudgetDrafts[s.category] ?? ''}
+                          onChange={(e) => handleTripBudgetAmountChange(s.category, e.target.value)}
+                          onBlur={() => handleTripBudgetAmountBlur(s.category)}
+                          className="w-20 min-h-7 px-1.5 py-1 rounded-md border border-ink/15 bg-paper text-ink text-xs text-right focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveTripBudget(s.category)}
+                          className="text-muted-text hover:text-stamp-red text-xs font-bold px-1 py-0.2 rounded hover:bg-stamp-red/10 transition-colors"
+                          title="Remove budget"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                    <div className="w-full h-1.5 rounded-full bg-ink/10 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${
+                          s.pctUsed >= 1 ? 'bg-stamp-red' : s.pctUsed >= 0.8 ? 'bg-mustard' : 'bg-ledger-green'
+                        }`}
+                        style={{ width: `${Math.min(s.pctUsed * 100, 100)}%` }}
+                      />
+                    </div>
+                    <p className="text-2xs text-muted-text">
+                      {formatCurrency(s.spent)} of {formatCurrency(s.limit)} ({Math.round(s.pctUsed * 100)}%)
+                    </p>
                   </div>
-                </div>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={handleSaveTripBudgets}
-              disabled={savingTripBudgets}
-              className="min-h-9 rounded-lg bg-ledger-green px-3.5 py-1.5 font-semibold text-xs text-white hover:bg-ledger-green/90 disabled:opacity-50 transition-colors"
-            >
-              {savingTripBudgets ? 'Saving...' : 'Save Budgets'}
-            </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="space-y-2 pt-2 border-t border-ink/10">

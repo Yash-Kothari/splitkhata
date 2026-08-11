@@ -493,6 +493,7 @@ export default function App() {
           rawMemberDocs={dbMembers.rawDocs}
           activeLedger={activeLedger}
           householdBudgets={dbHouseholdBudgets}
+          householdEntries={askHouseholdEntries}
         />
       )}
 

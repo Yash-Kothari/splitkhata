@@ -984,22 +984,30 @@ export const BUDGET_WARNING_THRESHOLD = 0.8;
 
 // categoryTotals: the output of groupByCategory - [{ category, amount }].
 // budgets: { [category]: limitNumber }, from getHouseholdBudgets() or a
-// trip's own categoryBudgets field. Ranked worst-first (closest to/over
-// its limit first) so the most urgent alert is always on top.
-export function computeBudgetAlerts(categoryTotals, budgets) {
-  const alerts = [];
+// trip's own categoryBudgets field. Every budgeted category gets a status
+// row regardless of how close it is to its limit - this is what the
+// budget-editing UI shows live progress from (computeBudgetAlerts below
+// is just this, filtered down to what's actually worth surfacing as an
+// alert). Ranked worst (highest % used) first.
+export function computeBudgetStatus(categoryTotals, budgets) {
+  const status = [];
   for (const [category, limit] of Object.entries(budgets || {})) {
     const numericLimit = Number(limit);
     if (!numericLimit || numericLimit <= 0) continue;
     const spent = categoryTotals.find((c) => c.category === category)?.amount || 0;
-    const pctUsed = spent / numericLimit;
-    if (pctUsed >= 1) {
-      alerts.push({ category, spent, limit: numericLimit, pctUsed, status: 'over' });
-    } else if (pctUsed >= BUDGET_WARNING_THRESHOLD) {
-      alerts.push({ category, spent, limit: numericLimit, pctUsed, status: 'warning' });
-    }
+    status.push({ category, spent, limit: numericLimit, pctUsed: spent / numericLimit });
   }
-  return alerts.sort((a, b) => b.pctUsed - a.pctUsed);
+  return status.sort((a, b) => b.pctUsed - a.pctUsed);
+}
+
+// A category never appears here unless it has an explicit limit set (the
+// default is "no limit", not zero) and spend has actually reached the
+// warning threshold - most categories, most months, produce nothing to
+// show at all.
+export function computeBudgetAlerts(categoryTotals, budgets) {
+  return computeBudgetStatus(categoryTotals, budgets)
+    .filter((s) => s.pctUsed >= BUDGET_WARNING_THRESHOLD)
+    .map((s) => ({ ...s, status: s.pctUsed >= 1 ? 'over' : 'warning' }));
 }
 
 // Local storage helpers
