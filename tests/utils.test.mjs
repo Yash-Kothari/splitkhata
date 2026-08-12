@@ -31,6 +31,16 @@ import {
   getHouseholdBudgets,
   setHouseholdBudgets,
   groupByCategory,
+  getRecurringRules,
+  setRecurringRules,
+  buildRecurringEntryDate,
+  computeRecurringEntriesToGenerate,
+  getPaymentReminderConfig,
+  setPaymentReminderConfig,
+  getUnsettledSinceDate,
+  computePaymentReminder,
+  buildReceiptExtractionSchema,
+  buildReceiptExtractionPrompt,
 } from '../src/utils.js';
 
 test('uses Yash and Kruti as default pair names', () => {
@@ -865,4 +875,124 @@ test('getHouseholdBudgets/setHouseholdBudgets round-trip through storage, defaul
   assert.deepEqual(getHouseholdBudgets(), { Groceries: 10000 });
   setHouseholdBudgets({});
   assert.deepEqual(getHouseholdBudgets(), {});
+});
+
+test('getRecurringRules/setRecurringRules round-trip through storage, defaulting to []', () => {
+  const rules = [{ id: 'r1', category: 'Rent', amount: 30000, payer: 'Yash', splitType: 'shared', dayOfMonth: 1, active: true }];
+  setRecurringRules(rules);
+  assert.deepEqual(getRecurringRules(), rules);
+  setRecurringRules([]);
+  assert.deepEqual(getRecurringRules(), []);
+});
+
+test('buildRecurringEntryDate clamps the day to however many days the target month actually has', () => {
+  assert.equal(buildRecurringEntryDate('2026-08', 15), '2026-08-15');
+  assert.equal(buildRecurringEntryDate('2026-02', 31), '2026-02-28');
+  assert.equal(buildRecurringEntryDate('2028-02', 31), '2028-02-29', 'leap year Feb has 29 days');
+  assert.equal(buildRecurringEntryDate('2026-04', 31), '2026-04-30');
+});
+
+test('computeRecurringEntriesToGenerate creates only the current month for a rule that has never generated', () => {
+  const rules = [{ id: 'r1', category: 'Rent', amount: 30000, payer: 'Yash', splitType: 'shared', dayOfMonth: 1, active: true, lastGeneratedMonth: null }];
+  const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(rules, '2026-08');
+  assert.equal(toCreate.length, 1);
+  assert.equal(toCreate[0].date, '2026-08-01');
+  assert.equal(toCreate[0].category, 'Rent');
+  assert.equal(toCreate[0].ledger, 'household');
+  assert.equal(updatedRules[0].lastGeneratedMonth, '2026-08');
+});
+
+test('computeRecurringEntriesToGenerate backfills every month since lastGeneratedMonth up to the current one', () => {
+  const rules = [{ id: 'r1', category: 'Rent', amount: 30000, payer: 'Yash', splitType: 'shared', dayOfMonth: 1, active: true, lastGeneratedMonth: '2026-05' }];
+  const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(rules, '2026-08');
+  assert.deepEqual(toCreate.map((e) => e.date), ['2026-06-01', '2026-07-01', '2026-08-01']);
+  assert.equal(updatedRules[0].lastGeneratedMonth, '2026-08');
+});
+
+test('computeRecurringEntriesToGenerate creates nothing for a rule already generated this month', () => {
+  const rules = [{ id: 'r1', category: 'Rent', amount: 30000, payer: 'Yash', splitType: 'shared', dayOfMonth: 1, active: true, lastGeneratedMonth: '2026-08' }];
+  const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(rules, '2026-08');
+  assert.equal(toCreate.length, 0);
+  assert.equal(updatedRules, null, 'nothing changed, so there\'s nothing new to persist');
+});
+
+test('computeRecurringEntriesToGenerate skips inactive rules entirely', () => {
+  const rules = [{ id: 'r1', category: 'Rent', amount: 30000, payer: 'Yash', splitType: 'shared', dayOfMonth: 1, active: false, lastGeneratedMonth: null }];
+  const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(rules, '2026-08');
+  assert.equal(toCreate.length, 0);
+  assert.equal(updatedRules, null);
+});
+
+test('computeRecurringEntriesToGenerate caps backfill so a long-dormant rule doesn\'t flood the ledger', () => {
+  const rules = [{ id: 'r1', category: 'Rent', amount: 30000, payer: 'Yash', splitType: 'shared', dayOfMonth: 1, active: true, lastGeneratedMonth: '2020-01' }];
+  const { toCreate } = computeRecurringEntriesToGenerate(rules, '2026-08');
+  assert.ok(toCreate.length <= 6, `expected a bounded backfill, got ${toCreate.length} entries`);
+});
+
+test('getPaymentReminderConfig/setPaymentReminderConfig round-trip through storage, defaulting to enabled/14 days', () => {
+  setPaymentReminderConfig({});
+  assert.deepEqual(getPaymentReminderConfig(), { enabled: true, days: 14 });
+  setPaymentReminderConfig({ enabled: false, days: 7 });
+  assert.deepEqual(getPaymentReminderConfig(), { enabled: false, days: 7 });
+});
+
+test('getUnsettledSinceDate uses the most recent settlement date when one exists', () => {
+  const entries = [
+    { ledger: 'household', date: '2026-01-01', splitType: 'shared' },
+    { ledger: 'household', date: '2026-05-10', splitType: 'settlement' },
+    { ledger: 'household', date: '2026-03-01', splitType: 'settlement' },
+  ];
+  assert.equal(getUnsettledSinceDate(entries, 'household'), '2026-05-10');
+});
+
+test('getUnsettledSinceDate falls back to the earliest expense date when nothing has ever been settled', () => {
+  const entries = [
+    { ledger: 'household', date: '2026-03-01', splitType: 'shared' },
+    { ledger: 'household', date: '2026-01-15', splitType: 'shared' },
+  ];
+  assert.equal(getUnsettledSinceDate(entries, 'household'), '2026-01-15');
+});
+
+test('getUnsettledSinceDate returns null when there are no entries for that ledger', () => {
+  assert.equal(getUnsettledSinceDate([], 'household'), null);
+});
+
+test('computePaymentReminder is null when the balance is settled', () => {
+  const entries = [
+    { ledger: 'household', amount: 500, payer: 'Yash', split: true, date: '2026-01-01' },
+    { ledger: 'household', amount: 500, payer: 'Kruti', split: true, date: '2026-01-02' },
+  ];
+  assert.equal(computePaymentReminder(entries, 'household', PERSONS, { enabled: true, days: 14 }, '2026-08-01'), null);
+});
+
+test('computePaymentReminder is null when the imbalance hasn\'t sat around long enough yet', () => {
+  const entries = [{ ledger: 'household', amount: 1000, payer: 'Yash', split: true, date: '2026-07-30' }];
+  assert.equal(computePaymentReminder(entries, 'household', PERSONS, { enabled: true, days: 14 }, '2026-08-01'), null);
+});
+
+test('computePaymentReminder is null when reminders are disabled, even with a long-unsettled balance', () => {
+  const entries = [{ ledger: 'household', amount: 1000, payer: 'Yash', split: true, date: '2026-01-01' }];
+  assert.equal(computePaymentReminder(entries, 'household', PERSONS, { enabled: false, days: 14 }, '2026-08-01'), null);
+});
+
+test('computePaymentReminder fires once the imbalance has sat unsettled past the threshold', () => {
+  const entries = [{ ledger: 'household', amount: 1000, payer: 'Yash', split: true, date: '2026-07-01' }];
+  const reminder = computePaymentReminder(entries, 'household', PERSONS, { enabled: true, days: 14 }, '2026-08-01');
+  assert.ok(reminder);
+  assert.equal(reminder.debtor, 'Kruti');
+  assert.equal(reminder.creditor, 'Yash');
+  assert.equal(reminder.amount, 500);
+  assert.equal(reminder.daysSince, 31);
+});
+
+test('buildReceiptExtractionSchema constrains category to the real household category list', () => {
+  const schema = buildReceiptExtractionSchema(['Groceries', 'Utilities']);
+  assert.deepEqual(schema.properties.category.enum, ['Groceries', 'Utilities']);
+  assert.deepEqual(schema.required, ['amount', 'date', 'category', 'note']);
+});
+
+test('buildReceiptExtractionPrompt includes the real categories and the fallback date', () => {
+  const prompt = buildReceiptExtractionPrompt(['Groceries', 'Utilities'], '2026-08-12');
+  assert.match(prompt, /Groceries, Utilities/);
+  assert.match(prompt, /2026-08-12/);
 });

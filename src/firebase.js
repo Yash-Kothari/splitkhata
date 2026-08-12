@@ -47,6 +47,10 @@ import {
   setPinConfig,
   getHouseholdBudgets,
   setHouseholdBudgets,
+  getRecurringRules,
+  setRecurringRules,
+  getPaymentReminderConfig,
+  setPaymentReminderConfig,
   normalizeLedger,
   HOUSEHOLD_CATEGORIES_KEY,
   TRAVEL_CATEGORIES_KEY,
@@ -56,6 +60,8 @@ import {
   CASH_MOVEMENTS_KEY,
   PAYMENT_METHODS_KEY,
   HOUSEHOLD_BUDGETS_KEY,
+  RECURRING_RULES_KEY,
+  PAYMENT_REMINDER_CONFIG_KEY,
 } from './utils';
 
 // Firestore write batches are capped at 500 operations.
@@ -192,6 +198,24 @@ export async function generateStructured(prompt, schema) {
   return JSON.parse(result.response.text());
 }
 
+// Same schema-constrained approach as generateStructured, but with an image
+// part alongside the text prompt (see buildReceiptExtractionSchema/Prompt in
+// utils.js) - Gemini reads the photo, the schema keeps it from returning a
+// category that doesn't actually exist in the household's list.
+export async function extractReceiptFromImage(base64Data, mimeType, prompt, schema) {
+  const ctx = await ensureAi();
+  if (!ctx) throw new Error('AI Logic is not configured yet - add VITE_RECAPTCHA_SITE_KEY to .env.');
+  const jsonModel = ctx.getGenerativeModel(ctx.ai, {
+    model: 'gemini-flash-latest',
+    generationConfig: { responseMimeType: 'application/json', responseSchema: schema },
+  });
+  const result = await jsonModel.generateContent([
+    { text: prompt },
+    { inlineData: { data: base64Data, mimeType } },
+  ]);
+  return JSON.parse(result.response.text());
+}
+
 export function isAllowedUser(user) {
   return Boolean(user?.email && user.emailVerified && ALLOWED_EMAILS.has(user.email.toLowerCase()));
 }
@@ -224,6 +248,8 @@ const tripListeners = new Set();
 const cashMovementListeners = new Set();
 const paymentMethodListeners = new Set();
 const budgetListeners = new Set();
+const recurringRuleListeners = new Set();
+const paymentReminderConfigListeners = new Set();
 
 let categoriesSeededFlag = false;
 
@@ -1142,6 +1168,105 @@ export async function saveHouseholdBudgetsToDb(budgets) {
       await setDoc(budgetsDocRef, { budgets, updatedAt: serverTimestamp() });
     } catch (err) {
       console.error('Error saving household budgets to Firestore:', err);
+    }
+  }
+}
+
+// Recurring expense rules (rent, subscriptions, utilities) - a single
+// settings doc holding the whole array, same shape as getRecurringRules()/
+// setRecurringRules() in utils.js. Household-only, same reasoning as
+// household budgets: a trip is a bounded window, not an indefinite
+// recurrence.
+export function subscribeToRecurringRules(callback) {
+  if (dbInstance) {
+    const rulesDocRef = doc(dbInstance, 'settings', 'recurring_rules');
+    return onSnapshot(
+      rulesDocRef,
+      (docSnap) => {
+        const rules = docSnap.exists() && Array.isArray(docSnap.data().rules) ? docSnap.data().rules : [];
+        setRecurringRules(rules);
+        callback(rules);
+      },
+      (err) => {
+        console.warn('Recurring rules subscription error:', err);
+        callback(getRecurringRules());
+      },
+    );
+  } else {
+    const handler = (data) => callback(data);
+    recurringRuleListeners.add(handler);
+    callback(getRecurringRules());
+
+    const storageListener = (e) => {
+      if (e.key === RECURRING_RULES_KEY) callback(getRecurringRules());
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      recurringRuleListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+export async function saveRecurringRulesToDb(rules) {
+  setRecurringRules(rules);
+  recurringRuleListeners.forEach((fn) => fn(rules));
+  if (dbInstance) {
+    try {
+      const rulesDocRef = doc(dbInstance, 'settings', 'recurring_rules');
+      await setDoc(rulesDocRef, { rules, updatedAt: serverTimestamp() });
+    } catch (err) {
+      console.error('Error saving recurring rules to Firestore:', err);
+    }
+  }
+}
+
+// Payment-reminder settings - whether the nudge is on at all, and how many
+// days an unsettled balance has to sit before it's worth mentioning.
+export function subscribeToPaymentReminderConfig(callback) {
+  if (dbInstance) {
+    const configDocRef = doc(dbInstance, 'settings', 'payment_reminder_config');
+    return onSnapshot(
+      configDocRef,
+      (docSnap) => {
+        const config = docSnap.exists()
+          ? { enabled: docSnap.data().enabled !== false, days: Number(docSnap.data().days) || 14 }
+          : getPaymentReminderConfig();
+        setPaymentReminderConfig(config);
+        callback(config);
+      },
+      (err) => {
+        console.warn('Payment reminder config subscription error:', err);
+        callback(getPaymentReminderConfig());
+      },
+    );
+  } else {
+    const handler = (data) => callback(data);
+    paymentReminderConfigListeners.add(handler);
+    callback(getPaymentReminderConfig());
+
+    const storageListener = (e) => {
+      if (e.key === PAYMENT_REMINDER_CONFIG_KEY) callback(getPaymentReminderConfig());
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      paymentReminderConfigListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+export async function savePaymentReminderConfigToDb(config) {
+  setPaymentReminderConfig(config);
+  paymentReminderConfigListeners.forEach((fn) => fn(config));
+  if (dbInstance) {
+    try {
+      const configDocRef = doc(dbInstance, 'settings', 'payment_reminder_config');
+      await setDoc(configDocRef, { ...config, updatedAt: serverTimestamp() });
+    } catch (err) {
+      console.error('Error saving payment reminder config to Firestore:', err);
     }
   }
 }

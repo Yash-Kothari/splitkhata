@@ -10,6 +10,8 @@ import {
   isFirebaseConfigured,
   savePinConfigToDb,
   saveHouseholdBudgetsToDb,
+  saveRecurringRulesToDb,
+  savePaymentReminderConfigToDb,
   seedSampleExpenses,
   wipeAllExpenses,
 } from '../firebase';
@@ -27,6 +29,8 @@ export default function SettingsModal({
   activeLedger = 'household',
   householdBudgets = {},
   householdEntries = [],
+  recurringRules = [],
+  reminderConfig = { enabled: true, days: 14 },
 }) {
   const [activeTab, setActiveTab] = useState('categories');
   const [categoryLedger, setCategoryLedger] = useState(activeLedger);
@@ -48,6 +52,19 @@ export default function SettingsModal({
   const [newBudgetAmount, setNewBudgetAmount] = useState('');
   const [savingBudgetCat, setSavingBudgetCat] = useState('');
   const [budgetMessage, setBudgetMessage] = useState('');
+
+  const [newRuleCategory, setNewRuleCategory] = useState('');
+  const [newRuleAmount, setNewRuleAmount] = useState('');
+  const [newRuleDay, setNewRuleDay] = useState('1');
+  const [newRulePayer, setNewRulePayer] = useState(dbMembers[0] || '');
+  const [newRuleSplitType, setNewRuleSplitType] = useState('shared');
+  const [newRuleOwedBy, setNewRuleOwedBy] = useState('');
+  const [newRuleNote, setNewRuleNote] = useState('');
+  const [addingRule, setAddingRule] = useState(false);
+  const [ruleMessage, setRuleMessage] = useState('');
+
+  const [reminderDraft, setReminderDraft] = useState(() => ({ ...reminderConfig }));
+  const [reminderMessage, setReminderMessage] = useState('');
 
   const [seeding, setSeeding] = useState(false);
   const [wiping, setWiping] = useState(false);
@@ -143,6 +160,70 @@ export default function SettingsModal({
     const next = { ...budgetDrafts };
     delete next[category];
     await persistBudgets(next, category);
+  }
+
+  async function handleAddRule(e) {
+    e.preventDefault();
+    const amount = Number(newRuleAmount);
+    if (!newRuleCategory || !amount || amount <= 0) return;
+    setAddingRule(true);
+    setRuleMessage('');
+    try {
+      const rule = {
+        id: 'rule_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        category: newRuleCategory,
+        amount,
+        payer: newRulePayer || dbMembers[0] || '',
+        splitType: newRuleSplitType,
+        owedBy: newRuleSplitType === 'owed' ? newRuleOwedBy : null,
+        note: newRuleNote.trim(),
+        dayOfMonth: Math.min(Math.max(1, Math.round(Number(newRuleDay)) || 1), 31),
+        active: true,
+        lastGeneratedMonth: null,
+        createdAt: new Date().toISOString(),
+      };
+      await saveRecurringRulesToDb([...recurringRules, rule]);
+      setNewRuleCategory('');
+      setNewRuleAmount('');
+      setNewRuleDay('1');
+      setNewRuleNote('');
+      setRuleMessage(`Added - this month's ${rule.category} entry will be created automatically.`);
+    } catch (err) {
+      setRuleMessage(`Failed to save: ${err?.message || err}`);
+    } finally {
+      setAddingRule(false);
+    }
+  }
+
+  async function handleRemoveRule(id) {
+    await saveRecurringRulesToDb(recurringRules.filter((r) => r.id !== id));
+  }
+
+  async function handleReminderToggle(enabled) {
+    const next = { ...reminderDraft, enabled };
+    setReminderDraft(next);
+    setReminderMessage('');
+    try {
+      await savePaymentReminderConfigToDb(next);
+    } catch (err) {
+      setReminderMessage(`Failed to save: ${err?.message || err}`);
+    }
+  }
+
+  function handleReminderDaysChange(value) {
+    setReminderDraft((prev) => ({ ...prev, days: value }));
+  }
+
+  async function handleReminderDaysBlur() {
+    const days = Math.max(1, Math.round(Number(reminderDraft.days)) || 14);
+    const next = { ...reminderDraft, days };
+    setReminderDraft(next);
+    setReminderMessage('');
+    try {
+      await savePaymentReminderConfigToDb(next);
+    } catch (err) {
+      setReminderMessage(`Failed to save: ${err?.message || err}`);
+    }
   }
 
   const categoriesList =
@@ -275,6 +356,28 @@ export default function SettingsModal({
             }`}
           >
             Budgets
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('recurring')}
+            className={`px-3 py-2 text-xs sm:text-sm font-semibold border-b-2 transition-colors shrink-0 whitespace-nowrap flex items-center min-h-[38px] ${
+              activeTab === 'recurring'
+                ? 'border-ledger-green text-ledger-green'
+                : 'border-transparent text-muted-text hover:text-ink'
+            }`}
+          >
+            Recurring
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('reminders')}
+            className={`px-3 py-2 text-xs sm:text-sm font-semibold border-b-2 transition-colors shrink-0 whitespace-nowrap flex items-center min-h-[38px] ${
+              activeTab === 'reminders'
+                ? 'border-ledger-green text-ledger-green'
+                : 'border-transparent text-muted-text hover:text-ink'
+            }`}
+          >
+            Reminders
           </button>
           <button
             type="button"
@@ -505,6 +608,172 @@ export default function SettingsModal({
                   ))}
                 </div>
               )}
+            </div>
+          )}
+
+          {activeTab === 'recurring' && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-ink mb-0.5">Recurring Household Expenses</h3>
+                <p className="text-xs text-muted-text">
+                  Rent, subscriptions, utilities - bills that repeat every month. Each rule auto-creates this
+                  month's entry the next time the app is opened; nothing is added before you save the rule.
+                </p>
+              </div>
+
+              <form onSubmit={handleAddRule} className="space-y-2.5 rounded-xl border border-ink/10 bg-paper/60 p-3">
+                <div className="grid grid-cols-2 gap-2.5">
+                  <select
+                    value={newRuleCategory}
+                    onChange={(e) => setNewRuleCategory(e.target.value)}
+                    className="min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                  >
+                    <option value="">Category...</option>
+                    {(dbCategories?.household || []).map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-muted-text shrink-0">₹</span>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="any"
+                      value={newRuleAmount}
+                      onChange={(e) => setNewRuleAmount(e.target.value)}
+                      placeholder="Amount"
+                      className="w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2.5">
+                  <select
+                    value={newRulePayer}
+                    onChange={(e) => setNewRulePayer(e.target.value)}
+                    className="min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                  >
+                    {dbMembers.map((m) => (
+                      <option key={m} value={m}>{m} pays</option>
+                    ))}
+                  </select>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-muted-text shrink-0 whitespace-nowrap">Day of month</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      value={newRuleDay}
+                      onChange={(e) => setNewRuleDay(e.target.value)}
+                      className="w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                    />
+                  </div>
+                </div>
+                <select
+                  value={newRuleSplitType}
+                  onChange={(e) => setNewRuleSplitType(e.target.value)}
+                  className="w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                >
+                  <option value="shared">Split</option>
+                  <option value="owed">Owed in full</option>
+                  <option value="personal">Personal</option>
+                </select>
+                {newRuleSplitType === 'owed' && (
+                  <select
+                    value={newRuleOwedBy}
+                    onChange={(e) => setNewRuleOwedBy(e.target.value)}
+                    className="w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                  >
+                    <option value="">Owed by...</option>
+                    {dbMembers.filter((m) => m !== newRulePayer).map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                )}
+                <input
+                  type="text"
+                  value={newRuleNote}
+                  onChange={(e) => setNewRuleNote(e.target.value)}
+                  placeholder="Note (optional)"
+                  className="w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                />
+                <button
+                  type="submit"
+                  disabled={addingRule || !newRuleCategory || !newRuleAmount}
+                  className="w-full min-h-10 rounded-xl bg-ledger-green text-white font-semibold text-sm disabled:opacity-50 hover:bg-ledger-green/90 transition-colors"
+                >
+                  {addingRule ? 'Saving...' : 'Add Recurring Rule'}
+                </button>
+                {ruleMessage && <p className="text-xs text-muted-text">{ruleMessage}</p>}
+              </form>
+
+              {recurringRules.length === 0 ? (
+                <p className="text-xs text-muted-text">No recurring rules yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {recurringRules.map((rule) => (
+                    <div
+                      key={rule.id}
+                      className="flex items-center justify-between gap-2 rounded-xl border border-ink/10 bg-paper/60 px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-ink truncate">
+                          {rule.category} - {formatCurrency(rule.amount)}
+                        </p>
+                        <p className="text-2xs text-muted-text">
+                          Every month on day {rule.dayOfMonth} · {rule.payer} pays
+                          {rule.note ? ` · ${rule.note}` : ''}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveRule(rule.id)}
+                        className="shrink-0 text-muted-text hover:text-stamp-red text-xs font-bold px-1.5 py-0.5 rounded-md hover:bg-stamp-red/10 transition-colors"
+                        title="Remove recurring rule"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'reminders' && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-ink mb-0.5">Payment Reminders</h3>
+                <p className="text-xs text-muted-text">
+                  A nudge when the household balance has sat unsettled for a while - in-app only, there's no
+                  push notification without a backend.
+                </p>
+              </div>
+
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3">
+                <span className="text-sm font-medium text-ink">Remind us about unsettled balances</span>
+                <input
+                  type="checkbox"
+                  checked={reminderDraft.enabled}
+                  onChange={(e) => handleReminderToggle(e.target.checked)}
+                  className="w-5 h-5 accent-ledger-green"
+                />
+              </label>
+
+              <div className="flex items-center gap-2.5">
+                <span className="text-sm text-ink">Remind after</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={reminderDraft.days}
+                  onChange={(e) => handleReminderDaysChange(e.target.value)}
+                  onBlur={handleReminderDaysBlur}
+                  disabled={!reminderDraft.enabled}
+                  className="w-20 min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm text-center disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                />
+                <span className="text-sm text-ink">days unsettled</span>
+              </div>
+              {reminderMessage && <p className="text-xs text-muted-text">{reminderMessage}</p>}
             </div>
           )}
 

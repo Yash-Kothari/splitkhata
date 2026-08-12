@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { addExpense, addExpensesBatch, generateStructured } from '../firebase';
+import { addExpense, addExpensesBatch, generateStructured, extractReceiptFromImage } from '../firebase';
 import {
   getLedgerCategories,
   DEFAULT_PERSONS as PERSONS,
@@ -12,7 +12,18 @@ import {
   buildCategorySuggestionSchema,
   buildQuickAddPrompt,
   buildQuickAddSchema,
+  buildReceiptExtractionPrompt,
+  buildReceiptExtractionSchema,
 } from '../utils';
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+    reader.onerror = () => reject(new Error('Could not read that image file.'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function AddEntryForm({
   deviceName,
@@ -51,6 +62,7 @@ export default function AddEntryForm({
   const [quickAddStatus, setQuickAddStatus] = useState({ state: 'idle', error: '' });
   const [suggestingCategory, setSuggestingCategory] = useState(false);
   const [categorySuggestError, setCategorySuggestError] = useState('');
+  const [receiptStatus, setReceiptStatus] = useState({ state: 'idle', error: '' });
 
   const tripWithdrawals = useMemo(() => tripEntries.filter((e) => e.isWithdrawal), [tripEntries]);
   const otherCashEntries = useMemo(
@@ -150,6 +162,35 @@ export default function AddEntryForm({
       setQuickAddText('');
     } catch (err) {
       setQuickAddStatus({ state: 'error', error: err?.message || 'Could not parse that.' });
+    }
+  }
+
+  // Fills in amount/category/date/note from a photo - same "review before
+  // submitting" pattern as Quick Add above, not an auto-save. Payer and
+  // split type are left alone since a receipt can't tell you who paid or
+  // how you're splitting it.
+  async function handleReceiptFile(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setReceiptStatus({ state: 'loading', error: '' });
+    try {
+      const base64 = await fileToBase64(file);
+      const parsed = await extractReceiptFromImage(
+        base64,
+        file.type || 'image/jpeg',
+        buildReceiptExtractionPrompt(categories, todayISO()),
+        buildReceiptExtractionSchema(categories),
+      );
+
+      if (parsed.amount) setAmount(String(parsed.amount));
+      if (parsed.category && categories.includes(parsed.category)) setCategory(parsed.category);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(parsed.date || '')) setDate(parsed.date);
+      if (parsed.note) setNote(parsed.note);
+
+      setReceiptStatus({ state: 'done', error: '' });
+    } catch (err) {
+      setReceiptStatus({ state: 'error', error: err?.message || 'Could not read that receipt.' });
     }
   }
 
@@ -328,6 +369,35 @@ export default function AddEntryForm({
             )}
             {quickAddStatus.state === 'error' && (
               <p className="text-xs text-stamp-red mt-1.5">{quickAddStatus.error}</p>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-ledger-green/20 bg-ledger-green/5 px-3.5 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor="receiptFile" className="text-xs font-semibold uppercase tracking-wider text-muted-text cursor-pointer">
+                📷 Scan a receipt to auto-fill
+              </label>
+              <label
+                htmlFor="receiptFile"
+                className="cursor-pointer shrink-0 h-9 px-3.5 rounded-xl bg-ledger-green text-white font-semibold text-xs disabled:opacity-50 hover:bg-ledger-green/90 transition-colors flex items-center justify-center"
+              >
+                {receiptStatus.state === 'loading' ? 'Reading...' : 'Choose Photo'}
+              </label>
+              <input
+                id="receiptFile"
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleReceiptFile}
+                disabled={receiptStatus.state === 'loading'}
+                className="hidden"
+              />
+            </div>
+            {receiptStatus.state === 'done' && (
+              <p className="text-xs text-ledger-green mt-1.5">Filled in below - review and Add to Ledger.</p>
+            )}
+            {receiptStatus.state === 'error' && (
+              <p className="text-xs text-stamp-red mt-1.5">{receiptStatus.error}</p>
             )}
           </div>
 

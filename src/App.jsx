@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import BalanceStrip from './components/BalanceStrip';
 import AddEntryForm from './components/AddEntryForm';
 import AskQuestion from './components/AskQuestion';
 import BudgetAlerts from './components/BudgetAlerts';
+import PaymentReminderBanner from './components/PaymentReminderBanner';
 import EntryList from './components/EntryList';
 import ConnectionState from './components/ConnectionState';
 import TravelManager from './components/TravelManager';
@@ -20,6 +21,10 @@ import {
   subscribeToPaymentMethods,
   subscribeToPinConfig,
   subscribeToHouseholdBudgets,
+  subscribeToRecurringRules,
+  saveRecurringRulesToDb,
+  subscribeToPaymentReminderConfig,
+  addExpensesBatch,
   isFirebaseConfigured,
   subscribeToAuth,
   signInWithGoogle,
@@ -40,6 +45,7 @@ import {
   getMonthKey,
   todayISO,
   normalizeLedger,
+  computeRecurringEntriesToGenerate,
 } from './utils';
 
 // recharts pulls in a lot of weight for content that's below the fold on
@@ -143,6 +149,8 @@ export default function App() {
   const [dbCashMovements, setDbCashMovements] = useState([]);
   const [dbPaymentMethods, setDbPaymentMethods] = useState({ methods: [], rawDocs: [] });
   const [dbHouseholdBudgets, setDbHouseholdBudgets] = useState({});
+  const [dbRecurringRules, setDbRecurringRules] = useState([]);
+  const [dbReminderConfig, setDbReminderConfig] = useState({ enabled: true, days: 14 });
   const [connectionStatus, setConnectionStatus] = useState('ok');
   const [errorMessage, setErrorMessage] = useState('');
   const [activeLedger, setActiveLedgerState] = useState(() => getStoredActiveLedger());
@@ -244,6 +252,8 @@ export default function App() {
     });
 
     const unsubBudgets = subscribeToHouseholdBudgets((budgets) => setDbHouseholdBudgets(budgets));
+    const unsubRecurring = subscribeToRecurringRules((rules) => setDbRecurringRules(rules));
+    const unsubReminders = subscribeToPaymentReminderConfig((cfg) => setDbReminderConfig(cfg));
 
     // Real-time subscriptions initialized
     return () => {
@@ -254,6 +264,8 @@ export default function App() {
       unsubPaymentMethods();
       unsubPin();
       unsubBudgets();
+      unsubRecurring();
+      unsubReminders();
     };
   }, [currentUser]);
 
@@ -362,6 +374,35 @@ export default function App() {
       setSelectedMonth(availableMonths[0]);
     }
   }, [availableMonths, selectedMonth, pendingMonthJump]);
+
+  // Runs at most once per app session (the ref only ever locks true, never
+  // resets - see isMountedRef's StrictMode lesson elsewhere in this file for
+  // why a "run once" guard should only ever move in one direction). Checks
+  // every recurring rule against the current month and creates whatever
+  // entries are missing - a rule just added generates this month's entry
+  // immediately rather than waiting for its configured day to actually
+  // arrive. Waits for dbRecurringRules to have actually loaded (an empty
+  // array on first render means "not loaded yet" as often as "no rules"),
+  // so the effect keeps re-checking until real data shows up.
+  const recurringGeneratedRef = useRef(false);
+  useEffect(() => {
+    if (recurringGeneratedRef.current || !dbRecurringRules.length) return;
+    recurringGeneratedRef.current = true;
+    (async () => {
+      const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(dbRecurringRules, getMonthKey(todayISO()));
+      if (toCreate.length) {
+        try {
+          await addExpensesBatch(toCreate);
+        } catch (err) {
+          console.warn('Recurring expense generation failed:', err);
+          return;
+        }
+      }
+      if (updatedRules) {
+        await saveRecurringRulesToDb(updatedRules);
+      }
+    })();
+  }, [dbRecurringRules]);
 
   const activeMembersList = dbMembers.members.length > 0 ? dbMembers.members : PERSONS;
   const activeCurrenciesList = dbCurrencies.currencies.length > 0 ? dbCurrencies.currencies : CURRENCIES;
@@ -536,6 +577,8 @@ export default function App() {
           activeLedger={activeLedger}
           householdBudgets={dbHouseholdBudgets}
           householdEntries={askHouseholdEntries}
+          recurringRules={dbRecurringRules}
+          reminderConfig={dbReminderConfig}
         />
       )}
 
@@ -679,21 +722,27 @@ export default function App() {
           />
 
           {activeLedger === 'household' && (
-            <BudgetAlerts
-              entries={entries}
-              ledger="household"
-              month={getMonthKey(todayISO())}
-              budgets={dbHouseholdBudgets}
-            />
+            <>
+              <BudgetAlerts
+                entries={entries}
+                ledger="household"
+                month={getMonthKey(todayISO())}
+                budgets={dbHouseholdBudgets}
+              />
+              <PaymentReminderBanner entries={entries} dbMembers={activeMembersList} config={dbReminderConfig} />
+            </>
           )}
 
           {activeLedger === 'payments' && (
-            <PaymentsCenter
-              entries={entries}
-              travelEntries={paymentsTravelEntries}
-              dbMembers={activeMembersList}
-              onSaveError={handleSaveError}
-            />
+            <>
+              <PaymentReminderBanner entries={entries} dbMembers={activeMembersList} config={dbReminderConfig} />
+              <PaymentsCenter
+                entries={entries}
+                travelEntries={paymentsTravelEntries}
+                dbMembers={activeMembersList}
+                onSaveError={handleSaveError}
+              />
+            </>
           )}
 
           {activeLedger === 'travel' && (

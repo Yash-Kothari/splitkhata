@@ -1232,6 +1232,181 @@ export function setHouseholdBudgets(budgets) {
   setItem(HOUSEHOLD_BUDGETS_KEY, JSON.stringify(budgets || {}));
 }
 
+export const RECURRING_RULES_KEY = 'splitkhata_recurring_rules';
+
+// A recurring rule describes a bill that repeats every month indefinitely
+// (rent, subscriptions, utilities) - distinct from "split across multiple
+// months" on a single entry (AddEntryForm), which spreads one known lump
+// sum across a fixed number of future months and then stops. Shape: { id,
+// category, amount, payer, splitType, owedBy, note, dayOfMonth, active,
+// lastGeneratedMonth }. Household-only - a trip is a bounded window, not an
+// indefinite recurrence.
+export function getRecurringRules() {
+  const raw = getItem(RECURRING_RULES_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setRecurringRules(rules) {
+  setItem(RECURRING_RULES_KEY, JSON.stringify(rules || []));
+}
+
+function nextMonthKey(monthKey) {
+  const [year, month] = monthKey.split('-').map(Number);
+  const d = new Date(year, month, 1); // month is 1-indexed, so this lands on the 1st of next month
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Clamps the day to however many days the target month actually has (e.g.
+// day 31 in February becomes the 28th/29th) - same idea as
+// addMonthsToDateISO's day clamping above.
+export function buildRecurringEntryDate(monthKey, dayOfMonth) {
+  const [year, month] = monthKey.split('-').map(Number);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const day = Math.min(Math.max(1, Math.round(dayOfMonth) || 1), daysInMonth);
+  return `${monthKey}-${String(day).padStart(2, '0')}`;
+}
+
+// How many months a single dormant rule can backfill in one go - if the app
+// hasn't been opened in longer than this, older gaps are silently skipped
+// rather than dumping a year of back-dated entries into the ledger at once.
+const RECURRING_MAX_BACKFILL_MONTHS = 6;
+
+// Pure planning step for recurring-expense generation: given the saved
+// rules and "what month is it now," works out which (rule, month) pairs
+// still need an entry, without touching Firestore/localStorage itself - the
+// caller does the actual writes, then persists updatedRules. A rule with no
+// lastGeneratedMonth yet only generates for the current month; it doesn't
+// backfill to before the rule existed.
+export function computeRecurringEntriesToGenerate(rules, currentMonthKey) {
+  const toCreate = [];
+  let anyChanged = false;
+
+  const updatedRules = (rules || []).map((rule) => {
+    if (!rule?.active) return rule;
+    let cursor = rule.lastGeneratedMonth ? nextMonthKey(rule.lastGeneratedMonth) : currentMonthKey;
+    const months = [];
+    while (cursor <= currentMonthKey && months.length < RECURRING_MAX_BACKFILL_MONTHS) {
+      months.push(cursor);
+      cursor = nextMonthKey(cursor);
+    }
+    if (months.length === 0) return rule;
+
+    for (const monthKey of months) {
+      toCreate.push({
+        amount: Number(rule.amount) || 0,
+        payer: rule.payer,
+        category: rule.category,
+        split: rule.splitType !== 'personal',
+        splitType: rule.splitType,
+        owedBy: rule.splitType === 'owed' ? rule.owedBy : null,
+        splitAmong: null,
+        note: rule.note || '',
+        date: buildRecurringEntryDate(monthKey, rule.dayOfMonth),
+        ledger: 'household',
+        tripName: '',
+        paymentMethod: null,
+        localAmount: null,
+        rewardPoints: null,
+        isRecurring: true,
+        recurringRuleId: rule.id,
+      });
+    }
+    anyChanged = true;
+    return { ...rule, lastGeneratedMonth: months[months.length - 1] };
+  });
+
+  return { toCreate, updatedRules: anyChanged ? updatedRules : null };
+}
+
+export const PAYMENT_REMINDER_CONFIG_KEY = 'splitkhata_payment_reminder_config';
+
+export function getPaymentReminderConfig() {
+  const raw = getItem(PAYMENT_REMINDER_CONFIG_KEY);
+  if (!raw) return { enabled: true, days: 14 };
+  try {
+    const parsed = JSON.parse(raw);
+    const days = Number(parsed.days);
+    return {
+      enabled: parsed.enabled !== false,
+      days: Number.isFinite(days) && days > 0 ? days : 14,
+    };
+  } catch {
+    return { enabled: true, days: 14 };
+  }
+}
+
+export function setPaymentReminderConfig(config) {
+  setItem(PAYMENT_REMINDER_CONFIG_KEY, JSON.stringify(config || {}));
+}
+
+// A proxy for "how long has this balance been sitting unsettled" without
+// tracking per-expense settled state: the most recent settlement's date, or
+// (if the two of you have never settled up) the very first expense's date.
+// Not perfectly precise if new debt keeps piling on top of old, but close
+// enough for a nudge, not an audit.
+export function getUnsettledSinceDate(entries, ledger) {
+  const scoped = (entries || []).filter((e) => normalizeLedger(e.ledger) === normalizeLedger(ledger));
+  const settlementDates = scoped.filter((e) => e.splitType === 'settlement' && e.date).map((e) => e.date).sort();
+  if (settlementDates.length) return settlementDates[settlementDates.length - 1];
+  const allDates = scoped.filter((e) => e.date).map((e) => e.date).sort();
+  return allDates.length ? allDates[0] : null;
+}
+
+// Null when there's nothing worth nudging about: balance is settled, the
+// reminder is turned off, or the imbalance hasn't sat around long enough to
+// cross config.days yet.
+export function computePaymentReminder(entries, ledger, members, config, today = todayISO()) {
+  if (!config?.enabled) return null;
+  const balance = computeBalance(entries, ledger, members);
+  if (balance.status !== 'owes' || balance.amount <= 0) return null;
+  const sinceDate = getUnsettledSinceDate(entries, ledger);
+  if (!sinceDate) return null;
+  const daysSince = Math.floor((new Date(today) - new Date(sinceDate)) / 86400000);
+  if (daysSince < (config.days || 14)) return null;
+  return { ...balance, daysSince, sinceDate };
+}
+
+// Constrains the AI's receipt read to only ever name a real category (never
+// invent one that doesn't exist in the household list) and a plausible
+// amount/date - same "app trusts nothing it can't validate" approach as
+// buildAskQuestionSchema.
+export function buildReceiptExtractionSchema(categories) {
+  return {
+    type: 'object',
+    properties: {
+      amount: {
+        type: 'number',
+        description: 'The total amount actually charged on the receipt - just the number, no currency symbol.',
+      },
+      date: {
+        type: 'string',
+        description: 'The purchase date in YYYY-MM-DD format. If not visible, use the fallback date given in the prompt.',
+      },
+      category: { type: 'string', enum: categories.length ? categories : ['Other'] },
+      note: {
+        type: 'string',
+        description: 'A short 3-6 word description of what was bought, e.g. "Grocery run" or "Dinner at Cafe X".',
+      },
+    },
+    required: ['amount', 'date', 'category', 'note'],
+  };
+}
+
+export function buildReceiptExtractionPrompt(categories, todayFallback) {
+  return `You are reading a photo of a shopping or restaurant receipt for a household expense-splitting app.
+Extract the total amount, purchase date, the best-matching category, and a short note describing the purchase.
+
+Available categories (pick the single best match, never invent a new one): ${categories.join(', ')}
+If the receipt's date is unreadable or missing, use ${todayFallback} instead.
+If the receipt shows multiple totals (subtotal, tax, tip, grand total), use the final grand total actually charged.`;
+}
+
 export function getStoredCurrencies() {
   const raw = getItem(CURRENCIES_KEY);
   if (raw === null || raw === undefined) return DEFAULT_CURRENCIES;
