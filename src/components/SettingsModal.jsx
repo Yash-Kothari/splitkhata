@@ -226,6 +226,12 @@ export default function SettingsModal({
     }
   }
 
+  const settingsLabelClass = 'block text-2xs font-semibold uppercase tracking-wider text-muted-text mb-1';
+  const settingsInputClass =
+    'w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40';
+  const settingsSelectClass =
+    `${settingsInputClass} appearance-none bg-[url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2324304A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")] bg-[length:1rem_1rem] bg-[right_0.65rem_center] bg-no-repeat pr-8`;
+
   const categoriesList =
     categoryLedger === 'travel'
       ? dbCategories?.travel || []
@@ -621,82 +627,105 @@ export default function SettingsModal({
                 </p>
               </div>
 
-              <form onSubmit={handleAddRule} className="space-y-2.5 rounded-xl border border-ink/10 bg-paper/60 p-3">
-                <div className="grid grid-cols-2 gap-2.5">
-                  <select
-                    value={newRuleCategory}
-                    onChange={(e) => setNewRuleCategory(e.target.value)}
-                    className="min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
-                  >
-                    <option value="">Category...</option>
-                    {(dbCategories?.household || []).map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-muted-text shrink-0">₹</span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      step="any"
-                      value={newRuleAmount}
-                      onChange={(e) => setNewRuleAmount(e.target.value)}
-                      placeholder="Amount"
-                      className="w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
-                    />
+              <form onSubmit={handleAddRule} className="space-y-3 rounded-xl border border-ink/10 bg-paper/60 p-3.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className={settingsLabelClass}>Category</label>
+                    <select
+                      value={newRuleCategory}
+                      onChange={(e) => setNewRuleCategory(e.target.value)}
+                      className={settingsSelectClass}
+                    >
+                      <option value="">Select a category...</option>
+                      {(dbCategories?.household || []).map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={settingsLabelClass}>Who pays</label>
+                    <select
+                      value={newRulePayer}
+                      onChange={(e) => setNewRulePayer(e.target.value)}
+                      className={settingsSelectClass}
+                    >
+                      {dbMembers.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <select
-                    value={newRulePayer}
-                    onChange={(e) => setNewRulePayer(e.target.value)}
-                    className="min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
-                  >
-                    {dbMembers.map((m) => (
-                      <option key={m} value={m}>{m} pays</option>
-                    ))}
-                  </select>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs text-muted-text shrink-0 whitespace-nowrap">Day of month</span>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className={settingsLabelClass}>Amount</label>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-muted-text shrink-0">₹</span>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        min="0"
+                        step="any"
+                        value={newRuleAmount}
+                        onChange={(e) => setNewRuleAmount(e.target.value)}
+                        placeholder="Amount"
+                        className={settingsInputClass}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className={settingsLabelClass}>Day of month</label>
                     <input
                       type="number"
                       min="1"
                       max="31"
                       value={newRuleDay}
                       onChange={(e) => setNewRuleDay(e.target.value)}
-                      className="w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                      className={settingsInputClass}
                     />
                   </div>
                 </div>
-                <select
-                  value={newRuleSplitType}
-                  onChange={(e) => setNewRuleSplitType(e.target.value)}
-                  className="w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
-                >
-                  <option value="shared">Split</option>
-                  <option value="owed">Owed in full</option>
-                  <option value="personal">Personal</option>
-                </select>
-                {newRuleSplitType === 'owed' && (
+
+                <div>
+                  <label className={settingsLabelClass}>Split type</label>
                   <select
-                    value={newRuleOwedBy}
-                    onChange={(e) => setNewRuleOwedBy(e.target.value)}
-                    className="w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                    value={newRuleSplitType}
+                    onChange={(e) => setNewRuleSplitType(e.target.value)}
+                    className={settingsSelectClass}
                   >
-                    <option value="">Owed by...</option>
-                    {dbMembers.filter((m) => m !== newRulePayer).map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
+                    <option value="shared">Split</option>
+                    <option value="owed">Owed in full</option>
+                    <option value="personal">Personal</option>
                   </select>
+                </div>
+
+                {newRuleSplitType === 'owed' && (
+                  <div>
+                    <label className={settingsLabelClass}>Owed by</label>
+                    <select
+                      value={newRuleOwedBy}
+                      onChange={(e) => setNewRuleOwedBy(e.target.value)}
+                      className={settingsSelectClass}
+                    >
+                      <option value="">Owed by...</option>
+                      {dbMembers.filter((m) => m !== newRulePayer).map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
                 )}
-                <input
-                  type="text"
-                  value={newRuleNote}
-                  onChange={(e) => setNewRuleNote(e.target.value)}
-                  placeholder="Note (optional)"
-                  className="w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
-                />
+
+                <div>
+                  <label className={settingsLabelClass}>Note (optional)</label>
+                  <input
+                    type="text"
+                    value={newRuleNote}
+                    onChange={(e) => setNewRuleNote(e.target.value)}
+                    placeholder="e.g. HDFC home loan EMI"
+                    className={settingsInputClass}
+                  />
+                </div>
+
                 <button
                   type="submit"
                   disabled={addingRule || !newRuleCategory || !newRuleAmount}
@@ -714,25 +743,25 @@ export default function SettingsModal({
                   {recurringRules.map((rule) => (
                     <div
                       key={rule.id}
-                      className="flex items-center justify-between gap-2 rounded-xl border border-ink/10 bg-paper/60 px-3 py-2.5"
+                      className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3 space-y-1"
                     >
-                      <div className="min-w-0">
+                      <div className="flex items-start justify-between gap-2">
                         <p className="text-sm font-medium text-ink truncate">
                           {rule.category} - {formatCurrency(rule.amount)}
                         </p>
-                        <p className="text-2xs text-muted-text">
-                          Every month on day {rule.dayOfMonth} · {rule.payer} pays
-                          {rule.note ? ` · ${rule.note}` : ''}
-                        </p>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveRule(rule.id)}
+                          className="shrink-0 text-muted-text hover:text-stamp-red text-xs font-bold px-1.5 py-0.5 rounded-md hover:bg-stamp-red/10 transition-colors"
+                          title="Remove recurring rule"
+                        >
+                          ✕
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveRule(rule.id)}
-                        className="shrink-0 text-muted-text hover:text-stamp-red text-xs font-bold px-1.5 py-0.5 rounded-md hover:bg-stamp-red/10 transition-colors"
-                        title="Remove recurring rule"
-                      >
-                        ✕
-                      </button>
+                      <p className="text-2xs text-muted-text">
+                        Every month on day {rule.dayOfMonth} · {rule.payer} pays
+                        {rule.note ? ` · ${rule.note}` : ''}
+                      </p>
                     </div>
                   ))}
                 </div>
