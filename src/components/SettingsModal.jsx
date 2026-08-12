@@ -229,8 +229,14 @@ export default function SettingsModal({
   const settingsLabelClass = 'block text-2xs font-semibold uppercase tracking-wider text-muted-text mb-1';
   const settingsInputClass =
     'w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40';
-  const settingsSelectClass =
-    `${settingsInputClass} appearance-none bg-[url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2324304A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")] bg-[length:1rem_1rem] bg-[right_0.65rem_center] bg-no-repeat pr-8`;
+  // Same custom chevron everywhere a <select> appears in this modal - append
+  // to any select's own sizing classes rather than only via settingsSelectClass
+  // below, so a select with different height/padding (e.g. the Budgets tab's)
+  // still gets the same arrow instead of falling back to the browser's
+  // native one.
+  const dropdownArrowClass =
+    `appearance-none bg-[url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2324304A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")] bg-[length:1rem_1rem] bg-[right_0.65rem_center] bg-no-repeat pr-8`;
+  const settingsSelectClass = `${settingsInputClass} ${dropdownArrowClass}`;
 
   const categoriesList =
     categoryLedger === 'travel'
@@ -522,7 +528,7 @@ export default function SettingsModal({
                 <select
                   value={newBudgetCategory}
                   onChange={(e) => setNewBudgetCategory(e.target.value)}
-                  className="flex-1 min-h-11 px-3.5 py-2 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                  className={`flex-1 min-h-11 px-3.5 py-2 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40 ${dropdownArrowClass}`}
                 >
                   <option value="">Select a category...</option>
                   {unbudgetedCategories.map((cat) => (

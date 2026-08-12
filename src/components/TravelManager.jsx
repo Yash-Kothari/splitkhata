@@ -881,7 +881,7 @@ export default function TravelManager({
               <select
                 value={newTripBudgetCategory}
                 onChange={(e) => setNewTripBudgetCategory(e.target.value)}
-                className="flex-1 min-h-10 px-3 py-1.5 rounded-lg border border-ink/15 bg-paper text-ink text-xs focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                className="flex-1 min-h-10 px-3 py-1.5 rounded-lg border border-ink/15 bg-paper text-ink text-xs focus:outline-none focus:ring-2 focus:ring-ledger-green/40 appearance-none bg-[url(&quot;data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2324304A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e&quot;)] bg-[length:1rem_1rem] bg-[right_0.65rem_center] bg-no-repeat pr-8"
               >
                 <option value="">Select a category...</option>
                 {unbudgetedTripCategories.map((category) => (
