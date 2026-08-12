@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { deleteExpense } from '../firebase';
 import EditEntryRow from './EditEntryRow';
 import {
@@ -8,6 +8,11 @@ import {
   normalizeLedger,
   PERSON_COLORS,
 } from '../utils';
+
+// How long an undo toast stays actionable before the delete actually
+// commits - long enough to notice and react to, short enough that the
+// entry isn't visibly "gone but not really" for too long.
+const UNDO_WINDOW_MS = 6000;
 
 function formatDate(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
@@ -31,13 +36,28 @@ export default function EntryList({
   excludePaymentEntries = false,
 }) {
   const isTravel = ledger === 'travel';
-  const [deletingId, setDeletingId] = useState(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  // Keyed by entry id - { entry, timeoutId } for each delete still inside
+  // its undo window. The entry stays hidden from the list the instant you
+  // click delete (optimistic), but nothing actually leaves Firestore until
+  // the timer in handleDelete below fires, unless handleUndo cancels it
+  // first.
+  const [pendingDeletes, setPendingDeletes] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
   const [editingId, setEditingId] = useState(null);
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const filtered = entries
     .filter((e) => {
+      // Hidden the instant delete is clicked, not just once it's actually
+      // gone from Firestore - the undo toast wouldn't feel like a delete at
+      // all if the row just sat there for the next 6 seconds.
+      if (pendingDeletes[e.id]) return false;
       // A trip is usually days, not months - only apply the month filter
       // for the household ledger, where it actually helps.
       if (!isTravel && selectedMonth !== 'all' && getMonthKey(e.date) !== selectedMonth) return false;
@@ -64,23 +84,46 @@ export default function EntryList({
       return (b.createdAt ?? '').localeCompare(a.createdAt ?? '');
     });
 
-  async function handleDelete(id) {
-    if (confirmDeleteId !== id) {
-      setConfirmDeleteId(id);
-      return;
-    }
-    setDeletingId(id);
-    try {
-      await deleteExpense(id);
-    } catch (err) {
-      onDeleteError?.(err);
-    } finally {
-      setDeletingId(null);
-      setConfirmDeleteId(null);
-    }
+  // Commits after UNDO_WINDOW_MS unless handleUndo cancels the timeout
+  // first - navigating away or closing this list doesn't cancel it, only
+  // an explicit Undo click does, same as most undo-toast patterns (the
+  // delete is real the moment you click it, this is a grace period, not a
+  // second confirmation you have to stick around for).
+  function handleDelete(entry) {
+    const id = entry.id;
+    const timeoutId = setTimeout(async () => {
+      try {
+        await deleteExpense(id);
+      } catch (err) {
+        onDeleteError?.(err);
+      } finally {
+        if (isMountedRef.current) {
+          setPendingDeletes((prev) => {
+            const next = { ...prev };
+            delete next[id];
+            return next;
+          });
+        }
+      }
+    }, UNDO_WINDOW_MS);
+    setPendingDeletes((prev) => ({ ...prev, [id]: { entry, timeoutId } }));
   }
 
+  function handleUndo(id) {
+    setPendingDeletes((prev) => {
+      const pending = prev[id];
+      if (!pending) return prev;
+      clearTimeout(pending.timeoutId);
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  const pendingDeleteList = Object.values(pendingDeletes);
+
   return (
+    <>
     <section className="panel-card px-4 sm:px-5 py-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
@@ -239,17 +282,12 @@ export default function EntryList({
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleDelete(entry.id)}
-                    disabled={deletingId === entry.id}
-                    className={`min-h-8 min-w-8 px-2 py-1 flex items-center justify-center rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 ${
-                      confirmDeleteId === entry.id
-                        ? 'bg-stamp-red text-white hover:bg-stamp-red/90'
-                        : 'text-stamp-red/70 hover:text-stamp-red hover:bg-stamp-red/10'
-                    }`}
+                    onClick={() => handleDelete(entry)}
+                    className="min-h-8 min-w-8 px-2 py-1 flex items-center justify-center rounded-lg text-xs font-semibold text-stamp-red/70 hover:text-stamp-red hover:bg-stamp-red/10 transition-colors"
                     aria-label="Delete entry"
-                    title={confirmDeleteId === entry.id ? 'Click again to confirm delete' : 'Delete transaction'}
+                    title="Delete transaction"
                   >
-                    {confirmDeleteId === entry.id ? 'Delete?' : '✕'}
+                    ✕
                   </button>
                 </div>
               </li>
@@ -258,5 +296,28 @@ export default function EntryList({
         </ul>
       )}
     </section>
+
+    {pendingDeleteList.length > 0 && (
+      <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 w-[calc(100vw-2.5rem)] sm:w-auto max-w-sm space-y-2">
+        {pendingDeleteList.map(({ entry }) => (
+          <div
+            key={entry.id}
+            className="flex items-center justify-between gap-3 rounded-xl bg-ink text-paper px-4 py-3 shadow-2xl text-sm"
+          >
+            <span className="min-w-0 truncate">
+              Deleted {entry.note ? `"${entry.note}"` : entry.category} - {formatCurrency(entry.amount, currentCurrency)}
+            </span>
+            <button
+              type="button"
+              onClick={() => handleUndo(entry.id)}
+              className="shrink-0 font-semibold text-ledger-green hover:text-ledger-green/80 underline"
+            >
+              Undo
+            </button>
+          </div>
+        ))}
+      </div>
+    )}
+    </>
   );
 }
