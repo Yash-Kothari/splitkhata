@@ -381,7 +381,7 @@ export default function AddEntryForm({
                 htmlFor="receiptFile"
                 className="cursor-pointer shrink-0 h-9 px-3.5 rounded-xl bg-ledger-green text-white font-semibold text-xs disabled:opacity-50 hover:bg-ledger-green/90 transition-colors flex items-center justify-center"
               >
-                {receiptStatus.state === 'loading' ? 'Reading...' : 'Choose Photo'}
+                {receiptStatus.state === 'loading' ? 'Reading...' : 'Take Photo'}
               </label>
               <input
                 id="receiptFile"

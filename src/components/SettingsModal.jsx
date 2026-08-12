@@ -658,20 +658,17 @@ export default function SettingsModal({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className={settingsLabelClass}>Amount</label>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs text-muted-text shrink-0">₹</span>
-                      <input
-                        type="number"
-                        inputMode="decimal"
-                        min="0"
-                        step="any"
-                        value={newRuleAmount}
-                        onChange={(e) => setNewRuleAmount(e.target.value)}
-                        placeholder="Amount"
-                        className={settingsInputClass}
-                      />
-                    </div>
+                    <label className={settingsLabelClass}>Amount (₹)</label>
+                    <input
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      step="any"
+                      value={newRuleAmount}
+                      onChange={(e) => setNewRuleAmount(e.target.value)}
+                      placeholder="0.00"
+                      className={settingsInputClass}
+                    />
                   </div>
                   <div>
                     <label className={settingsLabelClass}>Day of month</label>
@@ -721,7 +718,7 @@ export default function SettingsModal({
                     type="text"
                     value={newRuleNote}
                     onChange={(e) => setNewRuleNote(e.target.value)}
-                    placeholder="e.g. HDFC home loan EMI"
+                    placeholder="e.g. Rent"
                     className={settingsInputClass}
                   />
                 </div>
