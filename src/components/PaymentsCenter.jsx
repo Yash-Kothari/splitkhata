@@ -7,7 +7,8 @@ import { computeBalance, todayISO } from '../utils';
 const inputClass =
   'w-full h-10 px-3 text-sm rounded-lg border border-ink/15 bg-paper text-ink font-medium focus:outline-none focus:ring-2 focus:ring-ledger-green/40';
 const labelClass = 'block text-[11px] font-semibold uppercase tracking-wider text-muted-text mb-1';
-const selectClass = `${inputClass} appearance-none`;
+const selectClass =
+  `${inputClass} appearance-none bg-[url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2324304A' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")] bg-[length:1rem_1rem] bg-[right_0.65rem_center] bg-no-repeat pr-8`;
 
 // The combined view across both ledgers: household's own live balance (via
 // BalanceStrip in household mode - unchanged, still "long running"), plus
