@@ -888,19 +888,16 @@ export default function TravelManager({
                   <option key={category} value={category}>{category}</option>
                 ))}
               </select>
-              <div className="flex items-center gap-1 w-24 shrink-0">
-                <span className="text-2xs text-muted-text">₹</span>
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="any"
-                  value={newTripBudgetAmount}
-                  onChange={(e) => setNewTripBudgetAmount(e.target.value)}
-                  placeholder="Limit"
-                  className="w-full min-h-10 px-2 py-1.5 rounded-lg border border-ink/15 bg-paper text-ink text-xs focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
-                />
-              </div>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="any"
+                value={newTripBudgetAmount}
+                onChange={(e) => setNewTripBudgetAmount(e.target.value)}
+                placeholder="Limit (₹)"
+                className="w-24 shrink-0 min-h-10 px-2 py-1.5 rounded-lg border border-ink/15 bg-paper text-ink text-xs focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+              />
               <button
                 type="submit"
                 disabled={!newTripBudgetCategory || !newTripBudgetAmount || savingTripBudgetCat === newTripBudgetCategory}
@@ -920,7 +917,6 @@ export default function TravelManager({
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs font-medium text-ink">{s.category}</span>
                       <div className="flex items-center gap-1 shrink-0">
-                        <span className="text-2xs text-muted-text">₹</span>
                         <input
                           type="number"
                           inputMode="decimal"

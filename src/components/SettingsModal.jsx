@@ -536,19 +536,16 @@ export default function SettingsModal({
                   ))}
                 </select>
                 <div className="flex gap-2">
-                  <div className="flex items-center gap-1 flex-1 sm:w-32">
-                    <span className="text-xs text-muted-text shrink-0">₹</span>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      min="0"
-                      step="any"
-                      value={newBudgetAmount}
-                      onChange={(e) => setNewBudgetAmount(e.target.value)}
-                      placeholder="Limit"
-                      className="w-full min-h-11 px-2.5 py-2 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
-                    />
-                  </div>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="any"
+                    value={newBudgetAmount}
+                    onChange={(e) => setNewBudgetAmount(e.target.value)}
+                    placeholder="Limit (₹)"
+                    className="flex-1 sm:w-32 min-h-11 px-3.5 py-2 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                  />
                   <button
                     type="submit"
                     disabled={!newBudgetCategory || !newBudgetAmount || savingBudgetCat === newBudgetCategory}
@@ -573,7 +570,6 @@ export default function SettingsModal({
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-medium text-ink">{s.category}</span>
                         <div className="flex items-center gap-1.5 shrink-0">
-                          <span className="text-xs text-muted-text">₹</span>
                           <input
                             type="number"
                             inputMode="decimal"
