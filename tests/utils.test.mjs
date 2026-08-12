@@ -930,11 +930,11 @@ test('computeRecurringEntriesToGenerate caps backfill so a long-dormant rule doe
   assert.ok(toCreate.length <= 6, `expected a bounded backfill, got ${toCreate.length} entries`);
 });
 
-test('getPaymentReminderConfig/setPaymentReminderConfig round-trip through storage, defaulting to enabled/14 days', () => {
+test('getPaymentReminderConfig/setPaymentReminderConfig round-trip through storage, defaulting to enabled/₹2000', () => {
   setPaymentReminderConfig({});
-  assert.deepEqual(getPaymentReminderConfig(), { enabled: true, days: 14 });
-  setPaymentReminderConfig({ enabled: false, days: 7 });
-  assert.deepEqual(getPaymentReminderConfig(), { enabled: false, days: 7 });
+  assert.deepEqual(getPaymentReminderConfig(), { enabled: true, amountThreshold: 2000 });
+  setPaymentReminderConfig({ enabled: false, amountThreshold: 5000 });
+  assert.deepEqual(getPaymentReminderConfig(), { enabled: false, amountThreshold: 5000 });
 });
 
 test('getUnsettledSinceDate uses the most recent settlement date when one exists', () => {
@@ -960,30 +960,38 @@ test('getUnsettledSinceDate returns null when there are no entries for that ledg
 
 test('computePaymentReminder is null when the balance is settled', () => {
   const entries = [
-    { ledger: 'household', amount: 500, payer: 'Yash', split: true, date: '2026-01-01' },
-    { ledger: 'household', amount: 500, payer: 'Kruti', split: true, date: '2026-01-02' },
+    { ledger: 'household', amount: 5000, payer: 'Yash', split: true, date: '2026-01-01' },
+    { ledger: 'household', amount: 5000, payer: 'Kruti', split: true, date: '2026-01-02' },
   ];
-  assert.equal(computePaymentReminder(entries, 'household', PERSONS, { enabled: true, days: 14 }, '2026-08-01'), null);
+  assert.equal(computePaymentReminder(entries, 'household', PERSONS, { enabled: true, amountThreshold: 2000 }, '2026-08-01'), null);
 });
 
-test('computePaymentReminder is null when the imbalance hasn\'t sat around long enough yet', () => {
-  const entries = [{ ledger: 'household', amount: 1000, payer: 'Yash', split: true, date: '2026-07-30' }];
-  assert.equal(computePaymentReminder(entries, 'household', PERSONS, { enabled: true, days: 14 }, '2026-08-01'), null);
-});
-
-test('computePaymentReminder is null when reminders are disabled, even with a long-unsettled balance', () => {
+test('computePaymentReminder is null when the amount owed hasn\'t crossed the threshold yet', () => {
   const entries = [{ ledger: 'household', amount: 1000, payer: 'Yash', split: true, date: '2026-01-01' }];
-  assert.equal(computePaymentReminder(entries, 'household', PERSONS, { enabled: false, days: 14 }, '2026-08-01'), null);
+  // Kruti owes 500, well under a 2000 threshold - no amount of elapsed time should matter now.
+  assert.equal(computePaymentReminder(entries, 'household', PERSONS, { enabled: true, amountThreshold: 2000 }, '2026-08-01'), null);
 });
 
-test('computePaymentReminder fires once the imbalance has sat unsettled past the threshold', () => {
-  const entries = [{ ledger: 'household', amount: 1000, payer: 'Yash', split: true, date: '2026-07-01' }];
-  const reminder = computePaymentReminder(entries, 'household', PERSONS, { enabled: true, days: 14 }, '2026-08-01');
+test('computePaymentReminder is null when reminders are disabled, even with a large unsettled balance', () => {
+  const entries = [{ ledger: 'household', amount: 10000, payer: 'Yash', split: true, date: '2026-08-01' }];
+  assert.equal(computePaymentReminder(entries, 'household', PERSONS, { enabled: false, amountThreshold: 2000 }, '2026-08-01'), null);
+});
+
+test('computePaymentReminder fires as soon as the amount owed crosses the threshold, regardless of how recent', () => {
+  const entries = [{ ledger: 'household', amount: 10000, payer: 'Yash', split: true, date: '2026-08-01' }];
+  const reminder = computePaymentReminder(entries, 'household', PERSONS, { enabled: true, amountThreshold: 2000 }, '2026-08-01');
   assert.ok(reminder);
   assert.equal(reminder.debtor, 'Kruti');
   assert.equal(reminder.creditor, 'Yash');
-  assert.equal(reminder.amount, 500);
-  assert.equal(reminder.daysSince, 31);
+  assert.equal(reminder.amount, 5000);
+  assert.equal(reminder.daysSince, 0, 'the entry is from today, so it should fire immediately, not wait out a day count');
+});
+
+test('computePaymentReminder fires exactly at the threshold (>=, not strictly greater)', () => {
+  const entries = [{ ledger: 'household', amount: 4000, payer: 'Yash', split: true, date: '2026-08-01' }];
+  const reminder = computePaymentReminder(entries, 'household', PERSONS, { enabled: true, amountThreshold: 2000 }, '2026-08-01');
+  assert.ok(reminder);
+  assert.equal(reminder.amount, 2000);
 });
 
 test('buildReceiptExtractionSchema constrains category to the real household category list', () => {

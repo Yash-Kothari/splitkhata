@@ -51,6 +51,7 @@ import {
   setRecurringRules,
   getPaymentReminderConfig,
   setPaymentReminderConfig,
+  DEFAULT_PAYMENT_REMINDER_THRESHOLD,
   normalizeLedger,
   HOUSEHOLD_CATEGORIES_KEY,
   TRAVEL_CATEGORIES_KEY,
@@ -1222,8 +1223,8 @@ export async function saveRecurringRulesToDb(rules) {
   }
 }
 
-// Payment-reminder settings - whether the nudge is on at all, and how many
-// days an unsettled balance has to sit before it's worth mentioning.
+// Payment-reminder settings - whether the nudge is on at all, and how large
+// the outstanding balance has to get before it's worth mentioning.
 export function subscribeToPaymentReminderConfig(callback) {
   if (dbInstance) {
     const configDocRef = doc(dbInstance, 'settings', 'payment_reminder_config');
@@ -1231,7 +1232,10 @@ export function subscribeToPaymentReminderConfig(callback) {
       configDocRef,
       (docSnap) => {
         const config = docSnap.exists()
-          ? { enabled: docSnap.data().enabled !== false, days: Number(docSnap.data().days) || 14 }
+          ? {
+              enabled: docSnap.data().enabled !== false,
+              amountThreshold: Number(docSnap.data().amountThreshold) || DEFAULT_PAYMENT_REMINDER_THRESHOLD,
+            }
           : getPaymentReminderConfig();
         setPaymentReminderConfig(config);
         callback(config);

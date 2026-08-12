@@ -2,9 +2,11 @@ import { useMemo } from 'react';
 import { computePaymentReminder, formatCurrency } from '../utils';
 
 // Purely presentational over computePaymentReminder - renders nothing when
-// the balance is settled, reminders are off, or it just hasn't been long
-// enough yet. Household-only: a two-person balance is what "unsettled for
-// two weeks" means in practice, not a trip's running total.
+// the balance is settled, reminders are off, or the amount owed hasn't
+// crossed the configured threshold yet. Household-only: a two-person
+// balance is what "who owes who" means in practice, not a trip's running
+// total. daysSince is shown as context, not the trigger - the reminder
+// fires on amount, not on how long it's been sitting.
 export default function PaymentReminderBanner({ entries, dbMembers, config }) {
   const reminder = useMemo(
     () => computePaymentReminder(entries, 'household', dbMembers, config),
@@ -21,9 +23,11 @@ export default function PaymentReminderBanner({ entries, dbMembers, config }) {
           <p className="text-sm text-ink">
             <strong>{reminder.debtor}</strong> owes <strong>{reminder.creditor}</strong> {formatCurrency(reminder.amount)}
           </p>
-          <p className="text-2xs text-muted-text mt-0.5">
-            Unsettled for {reminder.daysSince} day{reminder.daysSince === 1 ? '' : 's'}
-          </p>
+          {reminder.daysSince != null && (
+            <p className="text-2xs text-muted-text mt-0.5">
+              Unsettled for {reminder.daysSince} day{reminder.daysSince === 1 ? '' : 's'}
+            </p>
+          )}
         </div>
       </div>
     </section>

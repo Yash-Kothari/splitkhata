@@ -46,6 +46,7 @@ import {
   todayISO,
   normalizeLedger,
   computeRecurringEntriesToGenerate,
+  DEFAULT_PAYMENT_REMINDER_THRESHOLD,
 } from './utils';
 
 // recharts pulls in a lot of weight for content that's below the fold on
@@ -150,7 +151,7 @@ export default function App() {
   const [dbPaymentMethods, setDbPaymentMethods] = useState({ methods: [], rawDocs: [] });
   const [dbHouseholdBudgets, setDbHouseholdBudgets] = useState({});
   const [dbRecurringRules, setDbRecurringRules] = useState([]);
-  const [dbReminderConfig, setDbReminderConfig] = useState({ enabled: true, days: 14 });
+  const [dbReminderConfig, setDbReminderConfig] = useState({ enabled: true, amountThreshold: DEFAULT_PAYMENT_REMINDER_THRESHOLD });
   const [connectionStatus, setConnectionStatus] = useState('ok');
   const [errorMessage, setErrorMessage] = useState('');
   const [activeLedger, setActiveLedgerState] = useState(() => getStoredActiveLedger());

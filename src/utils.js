@@ -1352,18 +1352,22 @@ export function computeRecurringEntriesToGenerate(rules, currentMonthKey) {
 
 export const PAYMENT_REMINDER_CONFIG_KEY = 'splitkhata_payment_reminder_config';
 
+export const DEFAULT_PAYMENT_REMINDER_THRESHOLD = 2000;
+
 export function getPaymentReminderConfig() {
   const raw = getItem(PAYMENT_REMINDER_CONFIG_KEY);
-  if (!raw) return { enabled: true, days: 14 };
+  if (!raw) return { enabled: true, amountThreshold: DEFAULT_PAYMENT_REMINDER_THRESHOLD };
   try {
     const parsed = JSON.parse(raw);
-    const days = Number(parsed.days);
+    const amountThreshold = Number(parsed.amountThreshold);
     return {
       enabled: parsed.enabled !== false,
-      days: Number.isFinite(days) && days > 0 ? days : 14,
+      amountThreshold: Number.isFinite(amountThreshold) && amountThreshold > 0
+        ? amountThreshold
+        : DEFAULT_PAYMENT_REMINDER_THRESHOLD,
     };
   } catch {
-    return { enabled: true, days: 14 };
+    return { enabled: true, amountThreshold: DEFAULT_PAYMENT_REMINDER_THRESHOLD };
   }
 }
 
@@ -1385,16 +1389,17 @@ export function getUnsettledSinceDate(entries, ledger) {
 }
 
 // Null when there's nothing worth nudging about: balance is settled, the
-// reminder is turned off, or the imbalance hasn't sat around long enough to
-// cross config.days yet.
+// reminder is turned off, or the amount owed hasn't crossed config.amountThreshold
+// yet. daysSince is still attached (via getUnsettledSinceDate) purely as
+// display context - "how long has this been sitting" - it no longer gates
+// whether the reminder fires at all.
 export function computePaymentReminder(entries, ledger, members, config, today = todayISO()) {
   if (!config?.enabled) return null;
   const balance = computeBalance(entries, ledger, members);
   if (balance.status !== 'owes' || balance.amount <= 0) return null;
+  if (balance.amount < (config.amountThreshold || DEFAULT_PAYMENT_REMINDER_THRESHOLD)) return null;
   const sinceDate = getUnsettledSinceDate(entries, ledger);
-  if (!sinceDate) return null;
-  const daysSince = Math.floor((new Date(today) - new Date(sinceDate)) / 86400000);
-  if (daysSince < (config.days || 14)) return null;
+  const daysSince = sinceDate ? Math.floor((new Date(today) - new Date(sinceDate)) / 86400000) : null;
   return { ...balance, daysSince, sinceDate };
 }
 

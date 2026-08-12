@@ -1,5 +1,14 @@
 import { useMemo, useState } from 'react';
-import { getPinConfig, formatCurrency, groupByCategory, computeBudgetTrend, getMonthKey, getPreviousMonthKey, todayISO } from '../utils';
+import {
+  getPinConfig,
+  formatCurrency,
+  groupByCategory,
+  computeBudgetTrend,
+  getMonthKey,
+  getPreviousMonthKey,
+  todayISO,
+  DEFAULT_PAYMENT_REMINDER_THRESHOLD,
+} from '../utils';
 import {
   addCategoryToDb,
   deleteCategoryFromDb,
@@ -30,7 +39,7 @@ export default function SettingsModal({
   householdBudgets = {},
   householdEntries = [],
   recurringRules = [],
-  reminderConfig = { enabled: true, days: 14 },
+  reminderConfig = { enabled: true, amountThreshold: DEFAULT_PAYMENT_REMINDER_THRESHOLD },
 }) {
   const [activeTab, setActiveTab] = useState('categories');
   const [categoryLedger, setCategoryLedger] = useState(activeLedger);
@@ -210,13 +219,13 @@ export default function SettingsModal({
     }
   }
 
-  function handleReminderDaysChange(value) {
-    setReminderDraft((prev) => ({ ...prev, days: value }));
+  function handleReminderThresholdChange(value) {
+    setReminderDraft((prev) => ({ ...prev, amountThreshold: value }));
   }
 
-  async function handleReminderDaysBlur() {
-    const days = Math.max(1, Math.round(Number(reminderDraft.days)) || 14);
-    const next = { ...reminderDraft, days };
+  async function handleReminderThresholdBlur() {
+    const amountThreshold = Math.max(1, Math.round(Number(reminderDraft.amountThreshold)) || DEFAULT_PAYMENT_REMINDER_THRESHOLD);
+    const next = { ...reminderDraft, amountThreshold };
     setReminderDraft(next);
     setReminderMessage('');
     try {
@@ -773,7 +782,7 @@ export default function SettingsModal({
               <div>
                 <h3 className="text-sm sm:text-base font-bold text-ink mb-0.5">Payment Reminders</h3>
                 <p className="text-xs text-muted-text">
-                  A nudge when the household balance has sat unsettled for a while - in-app only, there's no
+                  A nudge when the household balance owed crosses an amount you set - in-app only, there's no
                   push notification without a backend.
                 </p>
               </div>
@@ -789,17 +798,17 @@ export default function SettingsModal({
               </label>
 
               <div className="flex items-center gap-2.5">
-                <span className="text-sm text-ink">Remind after</span>
+                <span className="text-sm text-ink">Remind when balance exceeds</span>
                 <input
                   type="number"
                   min="1"
-                  value={reminderDraft.days}
-                  onChange={(e) => handleReminderDaysChange(e.target.value)}
-                  onBlur={handleReminderDaysBlur}
+                  value={reminderDraft.amountThreshold}
+                  onChange={(e) => handleReminderThresholdChange(e.target.value)}
+                  onBlur={handleReminderThresholdBlur}
                   disabled={!reminderDraft.enabled}
-                  className="w-20 min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm text-center disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
+                  placeholder="₹"
+                  className="w-24 min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm text-center disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-ledger-green/40"
                 />
-                <span className="text-sm text-ink">days unsettled</span>
               </div>
               {reminderMessage && <p className="text-xs text-muted-text">{reminderMessage}</p>}
             </div>
