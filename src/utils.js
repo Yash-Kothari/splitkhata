@@ -102,6 +102,32 @@ export function normalizeLedger(ledger) {
   return 'household';
 }
 
+const GLOBAL_SEARCH_RESULT_LIMIT = 50;
+
+// Tokenized AND-across-words / OR-across-fields matching for the global
+// search bar - "Japan USJ" shouldn't require any single field to literally
+// contain "japan usj"; it's a match as long as "japan" is found somewhere
+// (e.g. the trip name) AND "usj" is found somewhere else (e.g. the note),
+// each word checked independently against every field combined into one
+// haystack. A plain substring match on the whole query would miss this,
+// since real queries are often "which field has X" + "which field has Y"
+// rather than one contiguous phrase.
+export function searchAllEntries(entries, term) {
+  const tokens = (term || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return [];
+  return entries
+    .filter((e) => e.splitType !== 'settlement' && !e.isTripRollup)
+    .filter((e) => {
+      const haystack = [e.note, e.category, e.payer, e.tripName, e.amount, e.localAmount]
+        .filter((v) => v != null && v !== '')
+        .join(' ')
+        .toLowerCase();
+      return tokens.every((t) => haystack.includes(t));
+    })
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, GLOBAL_SEARCH_RESULT_LIMIT);
+}
+
 // Chronological order for the FIFO cash queue: date first, then createdAt
 // as a tie-break. An entry with no createdAt yet (still being composed in
 // AddEntryForm, not saved) sorts last among same-date entries, so it

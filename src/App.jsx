@@ -586,14 +586,14 @@ export default function App() {
         {!hasFirebase && <SetupBanner onShowDetails={() => setShowSettingsModal(true)} />}
 
         <header className="px-3 sm:px-4 pt-4 sm:pt-6 pb-4 max-w-5xl mx-auto border-b border-ink/10 mb-4 sm:mb-6">
-          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
-            <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <div className="shrink-0">
               <h1 className="font-display text-xl sm:text-2xl font-bold text-ink tracking-tight">
                 Splitkhata
               </h1>
             </div>
 
-            <span className="px-2.5 sm:px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-[11px] sm:text-xs font-bold tracking-wide shadow-2xs whitespace-nowrap truncate max-w-[40vw] sm:max-w-none">
+            <span className="flex-1 min-w-0 text-center px-2.5 sm:px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-[11px] sm:text-xs font-bold tracking-wide shadow-2xs whitespace-nowrap truncate">
               {activeLedger === 'travel'
                 ? (selectedTrip ? `✈️ ${selectedTrip}` : '✈️ Travel')
                 : activeLedger === 'payments'
@@ -601,7 +601,7 @@ export default function App() {
                   : '🏠 Household Ledger'}
             </span>
 
-              <div className="flex items-center justify-end gap-1 min-w-0">
+              <div className="shrink-0 flex items-center justify-end gap-1">
                 <button
                   type="button"
                   onClick={() => setShowGlobalSearch(true)}

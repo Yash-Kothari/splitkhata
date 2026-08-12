@@ -41,6 +41,7 @@ import {
   computePaymentReminder,
   buildReceiptExtractionSchema,
   buildReceiptExtractionPrompt,
+  searchAllEntries,
 } from '../src/utils.js';
 
 test('uses Yash and Kruti as default pair names', () => {
@@ -995,4 +996,41 @@ test('buildReceiptExtractionPrompt includes the real categories and the fallback
   const prompt = buildReceiptExtractionPrompt(['Groceries', 'Utilities'], '2026-08-12');
   assert.match(prompt, /Groceries, Utilities/);
   assert.match(prompt, /2026-08-12/);
+});
+
+test('searchAllEntries matches a multi-word query across different fields of the same entry, not as one literal phrase', () => {
+  const entries = [
+    { id: 'e1', ledger: 'travel', tripName: "Japan Summer Vacation '26", category: 'Entertainment', note: 'USJ tickets', payer: 'Yash', date: '2026-06-15' },
+    { id: 'e2', ledger: 'travel', tripName: 'Goa Trip', category: 'Food', note: 'USJ-themed cafe', payer: 'Kruti', date: '2026-06-10' },
+  ];
+  const results = searchAllEntries(entries, 'Japan USJ');
+  assert.deepEqual(results.map((r) => r.id), ['e1'], 'only the entry with BOTH "japan" and "usj" somewhere should match');
+});
+
+test('searchAllEntries is case-insensitive and matches a single word against any field', () => {
+  const entries = [
+    { id: 'e1', ledger: 'household', category: 'Groceries', note: 'Big Bazaar run', payer: 'Yash', date: '2026-07-01' },
+  ];
+  assert.deepEqual(searchAllEntries(entries, 'BAZAAR').map((r) => r.id), ['e1']);
+});
+
+test('searchAllEntries excludes settlements and trip rollups', () => {
+  const entries = [
+    { id: 'e1', ledger: 'household', splitType: 'settlement', note: 'Yash paid Kruti', payer: 'Yash', date: '2026-07-01' },
+    { id: 'e2', ledger: 'travel', isTripRollup: true, note: 'Trip rollup', payer: 'Yash', date: '2026-07-01' },
+  ];
+  assert.deepEqual(searchAllEntries(entries, 'yash'), []);
+});
+
+test('searchAllEntries returns nothing for a blank query', () => {
+  const entries = [{ id: 'e1', ledger: 'household', category: 'Groceries', payer: 'Yash', date: '2026-07-01' }];
+  assert.deepEqual(searchAllEntries(entries, '   '), []);
+});
+
+test('searchAllEntries matches on amount as a word', () => {
+  const entries = [
+    { id: 'e1', ledger: 'household', category: 'Groceries', amount: 850, payer: 'Yash', date: '2026-07-01' },
+    { id: 'e2', ledger: 'household', category: 'Utilities', amount: 1200, payer: 'Kruti', date: '2026-07-02' },
+  ];
+  assert.deepEqual(searchAllEntries(entries, '850').map((r) => r.id), ['e1']);
 });

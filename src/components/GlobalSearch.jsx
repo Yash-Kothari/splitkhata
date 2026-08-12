@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { formatCurrency, normalizeLedger } from '../utils';
+import { formatCurrency, normalizeLedger, searchAllEntries } from '../utils';
 
 function formatDate(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
@@ -15,22 +15,7 @@ const RESULT_LIMIT = 50;
 export default function GlobalSearch({ entries, onClose, onJumpTo }) {
   const [term, setTerm] = useState('');
 
-  const results = useMemo(() => {
-    const q = term.trim().toLowerCase();
-    if (!q) return [];
-    return entries
-      .filter((e) => e.splitType !== 'settlement' && !e.isTripRollup)
-      .filter((e) => {
-        const matchNote = e.note?.toLowerCase().includes(q);
-        const matchCat = e.category?.toLowerCase().includes(q);
-        const matchPayer = e.payer?.toLowerCase().includes(q);
-        const matchTrip = e.tripName?.toLowerCase().includes(q);
-        const matchAmount = String(e.amount ?? '').includes(q) || String(e.localAmount ?? '').includes(q);
-        return matchNote || matchCat || matchPayer || matchTrip || matchAmount;
-      })
-      .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, RESULT_LIMIT);
-  }, [entries, term]);
+  const results = useMemo(() => searchAllEntries(entries, term), [entries, term]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 px-2.5 sm:px-4 pt-16 sm:pt-24 backdrop-blur-xs">
