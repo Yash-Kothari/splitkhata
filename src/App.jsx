@@ -8,6 +8,7 @@ import ConnectionState from './components/ConnectionState';
 import TravelManager from './components/TravelManager';
 import PaymentsCenter from './components/PaymentsCenter';
 import SettingsModal from './components/SettingsModal';
+import GlobalSearch from './components/GlobalSearch';
 import PinLockScreen from './components/PinLockScreen';
 import {
   subscribeToExpenses,
@@ -38,6 +39,7 @@ import {
   getActiveTrip,
   getMonthKey,
   todayISO,
+  normalizeLedger,
 } from './utils';
 
 // recharts pulls in a lot of weight for content that's below the fold on
@@ -151,12 +153,22 @@ export default function App() {
   const [selectedTrip, setSelectedTrip] = useState('');
   const [currentCurrency, setCurrentCurrency] = useState('INR');
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
 
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+  // Set by a global-search jump into a household entry from a different
+  // month - can't just setSelectedMonth immediately, since switching
+  // activeLedger away from 'household' means `entries` is still the old
+  // ledger's data for a render or two (the subscription hasn't caught up
+  // yet), so the availableMonths-sync effect below would stomp the jump
+  // back to whatever month that stale data resolves to. This waits until
+  // the real household entries (and therefore the target month) have
+  // actually arrived before applying it.
+  const [pendingMonthJump, setPendingMonthJump] = useState(null);
 
   const setActiveLedger = useCallback((ledger) => {
     setActiveLedgerState(ledger);
@@ -338,10 +350,18 @@ export default function App() {
   const availableMonths = getAvailableMonths(entries);
 
   useEffect(() => {
-    if (availableMonths.length && !availableMonths.includes(selectedMonth)) {
+    if (!availableMonths.length) return;
+    if (pendingMonthJump) {
+      if (availableMonths.includes(pendingMonthJump)) {
+        setSelectedMonth(pendingMonthJump);
+        setPendingMonthJump(null);
+      }
+      return;
+    }
+    if (!availableMonths.includes(selectedMonth)) {
       setSelectedMonth(availableMonths[0]);
     }
-  }, [availableMonths, selectedMonth]);
+  }, [availableMonths, selectedMonth, pendingMonthJump]);
 
   const activeMembersList = dbMembers.members.length > 0 ? dbMembers.members : PERSONS;
   const activeCurrenciesList = dbCurrencies.currencies.length > 0 ? dbCurrencies.currencies : CURRENCIES;
@@ -410,6 +430,20 @@ export default function App() {
       ? ['Who owes who right now?', 'Total household spend this month']
       : ['Top 3 Biggest Expense of the month', 'How is Grocery expense compared to last month'];
 
+  // A global-search result can point at an entry from any ledger/trip/month -
+  // this switches whatever context is needed so it's actually visible in the
+  // passbook the user lands on, then closes the search modal.
+  function handleJumpToEntry(entry) {
+    if (normalizeLedger(entry.ledger) === 'travel') {
+      setActiveLedger('travel');
+      if (entry.tripName) setSelectedTrip(entry.tripName);
+    } else {
+      setActiveLedger('household');
+      setPendingMonthJump(getMonthKey(entry.date));
+    }
+    setShowGlobalSearch(false);
+  }
+
   const pinConfig = getPinConfig();
 
   if (authLoading) {
@@ -477,6 +511,14 @@ export default function App() {
         }}
       />
 
+      {showGlobalSearch && (
+        <GlobalSearch
+          entries={askAllEntries}
+          onClose={() => setShowGlobalSearch(false)}
+          onJumpTo={handleJumpToEntry}
+        />
+      )}
+
       {showSettingsModal && (
         <SettingsModal
           onClose={() => setShowSettingsModal(false)}
@@ -517,6 +559,15 @@ export default function App() {
             </span>
 
               <div className="flex items-center justify-end gap-1 min-w-0">
+                <button
+                  type="button"
+                  onClick={() => setShowGlobalSearch(true)}
+                  className="flex items-center justify-center min-w-9 min-h-9 px-2 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs"
+                  title="Search all entries"
+                  aria-label="Search all entries"
+                >
+                  🔎
+                </button>
                 <button
                   type="button"
                   onClick={() => setShowSettingsModal(true)}
