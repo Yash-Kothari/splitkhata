@@ -1004,6 +1004,24 @@ export function computeBudgetStatus(categoryTotals, budgets) {
 // default is "no limit", not zero) and spend has actually reached the
 // warning threshold - most categories, most months, produce nothing to
 // show at all.
+// Same computeBudgetStatus, but enriched with each category's status from
+// the previous period too - "were we also over on this last month, or did
+// it just creep up now?" prevCategoryTotals is groupByCategory's output for
+// whatever the previous period is (last calendar month for a recurring
+// household budget); the limit is assumed to be the same in both periods,
+// which holds for household budgets but not for a whole-trip travel budget
+// (no "last month" for those, so this isn't meant to be called there).
+export function computeBudgetTrend(categoryTotals, prevCategoryTotals, budgets) {
+  const prevByCategory = {};
+  for (const s of computeBudgetStatus(prevCategoryTotals, budgets)) {
+    prevByCategory[s.category] = s;
+  }
+  return computeBudgetStatus(categoryTotals, budgets).map((s) => ({
+    ...s,
+    previous: prevByCategory[s.category] || null,
+  }));
+}
+
 export function computeBudgetAlerts(categoryTotals, budgets) {
   return computeBudgetStatus(categoryTotals, budgets)
     .filter((s) => s.pctUsed >= BUDGET_WARNING_THRESHOLD)

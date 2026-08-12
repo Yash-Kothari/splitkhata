@@ -27,6 +27,7 @@ import {
   resolveAskQuery,
   computeBudgetAlerts,
   computeBudgetStatus,
+  computeBudgetTrend,
   getHouseholdBudgets,
   setHouseholdBudgets,
   groupByCategory,
@@ -831,6 +832,32 @@ test('computeBudgetAlerts is computeBudgetStatus filtered to >=80% and labeled',
   assert.equal(alerts.length, 1);
   assert.equal(alerts[0].category, 'Hotel');
   assert.equal(alerts[0].status, 'warning');
+});
+
+test('computeBudgetTrend attaches last period\'s status to each current-period row', () => {
+  const totals = [{ category: 'Food', amount: 9000 }];
+  const prevTotals = [{ category: 'Food', amount: 12000 }];
+  const trend = computeBudgetTrend(totals, prevTotals, { Food: 10000 });
+  assert.equal(trend.length, 1);
+  assert.equal(trend[0].spent, 9000);
+  assert.equal(trend[0].pctUsed, 0.9);
+  assert.ok(trend[0].previous);
+  assert.equal(trend[0].previous.spent, 12000);
+  assert.equal(trend[0].previous.pctUsed, 1.2);
+});
+
+test('computeBudgetTrend gives 0% previous status for a category with no spend last period', () => {
+  const totals = [{ category: 'Food', amount: 5000 }];
+  const trend = computeBudgetTrend(totals, [], { Food: 10000 });
+  assert.equal(trend[0].previous.spent, 0);
+  assert.equal(trend[0].previous.pctUsed, 0);
+});
+
+test('computeBudgetTrend never surfaces a previous-period row for a category with no budget at all', () => {
+  const totals = [{ category: 'Food', amount: 5000 }];
+  const prevTotals = [{ category: 'Food', amount: 5000 }, { category: 'Hotel', amount: 9000 }];
+  const trend = computeBudgetTrend(totals, prevTotals, { Food: 10000 });
+  assert.deepEqual(trend.map((t) => t.category), ['Food']);
 });
 
 test('getHouseholdBudgets/setHouseholdBudgets round-trip through storage, defaulting to {}', () => {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { getPinConfig, formatCurrency, groupByCategory, computeBudgetStatus, getMonthKey, todayISO } from '../utils';
+import { getPinConfig, formatCurrency, groupByCategory, computeBudgetTrend, getMonthKey, getPreviousMonthKey, todayISO } from '../utils';
 import {
   addCategoryToDb,
   deleteCategoryFromDb,
@@ -96,8 +96,10 @@ export default function SettingsModal({
   }
 
   const householdBudgetStatus = useMemo(() => {
-    const totals = groupByCategory(householdEntries, getMonthKey(todayISO()), 'household');
-    return computeBudgetStatus(totals, budgetDrafts);
+    const currentMonth = getMonthKey(todayISO());
+    const totals = groupByCategory(householdEntries, currentMonth, 'household');
+    const prevTotals = groupByCategory(householdEntries, getPreviousMonthKey(currentMonth), 'household');
+    return computeBudgetTrend(totals, prevTotals, budgetDrafts);
   }, [householdEntries, budgetDrafts]);
 
   const budgetedCategoryNames = new Set(householdBudgetStatus.map((s) => s.category));
@@ -488,6 +490,17 @@ export default function SettingsModal({
                       <p className="text-2xs text-muted-text">
                         {formatCurrency(s.spent)} of {formatCurrency(s.limit)} this month ({Math.round(s.pctUsed * 100)}%)
                       </p>
+                      {s.previous && (
+                        <p className="text-2xs text-muted-text flex items-center gap-1">
+                          <span
+                            className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+                              s.previous.pctUsed >= 1 ? 'bg-stamp-red' : s.previous.pctUsed >= 0.8 ? 'bg-mustard' : 'bg-ledger-green'
+                            }`}
+                          />
+                          Last month: {formatCurrency(s.previous.spent)} ({Math.round(s.previous.pctUsed * 100)}%
+                          {s.previous.pctUsed >= 1 ? ' - over' : ''})
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>
