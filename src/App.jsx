@@ -621,85 +621,81 @@ export default function App() {
               </h1>
             </div>
 
-            <span className="flex-1 min-w-0 text-center px-2.5 sm:px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-[11px] sm:text-xs font-bold tracking-wide shadow-2xs whitespace-nowrap truncate">
-              {activeLedger === 'travel'
-                ? (selectedTrip ? `✈️ ${selectedTrip}` : '✈️ Travel')
-                : activeLedger === 'payments'
-                  ? '💰 Payments'
-                  : activeLedger === 'cards'
-                    ? '💳 Cards'
-                    : '🏠 Household Ledger'}
-            </span>
+            <div className="flex-1 flex items-center justify-end gap-1">
+              <button
+                type="button"
+                onClick={() => setShowGlobalSearch(true)}
+                className="flex items-center justify-center min-w-9 min-h-9 px-2 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs"
+                title="Search all entries"
+                aria-label="Search all entries"
+              >
+                🔎
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(true)}
+                className="flex items-center justify-center gap-1.5 min-w-9 min-h-9 px-2 sm:px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs"
+                title="Open Settings"
+              >
+                <span>⚙️</span>
+                <span className="hidden sm:inline">Settings</span>
+              </button>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowAccountMenu((open) => !open)}
+                  className="text-xs font-medium text-muted-text bg-paper-card min-w-9 min-h-9 max-w-24 sm:max-w-none px-2 sm:px-3 py-1.5 rounded-xl border border-ink/10 hover:border-ink/20 active:scale-95 transition-all truncate"
+                  aria-expanded={showAccountMenu}
+                  aria-haspopup="menu"
+                >
+                  <span className="hidden sm:inline">User: </span><strong className="text-ink">{deviceName}</strong>
+                </button>
 
-              <div className="shrink-0 flex items-center justify-end gap-1">
-                <button
-                  type="button"
-                  onClick={() => setShowGlobalSearch(true)}
-                  className="flex items-center justify-center min-w-9 min-h-9 px-2 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs"
-                  title="Search all entries"
-                  aria-label="Search all entries"
-                >
-                  🔎
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowSettingsModal(true)}
-                  className="flex items-center justify-center gap-1.5 min-w-9 min-h-9 px-2 sm:px-3 py-1.5 rounded-xl border border-ink/15 bg-paper text-xs font-semibold text-ink hover:bg-paper-card active:scale-95 transition-all shadow-2xs"
-                  title="Open Settings"
-                >
-                  <span>⚙️</span>
-                  <span className="hidden sm:inline">Settings</span>
-                </button>
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setShowAccountMenu((open) => !open)}
-                    className="text-xs font-medium text-muted-text bg-paper-card min-w-9 min-h-9 max-w-24 sm:max-w-none px-2 sm:px-3 py-1.5 rounded-xl border border-ink/10 hover:border-ink/20 active:scale-95 transition-all truncate"
-                    aria-expanded={showAccountMenu}
-                    aria-haspopup="menu"
+                {showAccountMenu && (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full z-30 mt-2 w-56 rounded-xl border border-ink/15 bg-paper-card p-2 shadow-xl"
                   >
-                    <span className="hidden sm:inline">User: </span><strong className="text-ink">{deviceName}</strong>
-                  </button>
-
-                  {showAccountMenu && (
-                    <div
-                      role="menu"
-                      className="absolute right-0 top-full z-30 mt-2 w-56 rounded-xl border border-ink/15 bg-paper-card p-2 shadow-xl"
-                    >
-                      {hasFirebase && currentUser?.email && (
-                        <p className="px-2 py-1.5 text-xs text-muted-text truncate" title={currentUser.email}>
-                          {currentUser.email}
-                        </p>
-                      )}
-                      {pinConfig.enabled && pinConfig.pin && (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setShowAccountMenu(false);
-                            setIsLocked(true);
-                          }}
-                          className="w-full min-h-10 rounded-lg px-3 py-2 text-left text-sm font-semibold text-ink hover:bg-paper"
-                        >
-                          Lock app
-                        </button>
-                      )}
+                    {hasFirebase && currentUser?.email && (
+                      <p className="px-2 py-1.5 text-xs text-muted-text truncate" title={currentUser.email}>
+                        {currentUser.email}
+                      </p>
+                    )}
+                    {pinConfig.enabled && pinConfig.pin && (
                       <button
                         type="button"
                         role="menuitem"
-                        onClick={async () => {
+                        onClick={() => {
                           setShowAccountMenu(false);
-                          await signOutUser();
+                          setIsLocked(true);
                         }}
-                        className="w-full min-h-10 rounded-lg px-3 py-2 text-left text-sm font-semibold text-stamp-red hover:bg-stamp-red/10"
+                        className="w-full min-h-10 rounded-lg px-3 py-2 text-left text-sm font-semibold text-ink hover:bg-paper"
                       >
-                        Sign out
+                        Lock app
                       </button>
-                    </div>
-                  )}
-                </div>
+                    )}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={async () => {
+                        setShowAccountMenu(false);
+                        await signOutUser();
+                      }}
+                      className="w-full min-h-10 rounded-lg px-3 py-2 text-left text-sm font-semibold text-stamp-red hover:bg-stamp-red/10"
+                    >
+                      Sign out
+                    </button>
+                  </div>
+                )}
               </div>
+            </div>
           </div>
+
+          {activeLedger === 'travel' && selectedTrip && (
+            <div className="mt-2 inline-flex max-w-full items-center gap-1 px-2.5 py-1 rounded-lg border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-[11px] sm:text-xs font-bold tracking-wide truncate">
+              ✈️ {selectedTrip}
+            </div>
+          )}
         </header>
 
         <div className="px-3 sm:px-4 max-w-5xl mx-auto mb-4 sm:mb-6">
