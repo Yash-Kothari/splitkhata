@@ -11,6 +11,7 @@ import PaymentsCenter from './components/PaymentsCenter';
 import SettingsModal from './components/SettingsModal';
 import GlobalSearch from './components/GlobalSearch';
 import PinLockScreen from './components/PinLockScreen';
+import CardsManager from './components/CardsManager';
 import {
   subscribeToExpenses,
   subscribeToCategories,
@@ -24,6 +25,9 @@ import {
   subscribeToRecurringRules,
   saveRecurringRulesToDb,
   subscribeToPaymentReminderConfig,
+  subscribeToCreditCards,
+  subscribeToCardTransactions,
+  subscribeToCardBillingCycles,
   addExpensesBatch,
   isFirebaseConfigured,
   subscribeToAuth,
@@ -152,6 +156,12 @@ export default function App() {
   const [dbHouseholdBudgets, setDbHouseholdBudgets] = useState({});
   const [dbRecurringRules, setDbRecurringRules] = useState([]);
   const [dbReminderConfig, setDbReminderConfig] = useState({ enabled: true, amountThreshold: DEFAULT_PAYMENT_REMINDER_THRESHOLD });
+  const [dbCreditCards, setDbCreditCards] = useState([]);
+  const [dbCardTransactions, setDbCardTransactions] = useState([]);
+  const [dbCardBillingCycles, setDbCardBillingCycles] = useState([]);
+  // Deliberately not persisted, same reasoning as selectedTrip - which card
+  // was open last session isn't a meaningful default for a new one.
+  const [selectedCardId, setSelectedCardId] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('ok');
   const [errorMessage, setErrorMessage] = useState('');
   const [activeLedger, setActiveLedgerState] = useState(() => getStoredActiveLedger());
@@ -255,6 +265,18 @@ export default function App() {
     const unsubBudgets = subscribeToHouseholdBudgets((budgets) => setDbHouseholdBudgets(budgets));
     const unsubRecurring = subscribeToRecurringRules((rules) => setDbRecurringRules(rules));
     const unsubReminders = subscribeToPaymentReminderConfig((cfg) => setDbReminderConfig(cfg));
+    const unsubCreditCards = subscribeToCreditCards(
+      (cards) => setDbCreditCards(cards),
+      (err) => console.warn('Credit cards sync warning:', err),
+    );
+    const unsubCardTransactions = subscribeToCardTransactions(
+      (txns) => setDbCardTransactions(txns),
+      (err) => console.warn('Card transactions sync warning:', err),
+    );
+    const unsubCardBillingCycles = subscribeToCardBillingCycles(
+      (cycles) => setDbCardBillingCycles(cycles),
+      (err) => console.warn('Card billing cycles sync warning:', err),
+    );
 
     // Real-time subscriptions initialized
     return () => {
@@ -267,13 +289,17 @@ export default function App() {
       unsubBudgets();
       unsubRecurring();
       unsubReminders();
+      unsubCreditCards();
+      unsubCardTransactions();
+      unsubCardBillingCycles();
     };
   }, [currentUser]);
 
-  // Payments is a tab, not a real `ledger` value - it's a combined view over
-  // household-ledger data (settlements + trip rollups), so it reads from
-  // 'household' underneath rather than a third literal ledger.
-  const dataLedger = activeLedger === 'payments' ? 'household' : activeLedger;
+  // Payments and Cards are tabs, not real `ledger` values - Payments is a
+  // combined view over household-ledger data (settlements + trip rollups),
+  // and Cards doesn't touch the expenses ledger at all - both read from
+  // 'household' underneath rather than a literal ledger of their own.
+  const dataLedger = activeLedger === 'payments' || activeLedger === 'cards' ? 'household' : activeLedger;
 
   useEffect(() => {
     if (!deviceName || (isFirebaseConfigured() && !isAllowedUser(currentUser))) return undefined;
@@ -580,6 +606,7 @@ export default function App() {
           householdEntries={askHouseholdEntries}
           recurringRules={dbRecurringRules}
           reminderConfig={dbReminderConfig}
+          creditCards={dbCreditCards}
         />
       )}
 
@@ -599,7 +626,9 @@ export default function App() {
                 ? (selectedTrip ? `✈️ ${selectedTrip}` : '✈️ Travel')
                 : activeLedger === 'payments'
                   ? '💰 Payments'
-                  : '🏠 Household Ledger'}
+                  : activeLedger === 'cards'
+                    ? '💳 Cards'
+                    : '🏠 Household Ledger'}
             </span>
 
               <div className="shrink-0 flex items-center justify-end gap-1">
@@ -674,7 +703,7 @@ export default function App() {
         </header>
 
         <div className="px-3 sm:px-4 max-w-5xl mx-auto mb-4 sm:mb-6">
-          <div className="grid grid-cols-3 gap-1.5 p-1.5 rounded-xl bg-paper border border-ink/10">
+          <div className="grid grid-cols-4 gap-1.5 p-1.5 rounded-xl bg-paper border border-ink/10">
             <button
               type="button"
               onClick={() => setActiveLedger('payments')}
@@ -707,6 +736,17 @@ export default function App() {
               }`}
             >
               ✈️ Travel
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveLedger('cards')}
+              className={`min-h-11 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
+                activeLedger === 'cards'
+                  ? 'bg-ledger-green text-white shadow-xs'
+                  : 'text-muted-text hover:text-ink'
+              }`}
+            >
+              💳 Cards
             </button>
           </div>
         </div>
@@ -746,6 +786,18 @@ export default function App() {
             </>
           )}
 
+          {activeLedger === 'cards' && (
+            <CardsManager
+              creditCards={dbCreditCards}
+              cardTransactions={dbCardTransactions}
+              cardBillingCycles={dbCardBillingCycles}
+              selectedCardId={selectedCardId}
+              onSelectCard={setSelectedCardId}
+              onShowSettings={() => setShowSettingsModal(true)}
+              onSaveError={handleSaveError}
+            />
+          )}
+
           {activeLedger === 'travel' && (
             <TravelManager
               selectedTrip={selectedTrip}
@@ -779,7 +831,7 @@ export default function App() {
                 Search and select a trip above to see its balance, spend breakdown, and passbook.
               </div>
             )
-          ) : activeLedger !== 'payments' && (
+          ) : activeLedger !== 'payments' && activeLedger !== 'cards' && (
             <>
               {activeLedger === 'travel' && (
                 <BalanceStrip

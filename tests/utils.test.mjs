@@ -42,6 +42,30 @@ import {
   buildReceiptExtractionSchema,
   buildReceiptExtractionPrompt,
   searchAllEntries,
+  CARD_STRATEGY_DEFAULTS,
+  getCardCycleForDate,
+  getTransactionsInCycle,
+  listRecentCardCycles,
+  getQuarterBounds,
+  computeDinersCycleReward,
+  computeSbiCycleReward,
+  computeHsbcCycleReward,
+  computeSuperMoneyCycleReward,
+  computeHsbcPremierCycleReward,
+  computeCardCycleReward,
+  previewTransactionReward,
+  resolveStrategyParamsForDate,
+  computeCardMilestoneProgress,
+  getAnnualMilestoneWindow,
+  computeCardCapStatus,
+  applyRewardOverrides,
+  getCreditCards,
+  setCreditCards,
+  getCardTransactions,
+  setCardTransactions,
+  getCardBillingCycles,
+  setCardBillingCycles,
+  getCardBillingCycleKey,
 } from '../src/utils.js';
 
 test('uses Yash and Kruti as default pair names', () => {
@@ -1041,4 +1065,657 @@ test('searchAllEntries matches on amount as a word', () => {
     { id: 'e2', ledger: 'household', category: 'Utilities', amount: 1200, payer: 'Kruti', date: '2026-07-02' },
   ];
   assert.deepEqual(searchAllEntries(entries, '850').map((r) => r.id), ['e1']);
+});
+
+// --- Credit card billing cycle helpers ---
+
+test('getCardCycleForDate: a transaction before the cycle day belongs to the cycle ending this month', () => {
+  const { cycleStart, cycleEnd } = getCardCycleForDate('2026-08-15', 20);
+  assert.equal(cycleStart, '2026-07-20');
+  assert.equal(cycleEnd, '2026-08-20');
+});
+
+test('getCardCycleForDate: a transaction on or after the cycle day belongs to next month\'s cycle', () => {
+  const { cycleStart, cycleEnd } = getCardCycleForDate('2026-08-20', 20);
+  assert.equal(cycleStart, '2026-08-20');
+  assert.equal(cycleEnd, '2026-09-20');
+});
+
+test('getCardCycleForDate clamps the cycle day to however many days a short month actually has', () => {
+  const { cycleStart, cycleEnd } = getCardCycleForDate('2026-02-20', 31);
+  assert.equal(cycleStart, '2026-01-31');
+  assert.equal(cycleEnd, '2026-02-28', '2026 is not a leap year');
+});
+
+test('getTransactionsInCycle filters by both card and date range', () => {
+  const txns = [
+    { id: 't1', cardId: 'c1', date: '2026-07-25' },
+    { id: 't2', cardId: 'c1', date: '2026-08-05' },
+    { id: 't3', cardId: 'c2', date: '2026-07-25' },
+  ];
+  const result = getTransactionsInCycle(txns, 'c1', '2026-07-20', '2026-08-20');
+  assert.deepEqual(result.map((t) => t.id), ['t1', 't2']);
+});
+
+test('listRecentCardCycles marks exactly the cycle containing today as open', () => {
+  const cycles = listRecentCardCycles(4, '2026-08-12', 3);
+  assert.equal(cycles.length, 3);
+  assert.equal(cycles[0].isOpen, true);
+  assert.equal(cycles[1].isOpen, false);
+  assert.equal(cycles[2].isOpen, false);
+});
+
+test('listRecentCardCycles produces a strictly consecutive, non-overlapping chain across a year and leap-day boundary', () => {
+  // billing day 1, walking back from March 2028 (a leap year) - crosses
+  // both Jan 1 and the Feb 29 boundary in the same short run.
+  const cycles = listRecentCardCycles(1, '2028-03-15', 4);
+  assert.deepEqual(
+    cycles.map((c) => [c.cycleStart, c.cycleEnd]),
+    [
+      ['2028-03-01', '2028-04-01'],
+      ['2028-02-01', '2028-03-01'],
+      ['2028-01-01', '2028-02-01'],
+      ['2027-12-01', '2028-01-01'],
+    ],
+  );
+  // Every cycle's end must exactly equal the next (older) cycle's... start
+  // of the *following* cycle, i.e. no gap and no overlap anywhere in the chain.
+  for (let i = 0; i < cycles.length - 1; i++) {
+    assert.equal(cycles[i].cycleStart, cycles[i + 1].cycleEnd);
+  }
+});
+
+test('getQuarterBounds returns calendar-quarter boundaries regardless of billing cycle', () => {
+  assert.deepEqual(getQuarterBounds('2026-08-12'), { quarterStart: '2026-07-01', quarterEnd: '2026-10-01' });
+  assert.deepEqual(getQuarterBounds('2026-01-05'), { quarterStart: '2026-01-01', quarterEnd: '2026-04-01' });
+  assert.deepEqual(getQuarterBounds('2026-12-25'), { quarterStart: '2026-10-01', quarterEnd: '2027-01-01' });
+});
+
+// --- HDFC Diners Club Black Metal ---
+
+test('Diners: base slab is 5 points per ₹150, floored', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { totalReward } = computeDinersCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 449, category: 'regular' },
+  ]);
+  assert.equal(totalReward, 10, 'floor(449/150)=2, 2*5=10');
+});
+
+test('Diners: weekend dining doubles the base rate', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { totalReward } = computeDinersCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 450, category: 'weekend_dining' },
+  ]);
+  assert.equal(totalReward, 30, 'floor(450/150)=3, 3*5*2=30');
+});
+
+test('Diners: a category day-cap stops a second same-day transaction from earning past it', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { totalReward, perTransaction } = computeDinersCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 30000, category: 'weekend_dining' }, // floor(30000/150)*5*2 = 2000, way past the 1000/day cap
+    { id: 't2', date: '2026-08-01', amount: 30000, category: 'weekend_dining' },
+  ]);
+  assert.equal(perTransaction[0].earned, 1000, 'first transaction alone already exceeds the day cap');
+  assert.equal(perTransaction[1].earned, 0, 'the day cap is already exhausted');
+  assert.equal(totalReward, 1000);
+});
+
+test('Diners: a category month-cap accumulates across different days in the same month', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { totalReward, perTransaction } = computeDinersCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 45000, category: 'grocery' }, // floor(45000/150)*5 = 1500
+    { id: 't2', date: '2026-08-15', amount: 45000, category: 'grocery' }, // would be another 1500, but month cap is 2000
+  ]);
+  assert.equal(perTransaction[0].earned, 1500);
+  assert.equal(perTransaction[1].earned, 500, 'only 500 left under the 2000/month grocery cap');
+  assert.equal(totalReward, 2000);
+});
+
+test('Diners: the overall cycle cap wins even when no single category cap is hit', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { totalReward } = computeDinersCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 3000000, category: 'regular' }, // floor(3000000/150)*5 = 100000, way past 75000 cycle cap
+  ]);
+  assert.equal(totalReward, 75000);
+});
+
+test('Diners: excluded categories earn nothing regardless of amount', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { totalReward } = computeDinersCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 50000, category: 'excluded' },
+  ]);
+  assert.equal(totalReward, 0);
+});
+
+// --- SBI Cashback ---
+
+test('SBI: 5% online and 1% offline are computed and capped independently', () => {
+  const params = CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback;
+  const { totalReward, onlineTotal, offlineTotal } = computeSbiCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 10000, channel: 'online' }, // 500
+    { id: 't2', date: '2026-08-02', amount: 10000, channel: 'offline' }, // 100
+  ]);
+  assert.equal(onlineTotal, 500);
+  assert.equal(offlineTotal, 100);
+  assert.equal(totalReward, 600);
+});
+
+test('SBI: online cap of ₹2000/cycle does not consume the offline cap', () => {
+  const params = CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback;
+  const { onlineTotal, offlineTotal } = computeSbiCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 100000, channel: 'online' }, // 5% = 5000, capped to 2000
+    { id: 't2', date: '2026-08-02', amount: 100000, channel: 'offline' }, // 1% = 1000, under the 2000 cap
+  ]);
+  assert.equal(onlineTotal, 2000);
+  assert.equal(offlineTotal, 1000);
+});
+
+test('SBI: excluded-category transactions earn nothing on either channel', () => {
+  const params = CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback;
+  const { totalReward } = computeSbiCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 5000, channel: 'excluded' },
+  ]);
+  assert.equal(totalReward, 0);
+});
+
+// SBI's own Cashback T&C, clause 11.1.s: "Card Cashback is not applicable
+// on transactions less than ₹100."
+test('SBI: transactions under ₹100 earn no cashback, per SBI\'s own T&C', () => {
+  const params = CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback;
+  const { perTransaction, totalReward } = computeSbiCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 50, channel: 'online' },
+    { id: 't2', date: '2026-08-02', amount: 99, channel: 'offline' },
+    { id: 't3', date: '2026-08-03', amount: 100, channel: 'online' },
+  ]);
+  assert.equal(perTransaction[0].earned, 0, 'a ₹50 online transaction is under the ₹100 minimum');
+  assert.equal(perTransaction[1].earned, 0, 'a ₹99 offline transaction is under the ₹100 minimum');
+  assert.equal(perTransaction[2].earned, 5, 'a ₹100 transaction meets the minimum and earns normally');
+  assert.equal(totalReward, 5);
+});
+
+test('SBI: a blank/null minTransaction means no minimum, not "everything is under it"', () => {
+  const params = { ...CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback, minTransaction: null };
+  const { totalReward } = computeSbiCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 50, channel: 'online' },
+  ]);
+  assert.equal(totalReward, 2, 'floor(50*5/100)=2 - a cleared minimum must not zero out every transaction');
+});
+
+// --- HSBC Live+ ---
+
+test('HSBC Live+: bonus and base tiers are computed on the cycle aggregate, not per transaction', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate;
+  const { totalReward, bonusEarned, baseEarned } = computeHsbcCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 1000, isBonusEligible: true },
+    { id: 't2', date: '2026-08-02', amount: 500, isBonusEligible: true },
+    { id: 't3', date: '2026-08-03', amount: 2000, isBonusEligible: false },
+  ]);
+  assert.equal(bonusEarned, 150, 'round((1000+500)*10/100) = 150');
+  assert.equal(baseEarned, 30, 'round(2000*1.5/100) = 30');
+  assert.equal(totalReward, 180);
+});
+
+test('HSBC Live+: the ₹1,200/month bonus cap applies to the combined eligible total, not per transaction', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate;
+  const { bonusEarned } = computeHsbcCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 8000, isBonusEligible: true }, // 800
+    { id: 't2', date: '2026-08-02', amount: 8000, isBonusEligible: true }, // another 800, combined 1600 > 1200 cap
+  ]);
+  assert.equal(bonusEarned, 1200);
+});
+
+test('HSBC Live+: excluded transactions (e.g. international) are counted in neither pool', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate;
+  const { totalReward } = computeHsbcCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 5000, isBonusEligible: true, channel: 'excluded' },
+  ]);
+  assert.equal(totalReward, 0);
+});
+
+test('HSBC Live+: a blank/null bonusMonthlyCap means uncapped, not "capped at zero"', () => {
+  const params = { ...CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate, bonusMonthlyCap: null };
+  const { bonusEarned } = computeHsbcCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 8000, isBonusEligible: true }, // round(8000*10/100) = 800
+  ]);
+  assert.equal(bonusEarned, 800, 'a cleared cap field must not silently zero out every bonus-tier reward');
+});
+
+// --- Axis SuperMoney RuPay ---
+
+test('SuperMoney: a transaction under ₹100 earns nothing on either pool', () => {
+  const params = CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool;
+  const { totalReward } = computeSuperMoneyCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 50, isBonusEligible: true },
+    { id: 't2', date: '2026-08-01', amount: 99, isBonusEligible: false },
+  ]);
+  assert.equal(totalReward, 0);
+});
+
+test('SuperMoney: the 3% bonus pool is capped by the 1% base pool when the base pool exceeds ₹100', () => {
+  const params = CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool;
+  const { totalReward, baseTotal, bonusFinal } = computeSuperMoneyCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 10000, isBonusEligible: false }, // base 1% = 100
+    { id: 't2', date: '2026-08-01', amount: 10000, isBonusEligible: true }, // bonus 3% = 300, but capped by base pool
+  ]);
+  assert.equal(baseTotal, 100);
+  assert.equal(bonusFinal, 100, 'bonus pool capped at the base pool of 100');
+  assert.equal(totalReward, 200);
+});
+
+test('SuperMoney: the bonus pool floor is ₹100 even when the base pool earned less', () => {
+  const params = CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool;
+  const { baseTotal, bonusFinal } = computeSuperMoneyCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 100, isBonusEligible: false }, // base 1% = 1
+    { id: 't2', date: '2026-08-01', amount: 10000, isBonusEligible: true }, // bonus raw 3% = 300
+  ]);
+  assert.equal(baseTotal, 1);
+  assert.equal(bonusFinal, 100, 'floor of 100 applies since the base pool (1) is under 100');
+});
+
+test('SuperMoney: the bonus pool never exceeds what it actually raw-earned, even under the floor', () => {
+  const params = CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool;
+  const { bonusFinal } = computeSuperMoneyCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 100, isBonusEligible: true }, // bonus raw 3% = 3
+  ]);
+  assert.equal(bonusFinal, 3, 'raw bonus (3) is below the 100 floor, so it is not topped up to 100');
+});
+
+test('SuperMoney: a blank/null minTransaction does not disable earning entirely', () => {
+  const params = { ...CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool, minTransaction: null };
+  const { totalReward } = computeSuperMoneyCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 50, isBonusEligible: false }, // floor(50*1/100) = 0, but not skipped entirely
+  ]);
+  assert.equal(totalReward, 0, 'still earns nothing at this tiny amount due to rounding, but the transaction was actually evaluated');
+});
+
+test('SuperMoney: a blank/null bonusFloor still lets the bonus pool earn up to the base pool', () => {
+  const params = { ...CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool, bonusFloor: null };
+  const { bonusFinal } = computeSuperMoneyCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 10000, isBonusEligible: false }, // base 1% = 100
+    { id: 't2', date: '2026-08-01', amount: 10000, isBonusEligible: true }, // bonus raw 3% = 300, capped by base pool
+  ]);
+  assert.equal(bonusFinal, 100, 'without a floor, the bonus pool is simply capped at the base pool, same as the normal case');
+});
+
+// --- HSBC Premier ---
+
+test('HSBC Premier: flat 3 points per ₹100 on a regular transaction', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped;
+  const { totalReward } = computeHsbcPremierCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 1000, category: 'regular' },
+  ]);
+  assert.equal(totalReward, 30);
+});
+
+test('HSBC Premier: fuel earns nothing', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped;
+  const { totalReward } = computeHsbcPremierCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 5000, category: 'fuel_excluded' },
+  ]);
+  assert.equal(totalReward, 0);
+});
+
+test('HSBC Premier: the ₹1L category cap stops earning once crossed, even across multiple transactions', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped;
+  const { perTransaction, totalReward } = computeHsbcPremierCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 90000, category: 'capped_category' }, // earns fully: floor(90000*3/100)=2700
+    { id: 't2', date: '2026-08-02', amount: 20000, category: 'capped_category' }, // only 10000 of this is still under the cap
+    { id: 't3', date: '2026-08-03', amount: 5000, category: 'capped_category' }, // cap already exhausted
+  ]);
+  assert.equal(perTransaction[0].earned, 2700);
+  assert.equal(perTransaction[1].earned, 300, 'floor(10000*3/100)=300, only 10000 of the 20000 was still under the cap');
+  assert.equal(perTransaction[2].earned, 0);
+  assert.equal(totalReward, 3000);
+});
+
+test('HSBC Premier: a travel-bonus transaction applies its own multiplier on top of the base rate', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped;
+  const { totalReward } = computeHsbcPremierCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 10000, category: 'travel_bonus', travelMultiplier: 6 },
+  ]);
+  assert.equal(totalReward, 1800, 'floor(10000*3/100)*6 = 300*6 = 1800');
+});
+
+test('HSBC Premier: Travel with Points earnings are capped at 18,000 points/month, even across bookings', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped;
+  const { perTransaction, totalReward } = computeHsbcPremierCycleReward(params, [
+    // floor(50000*3/100)*12 = 1500*12 = 18000, already at the cap alone
+    { id: 't1', date: '2026-08-01', amount: 50000, category: 'travel_bonus', travelMultiplier: 12 },
+    { id: 't2', date: '2026-08-02', amount: 10000, category: 'travel_bonus', travelMultiplier: 6 },
+  ]);
+  assert.equal(perTransaction[0].earned, 18000);
+  assert.equal(perTransaction[1].earned, 0, 'the 18,000/month travel cap is already exhausted');
+  assert.equal(totalReward, 18000);
+});
+
+test('HSBC Premier: a blank/null categoryMonthlyCap means uncapped, not "no room left"', () => {
+  const params = { ...CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped, categoryMonthlyCap: null };
+  const { totalReward } = computeHsbcPremierCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 500000, category: 'capped_category' },
+  ]);
+  assert.equal(totalReward, 15000, 'floor(500000*3/100)=15000 - a cleared cap must not zero out every capped-category reward');
+});
+
+// HSBC's Rewards T&C spells out a worked example for this exact mechanic:
+// ₹130 -> 3pts (₹30 carried), (₹270+₹30)=₹300 -> 9pts, ₹500 -> 15pts. Rows 1
+// and 3 both match floor(eligible/100)*3 exactly; row 2's printed "6pts" is
+// inconsistent with that same formula (and with the "3 points per ₹100"
+// headline rate) and reads as a typo in HSBC's own PDF, so this test follows
+// the documented formula rather than the one inconsistent cell.
+test('HSBC Premier: a sub-₹100 remainder carries forward to the next transaction, per HSBC\'s own worked example', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped;
+  const { perTransaction, totalReward } = computeHsbcPremierCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 130, category: 'regular' },
+    { id: 't2', date: '2026-08-02', amount: 270, category: 'regular' },
+    { id: 't3', date: '2026-08-03', amount: 500, category: 'regular' },
+  ]);
+  assert.equal(perTransaction[0].earned, 3, 'floor(130/100)*3 = 3, ₹30 carried forward');
+  assert.equal(perTransaction[1].earned, 9, 'floor((270+30)/100)*3 = floor(300/100)*3 = 9');
+  assert.equal(perTransaction[2].earned, 15, 'floor(500/100)*3 = 15, no remainder left to carry');
+  assert.equal(totalReward, 27);
+});
+
+test('HSBC Premier: carry-forward keeps a capped-category transaction\'s leftover fraction alive for the next one', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped;
+  const { perTransaction, totalReward } = computeHsbcPremierCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 50, category: 'capped_category' }, // floor(50/100)=0 -> 0pts, ₹50 carried
+    { id: 't2', date: '2026-08-02', amount: 50, category: 'regular' }, // 50+50=100 -> floor(100/100)=1 -> 3pts
+  ]);
+  assert.equal(perTransaction[0].earned, 0);
+  assert.equal(perTransaction[1].earned, 3, 'the carried ₹50 combines with this ₹50 spend to cross the ₹100 threshold');
+  assert.equal(totalReward, 3);
+});
+
+test('Diners: a missing/empty categories list falls back to the base slab rate instead of throwing', () => {
+  const params = { ...CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone, categories: [] };
+  const { totalReward } = computeDinersCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 450, category: 'regular' },
+  ]);
+  assert.equal(totalReward, 15, 'floor(450/150)*5 = 15, at the safe 1x fallback multiplier');
+});
+
+test('Diners: a transaction\'s own travelMultiplier overrides its category\'s default multiplier', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { perTransaction, totalReward } = computeDinersCycleReward(params, [
+    // smartbuy_hotel defaults to 10x, but a flight booking on SmartBuy
+    // earns a different real-world rate - the transaction's own multiplier
+    // should win.
+    { id: 't1', date: '2026-08-01', amount: 4500, category: 'smartbuy_hotel', travelMultiplier: 5 },
+  ]);
+  assert.equal(perTransaction[0].multiplier, 5);
+  assert.equal(totalReward, 750, 'floor(4500/150)*5*5 = 30*5*5 = 750');
+});
+
+test('Diners: no travelMultiplier on a transaction falls back to the category\'s fixed multiplier', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { perTransaction, totalReward } = computeDinersCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 4500, category: 'smartbuy_hotel' },
+  ]);
+  assert.equal(perTransaction[0].multiplier, 10, 'unset travelMultiplier keeps the category default (10x for smartbuy_hotel)');
+  assert.equal(totalReward, 1500, 'floor(4500/150)*5*10 = 30*5*10 = 1500');
+});
+
+// --- Dispatcher ---
+
+test('computeCardCycleReward dispatches to the right strategy based on the card record', () => {
+  const card = {
+    rewardStrategy: 'sbi_two_channel_cashback',
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }],
+  };
+  const { totalReward } = computeCardCycleReward(card, [{ id: 't1', date: '2026-08-01', amount: 10000, channel: 'online' }], '2026-08-01');
+  assert.equal(totalReward, 500);
+});
+
+test('computeCardCycleReward returns a safe zero for an unknown strategy instead of throwing', () => {
+  const result = computeCardCycleReward({ rewardStrategy: 'not_a_real_strategy' }, []);
+  assert.equal(result.totalReward, 0);
+});
+
+test('computeCardCycleReward resolves the rule version active at asOfDate, not the latest one', () => {
+  const card = {
+    rewardStrategy: 'sbi_two_channel_cashback',
+    strategyParamsHistory: [
+      { effectiveFrom: '2026-01-01', params: { ...CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback, onlineRate: 5 } },
+      { effectiveFrom: '2026-04-01', params: { ...CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback, onlineRate: 2 } },
+    ],
+  };
+  const txns = [{ id: 't1', date: '2026-03-15', amount: 10000, channel: 'online' }];
+  const beforeChange = computeCardCycleReward(card, txns, '2026-03-15');
+  const afterChange = computeCardCycleReward(card, txns, '2026-04-15');
+  assert.equal(beforeChange.totalReward, 500, 'a cycle that opened before the rate change still uses the old 5% rate');
+  assert.equal(afterChange.totalReward, 200, 'a cycle that opened after the rate change uses the new 2% rate on the same spend');
+});
+
+// --- Dated rule version resolution ---
+
+test('resolveStrategyParamsForDate picks the version whose effectiveFrom is the latest one on or before the given date', () => {
+  const history = [
+    { effectiveFrom: '2026-01-01', params: { rate: 1 } },
+    { effectiveFrom: '2026-04-01', params: { rate: 2 } },
+    { effectiveFrom: '2026-08-01', params: { rate: 3 } },
+  ];
+  assert.equal(resolveStrategyParamsForDate(history, '2026-03-31').rate, 1);
+  assert.equal(resolveStrategyParamsForDate(history, '2026-04-01').rate, 2, 'the boundary date itself belongs to the new version');
+  assert.equal(resolveStrategyParamsForDate(history, '2026-07-31').rate, 2);
+  assert.equal(resolveStrategyParamsForDate(history, '2026-12-31').rate, 3);
+});
+
+test('resolveStrategyParamsForDate falls back to the earliest version for a date before any recorded rule', () => {
+  const history = [{ effectiveFrom: '2026-04-01', params: { rate: 2 } }];
+  assert.equal(resolveStrategyParamsForDate(history, '2020-01-01').rate, 2);
+});
+
+test('resolveStrategyParamsForDate is order-independent - an unsorted history resolves the same as a sorted one', () => {
+  const history = [
+    { effectiveFrom: '2026-08-01', params: { rate: 3 } },
+    { effectiveFrom: '2026-01-01', params: { rate: 1 } },
+    { effectiveFrom: '2026-04-01', params: { rate: 2 } },
+  ];
+  assert.equal(resolveStrategyParamsForDate(history, '2026-05-01').rate, 2);
+});
+
+test('resolveStrategyParamsForDate returns an empty object for a card with no rule history at all', () => {
+  assert.deepEqual(resolveStrategyParamsForDate(null, '2026-08-01'), {});
+  assert.deepEqual(resolveStrategyParamsForDate([], '2026-08-01'), {});
+});
+
+// --- Milestone progress ---
+
+test('computeCardMilestoneProgress sums only that card\'s non-excluded spend in the period', () => {
+  const txns = [
+    { cardId: 'c1', date: '2026-07-05', amount: 100000, category: 'regular' },
+    { cardId: 'c1', date: '2026-10-05', amount: 500000, category: 'regular' }, // outside the quarter
+    { cardId: 'c1', date: '2026-07-10', amount: 50000, category: 'excluded' }, // excluded category
+    { cardId: 'c2', date: '2026-07-05', amount: 900000, category: 'regular' }, // different card
+  ];
+  const { spent, pctUsed, remaining } = computeCardMilestoneProgress(txns, 'c1', '2026-07-01', '2026-10-01', 400000);
+  assert.equal(spent, 100000);
+  assert.equal(pctUsed, 0.25);
+  assert.equal(remaining, 300000);
+});
+
+test('computeCardMilestoneProgress handles a null target (no milestone on this card) without dividing by zero', () => {
+  const { pctUsed, remaining } = computeCardMilestoneProgress([], 'c1', '2026-07-01', '2026-10-01', null);
+  assert.equal(pctUsed, 0);
+  assert.equal(remaining, null);
+});
+
+test('computeCardMilestoneProgress adds startingSpend as a baseline for spend that predates tracking', () => {
+  const txns = [{ cardId: 'c1', date: '2026-07-05', amount: 100000, category: 'regular' }];
+  const { spent, remaining } = computeCardMilestoneProgress(txns, 'c1', '2026-07-01', '2026-10-01', 400000, 150000);
+  assert.equal(spent, 250000, 'the 150000 carried-over baseline plus the 100000 tracked in-app');
+  assert.equal(remaining, 150000);
+});
+
+test('computeCardMilestoneProgress treats a missing startingSpend as zero, not NaN', () => {
+  const txns = [{ cardId: 'c1', date: '2026-07-05', amount: 100000, category: 'regular' }];
+  const { spent } = computeCardMilestoneProgress(txns, 'c1', '2026-07-01', '2026-10-01', 400000);
+  assert.equal(spent, 100000);
+});
+
+// --- Annual milestone window (card renewal cycle, not calendar year) ---
+
+test('getAnnualMilestoneWindow runs a 12-month window from the given anchor month, not Jan-Dec', () => {
+  assert.deepEqual(getAnnualMilestoneWindow(3, '2026-08-12'), { periodStart: '2026-03-01', periodEnd: '2027-03-01' });
+  assert.deepEqual(getAnnualMilestoneWindow(3, '2026-02-15'), { periodStart: '2025-03-01', periodEnd: '2026-03-01' }, 'before this year\'s anchor month, so the window is still last year\'s');
+  assert.deepEqual(getAnnualMilestoneWindow(3, '2026-03-01'), { periodStart: '2026-03-01', periodEnd: '2027-03-01' }, 'the anchor date itself belongs to the new window');
+});
+
+test('getAnnualMilestoneWindow defaults to January for a card with no anchor month set', () => {
+  assert.deepEqual(getAnnualMilestoneWindow(null, '2026-08-12'), { periodStart: '2026-01-01', periodEnd: '2027-01-01' });
+  assert.deepEqual(getAnnualMilestoneWindow(undefined, '2026-08-12'), { periodStart: '2026-01-01', periodEnd: '2027-01-01' });
+});
+
+// --- Live single-transaction preview (add/edit forms) ---
+
+test('previewTransactionReward computes what a brand-new transaction would earn among its cycle\'s existing ones', () => {
+  const card = { billingCycleDay: 1, rewardStrategy: 'sbi_two_channel_cashback', strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }] };
+  const existing = [{ id: 't1', date: '2026-08-05', amount: 1000, channel: 'online' }]; // already earned 50, online cap 2000
+  const preview = previewTransactionReward(card, existing, { date: '2026-08-10', amount: 40000, channel: 'online' });
+  assert.equal(preview.earned, 1950, 'the ₹2000 online cap minus the 50 already earned by the existing transaction this cycle');
+});
+
+test('previewTransactionReward excludes the transaction being edited from "the others" using its own id', () => {
+  const card = { billingCycleDay: 1, rewardStrategy: 'sbi_two_channel_cashback', strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }] };
+  const existing = [{ id: 't1', date: '2026-08-05', amount: 1000, channel: 'online' }];
+  // editing t1 itself with a changed amount shouldn't double count it against its own cap room
+  const preview = previewTransactionReward(card, existing, { id: 't1', date: '2026-08-05', amount: 2000, channel: 'online' });
+  assert.equal(preview.earned, 100, 'floor(2000*5/100)=100, well under the cap, not stacked on top of the original 1000');
+});
+
+test('previewTransactionReward returns null until there is enough to compute (no date/amount yet)', () => {
+  const card = { billingCycleDay: 1, rewardStrategy: 'sbi_two_channel_cashback', strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }] };
+  assert.equal(previewTransactionReward(card, [], { date: '2026-08-10' }), null);
+  assert.equal(previewTransactionReward(card, [], { amount: 500 }), null);
+});
+
+// --- Cap-remaining status (per-category / per-pool "how much room is left") ---
+
+test('computeCardCapStatus (Diners) reports remaining room per category for the period containing today', () => {
+  const card = {
+    rewardStrategy: 'hdfc_diners_slab_milestone',
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone }],
+  };
+  const txns = [
+    { id: 't1', date: '2026-08-05', amount: 9000, category: 'smartbuy_hotel' }, // floor(9000/150)*5*10 = 3000
+    { id: 't2', date: '2026-08-06', amount: 759, category: 'grocery' }, // floor(759/150)*5 = 25
+  ];
+  const statuses = computeCardCapStatus(card, txns, txns, '2026-08-12');
+  const smartbuy = statuses.find((s) => s.key === 'smartbuy_hotel');
+  const grocery = statuses.find((s) => s.key === 'grocery');
+  assert.equal(smartbuy.earned, 3000);
+  assert.equal(smartbuy.remaining, 7000, '10000 cap - 3000 earned so far this month');
+  assert.equal(grocery.earned, 25);
+  assert.equal(grocery.remaining, 1975, '2000 cap - 25 earned so far this month');
+});
+
+test('computeCardCapStatus (Diners) scopes a day-period cap to only that day, not the whole month', () => {
+  const card = {
+    rewardStrategy: 'hdfc_diners_slab_milestone',
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone }],
+  };
+  const txns = [
+    { id: 't1', date: '2026-08-01', amount: 1500, category: 'weekend_dining' }, // a different day this month
+    { id: 't2', date: '2026-08-12', amount: 300, category: 'weekend_dining' }, // floor(300/150)*5*2 = 20
+  ];
+  const status = computeCardCapStatus(card, txns, txns, '2026-08-12').find((s) => s.key === 'weekend_dining');
+  assert.equal(status.earned, 20, 'only the transaction on 2026-08-12 counts toward a day-period cap');
+  assert.equal(status.remaining, 980);
+});
+
+test('computeCardCapStatus (HSBC Live+) reports the bonus-category cap remaining for the current month', () => {
+  const card = {
+    rewardStrategy: 'hsbc_tiered_cashback_aggregate',
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }],
+  };
+  const txns = [
+    { id: 't1', date: '2026-08-01', amount: 8000, isBonusEligible: true, channel: null }, // round(8000*10/100) = 800
+    { id: 't2', date: '2026-07-31', amount: 50000, isBonusEligible: true, channel: null }, // different month, excluded
+  ];
+  const [status] = computeCardCapStatus(card, txns, txns, '2026-08-15');
+  assert.equal(status.earned, 800);
+  assert.equal(status.remaining, 400, '1200 cap - 800 earned, last month\'s spend does not count');
+});
+
+test('computeCardCapStatus (SBI) reads the current billing cycle, not the calendar month', () => {
+  const card = {
+    rewardStrategy: 'sbi_two_channel_cashback',
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }],
+  };
+  const cycleTxns = [{ id: 't1', date: '2026-08-05', amount: 30000, channel: 'online' }]; // floor(30000*5/100)=1500
+  const status = computeCardCapStatus(card, cycleTxns, cycleTxns, '2026-08-12').find((s) => s.key === 'online');
+  assert.equal(status.earned, 1500);
+  assert.equal(status.remaining, 500, '2000 cap - 1500 earned this cycle');
+});
+
+test('computeCardCapStatus returns an empty list for a strategy with no hard cap to track', () => {
+  const card = {
+    rewardStrategy: 'axis_supermoney_dual_pool',
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool }],
+  };
+  assert.deepEqual(computeCardCapStatus(card, [], [], '2026-08-12'), []);
+});
+
+// --- Manual reward overrides ---
+
+test('applyRewardOverrides leaves the result untouched when nothing is overridden', () => {
+  const card = { rewardStrategy: 'sbi_two_channel_cashback', strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }] };
+  const txns = [{ id: 't1', date: '2026-08-01', amount: 1000, channel: 'online' }];
+  const cycleReward = computeCardCycleReward(card, txns, '2026-08-01');
+  const result = applyRewardOverrides(cycleReward, txns);
+  assert.deepEqual(result, cycleReward);
+});
+
+test('applyRewardOverrides substitutes the override and recomputes the total (earned-based strategies)', () => {
+  const card = { rewardStrategy: 'sbi_two_channel_cashback', strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }] };
+  const txns = [
+    { id: 't1', date: '2026-08-01', amount: 1000, channel: 'online' }, // formula: 50
+    { id: 't2', date: '2026-08-02', amount: 2000, channel: 'online', rewardOverride: 200 }, // formula would be 100, corrected to 200
+  ];
+  const cycleReward = computeCardCycleReward(card, txns, '2026-08-01');
+  const result = applyRewardOverrides(cycleReward, txns);
+  const overridden = result.perTransaction.find((p) => p.id === 't2');
+  const untouched = result.perTransaction.find((p) => p.id === 't1');
+  assert.equal(overridden.earned, 200);
+  assert.equal(overridden.overridden, true);
+  assert.equal(untouched.earned, 50, 'the non-overridden transaction keeps its formula value');
+  assert.equal(result.totalReward, 250, '50 (formula) + 200 (override)');
+});
+
+test('applyRewardOverrides works for the HSBC Live+ aggregate model via its per-transaction estimate', () => {
+  const card = { rewardStrategy: 'hsbc_tiered_cashback_aggregate', strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }] };
+  const txns = [
+    { id: 't1', date: '2026-08-01', amount: 1000, isBonusEligible: true, channel: null }, // estimate: round(1000*10/100)=100
+    { id: 't2', date: '2026-08-02', amount: 500, isBonusEligible: false, channel: null, rewardOverride: 50 }, // estimate would be round(500*1.5/100)=8, corrected to 50
+  ];
+  const cycleReward = computeCardCycleReward(card, txns, '2026-08-01');
+  const result = applyRewardOverrides(cycleReward, txns);
+  assert.equal(result.totalReward, 150, '100 (estimate) + 50 (override), overriding away from the pure aggregate total');
+});
+
+// --- Local storage round-trips ---
+
+test('getCreditCards/setCreditCards round-trip through storage, defaulting to []', () => {
+  setCreditCards([{ id: 'c1', name: 'Test Card' }]);
+  assert.deepEqual(getCreditCards(), [{ id: 'c1', name: 'Test Card' }]);
+  setCreditCards([]);
+  assert.deepEqual(getCreditCards(), []);
+});
+
+test('getCardTransactions/setCardTransactions round-trip through storage, defaulting to []', () => {
+  setCardTransactions([{ id: 't1', cardId: 'c1', amount: 100 }]);
+  assert.deepEqual(getCardTransactions(), [{ id: 't1', cardId: 'c1', amount: 100 }]);
+  setCardTransactions([]);
+  assert.deepEqual(getCardTransactions(), []);
+});
+
+test('getCardBillingCycles/setCardBillingCycles round-trip through storage, defaulting to []', () => {
+  setCardBillingCycles([{ cardId: 'c1', cycleStart: '2026-07-04' }]);
+  assert.deepEqual(getCardBillingCycles(), [{ cardId: 'c1', cycleStart: '2026-07-04' }]);
+  setCardBillingCycles([]);
+  assert.deepEqual(getCardBillingCycles(), []);
+});
+
+test('getCardBillingCycleKey combines card and cycle start into a stable key', () => {
+  assert.equal(getCardBillingCycleKey('c1', '2026-07-04'), 'c1|2026-07-04');
 });

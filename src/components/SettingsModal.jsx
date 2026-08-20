@@ -8,6 +8,9 @@ import {
   getPreviousMonthKey,
   todayISO,
   DEFAULT_PAYMENT_REMINDER_THRESHOLD,
+  CARD_REWARD_STRATEGIES,
+  CARD_STRATEGY_DEFAULTS,
+  resolveStrategyParamsForDate,
 } from '../utils';
 import {
   addCategoryToDb,
@@ -21,9 +24,72 @@ import {
   saveHouseholdBudgetsToDb,
   saveRecurringRulesToDb,
   savePaymentReminderConfigToDb,
+  addCreditCardToDb,
+  updateCreditCardInDb,
+  deleteCreditCardFromDb,
   seedSampleExpenses,
   wipeAllExpenses,
 } from '../firebase';
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+// Which of a strategy's numeric params are worth exposing as an editable
+// field when adding/tuning a card - `categories` (Diners' nested
+// per-category list) stays at its verified-against-T&C default rather than
+// getting a bespoke nested-array editor for a single card shape.
+const CARD_PARAM_FIELDS = {
+  hdfc_diners_slab_milestone: [
+    { key: 'pointsPerUnit', label: 'Points per unit' },
+    { key: 'unitAmount', label: 'Unit amount (₹)' },
+    { key: 'cycleCap', label: 'Overall points cap / cycle' },
+    { key: 'quarterlyMilestoneTarget', label: 'Quarterly milestone spend (₹)' },
+    { key: 'quarterlyMilestoneBonus', label: 'Quarterly milestone bonus points' },
+    { key: 'annualMilestoneTarget', label: 'Annual milestone spend (₹)' },
+    { key: 'annualMilestoneLabel', label: 'Annual milestone reward', isText: true },
+  ],
+  sbi_two_channel_cashback: [
+    { key: 'onlineRate', label: 'Online rate (%)' },
+    { key: 'offlineRate', label: 'Offline rate (%)' },
+    { key: 'onlineCycleCap', label: 'Online cap / cycle (₹)' },
+    { key: 'offlineCycleCap', label: 'Offline cap / cycle (₹)' },
+    { key: 'minTransaction', label: 'Minimum transaction to earn (₹)' },
+    { key: 'annualMilestoneTarget', label: 'Annual fee-waiver spend (₹)' },
+    { key: 'annualMilestoneLabel', label: 'Annual milestone reward', isText: true },
+  ],
+  hsbc_tiered_cashback_aggregate: [
+    { key: 'bonusRate', label: 'Bonus category rate (%)' },
+    { key: 'bonusMonthlyCap', label: 'Bonus cap / month (₹)' },
+    { key: 'baseRate', label: 'Base rate (%)' },
+    { key: 'annualMilestoneTarget', label: 'Annual fee-waiver spend (₹)' },
+    { key: 'annualMilestoneLabel', label: 'Annual milestone reward', isText: true },
+  ],
+  axis_supermoney_dual_pool: [
+    { key: 'baseRate', label: 'Base rate (%)' },
+    { key: 'bonusRate', label: 'Super.money rate (%)' },
+    { key: 'minTransaction', label: 'Minimum transaction to earn (₹)' },
+    { key: 'bonusFloor', label: 'Bonus pool floor (₹)' },
+  ],
+  hsbc_premier_flat_capped: [
+    { key: 'baseRate', label: 'Base rate (%)' },
+    { key: 'categoryMonthlyCap', label: 'Capped-category spend / month (₹)' },
+    { key: 'travelBonusMonthlyCap', label: 'Travel with Points cap / month (pts)' },
+  ],
+};
+
+// Numeric strategy params come back out of number inputs as strings -
+// coerce everything CARD_PARAM_FIELDS marks numeric so computeCardCycleReward
+// gets real numbers to do math on, not string concatenation bugs. Text
+// fields (e.g. annualMilestoneLabel) and the Diners category list stay as-is
+// - Number("Annual fee waived") is NaN, not a number worth coercing toward.
+function coerceStrategyParams(strategyKey, rawParams) {
+  const textFieldKeys = new Set((CARD_PARAM_FIELDS[strategyKey] || []).filter((f) => f.isText).map((f) => f.key));
+  return Object.fromEntries(
+    Object.entries(rawParams).map(([k, v]) => [
+      k,
+      k === 'categories' || textFieldKeys.has(k) ? v : (v === '' || v == null ? null : Number(v)),
+    ]),
+  );
+}
 
 export default function SettingsModal({
   onClose,
@@ -40,6 +106,7 @@ export default function SettingsModal({
   householdEntries = [],
   recurringRules = [],
   reminderConfig = { enabled: true, amountThreshold: DEFAULT_PAYMENT_REMINDER_THRESHOLD },
+  creditCards = [],
 }) {
   const [activeTab, setActiveTab] = useState('categories');
   const [categoryLedger, setCategoryLedger] = useState(activeLedger);
@@ -74,6 +141,25 @@ export default function SettingsModal({
 
   const [reminderDraft, setReminderDraft] = useState(() => ({ ...reminderConfig }));
   const [reminderMessage, setReminderMessage] = useState('');
+
+  const [newCardName, setNewCardName] = useState('');
+  const [newCardOwner, setNewCardOwner] = useState(dbMembers[0] || '');
+  const [newCardStrategy, setNewCardStrategy] = useState(CARD_REWARD_STRATEGIES[0].key);
+  const [newCardParams, setNewCardParams] = useState(() => ({ ...CARD_STRATEGY_DEFAULTS[CARD_REWARD_STRATEGIES[0].key] }));
+  const [newCardBillingDay, setNewCardBillingDay] = useState('1');
+  const [newCardDueOffset, setNewCardDueOffset] = useState('20');
+  const [newCardAnnualAnchorMonth, setNewCardAnnualAnchorMonth] = useState('1');
+  const [newCardAnnualStartingSpend, setNewCardAnnualStartingSpend] = useState('0');
+  const [newCardStartingPoints, setNewCardStartingPoints] = useState('0');
+  const [addingCard, setAddingCard] = useState(false);
+  const [cardMessage, setCardMessage] = useState('');
+  const [editingCardId, setEditingCardId] = useState(null);
+  const [editCardDrafts, setEditCardDrafts] = useState({});
+  const [editingRulesCardId, setEditingRulesCardId] = useState(null);
+  const [newVersionEffectiveFrom, setNewVersionEffectiveFrom] = useState(todayISO());
+  const [newVersionParams, setNewVersionParams] = useState({});
+  const [savingRuleVersion, setSavingRuleVersion] = useState(false);
+  const [showAddCardForm, setShowAddCardForm] = useState(() => creditCards.length === 0);
 
   const [seeding, setSeeding] = useState(false);
   const [wiping, setWiping] = useState(false);
@@ -235,7 +321,157 @@ export default function SettingsModal({
     }
   }
 
+  function handleNewCardStrategyChange(strategyKey) {
+    setNewCardStrategy(strategyKey);
+    setNewCardParams({ ...CARD_STRATEGY_DEFAULTS[strategyKey] });
+  }
+
+  function updateNewCardParam(key, value) {
+    setNewCardParams((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function handleAddCard(e) {
+    e.preventDefault();
+    const trimmed = newCardName.trim();
+    if (!trimmed) return;
+    setAddingCard(true);
+    setCardMessage('');
+    try {
+      const coercedParams = coerceStrategyParams(newCardStrategy, newCardParams);
+      await addCreditCardToDb({
+        name: trimmed,
+        owner: newCardOwner,
+        rewardStrategy: newCardStrategy,
+        strategyParamsHistory: [{ effectiveFrom: todayISO(), params: coercedParams }],
+        billingCycleDay: Math.min(31, Math.max(1, Math.round(Number(newCardBillingDay)) || 1)),
+        dueDateOffsetDays: Math.max(0, Math.round(Number(newCardDueOffset)) || 0),
+        annualMilestoneAnchorMonth: Math.min(12, Math.max(1, Math.round(Number(newCardAnnualAnchorMonth)) || 1)),
+        annualMilestoneStartingSpend: Math.max(0, Number(newCardAnnualStartingSpend) || 0),
+        startingRewardPoints: Math.max(0, Number(newCardStartingPoints) || 0),
+        active: true,
+      });
+      setNewCardName('');
+      setCardMessage(`${trimmed} added.`);
+      setShowAddCardForm(false);
+    } catch (err) {
+      setCardMessage(`Failed to save: ${err?.message || err}`);
+    } finally {
+      setAddingCard(false);
+    }
+  }
+
+  function startEditCard(card) {
+    setEditingCardId(card.id);
+    setEditCardDrafts({
+      name: card.name,
+      owner: card.owner || '',
+      billingCycleDay: String(card.billingCycleDay ?? 1),
+      dueDateOffsetDays: String(card.dueDateOffsetDays ?? 20),
+      annualMilestoneAnchorMonth: String(card.annualMilestoneAnchorMonth ?? 1),
+      annualMilestoneStartingSpend: String(card.annualMilestoneStartingSpend ?? 0),
+      startingRewardPoints: String(card.startingRewardPoints ?? 0),
+    });
+  }
+
+  async function saveEditCard(cardId) {
+    try {
+      await updateCreditCardInDb(cardId, {
+        name: editCardDrafts.name.trim(),
+        owner: editCardDrafts.owner,
+        billingCycleDay: Math.min(31, Math.max(1, Math.round(Number(editCardDrafts.billingCycleDay)) || 1)),
+        dueDateOffsetDays: Math.max(0, Math.round(Number(editCardDrafts.dueDateOffsetDays)) || 0),
+        annualMilestoneAnchorMonth: Math.min(12, Math.max(1, Math.round(Number(editCardDrafts.annualMilestoneAnchorMonth)) || 1)),
+        annualMilestoneStartingSpend: Math.max(0, Number(editCardDrafts.annualMilestoneStartingSpend) || 0),
+        startingRewardPoints: Math.max(0, Number(editCardDrafts.startingRewardPoints) || 0),
+      });
+      setEditingCardId(null);
+    } catch (err) {
+      setCardMessage(`Failed to save: ${err?.message || err}`);
+    }
+  }
+
+  async function handleDeleteCard(card) {
+    if (!window.confirm(`Delete "${card.name}"? Its transactions and billing cycle history will stay in storage but won't be reachable from the app anymore.`)) return;
+    try {
+      await deleteCreditCardFromDb(card.id);
+    } catch (err) {
+      setCardMessage(`Failed to delete: ${err?.message || err}`);
+    }
+  }
+
+  function startEditRules(card) {
+    setEditingRulesCardId(card.id);
+    setNewVersionEffectiveFrom(todayISO());
+    setNewVersionParams({ ...resolveStrategyParamsForDate(card.strategyParamsHistory, todayISO()) });
+  }
+
+  function updateNewVersionParam(key, value) {
+    setNewVersionParams((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function updateCategoryField(index, field, value) {
+    setNewVersionParams((prev) => {
+      const categories = [...(prev.categories || [])];
+      const current = categories[index];
+      const next = { ...current, [field]: value };
+      // A brand-new category (still has no key of its own) gets one derived
+      // from its label as you type, so you don't have to hand-craft an
+      // internal id - but once a category has a real key, it never changes
+      // automatically, since that key is what links past transactions to it.
+      if (field === 'label' && !current.key) {
+        next.key = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      }
+      categories[index] = next;
+      return { ...prev, categories };
+    });
+  }
+
+  function addCategory() {
+    setNewVersionParams((prev) => ({
+      ...prev,
+      categories: [...(prev.categories || []), { key: '', label: '', multiplier: 1, capAmount: null, capPeriod: null }],
+    }));
+  }
+
+  function removeCategory(index) {
+    setNewVersionParams((prev) => ({
+      ...prev,
+      categories: (prev.categories || []).filter((_, i) => i !== index),
+    }));
+  }
+
+  // Appends a new dated rule version rather than overwriting the current
+  // one, so past transactions keep being computed under whichever rule was
+  // actually in effect on their own date - see resolveStrategyParamsForDate
+  // in utils.js.
+  async function saveNewRuleVersion(card) {
+    if (!newVersionEffectiveFrom) return;
+    setSavingRuleVersion(true);
+    try {
+      const coercedParams = coerceStrategyParams(card.rewardStrategy, newVersionParams);
+      // Drop any category row left blank (empty label never got a derived
+      // key, or was cleared) rather than saving a category nothing can match.
+      if (coercedParams.categories) {
+        coercedParams.categories = coercedParams.categories.filter((c) => c.key && c.label);
+      }
+      const history = card.strategyParamsHistory || [];
+      const withoutSameDate = history.filter((v) => v.effectiveFrom !== newVersionEffectiveFrom);
+      const updatedHistory = [...withoutSameDate, { effectiveFrom: newVersionEffectiveFrom, params: coercedParams }]
+        .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+      await updateCreditCardInDb(card.id, { strategyParamsHistory: updatedHistory });
+      setEditingRulesCardId(null);
+    } catch (err) {
+      setCardMessage(`Failed to save rule version: ${err?.message || err}`);
+    } finally {
+      setSavingRuleVersion(false);
+    }
+  }
+
   const settingsLabelClass = 'block text-2xs font-semibold uppercase tracking-wider text-muted-text mb-1';
+  // A stronger sub-section header within a single form (e.g. "Billing
+  // cycle" vs "Reward rules" inside the Add Card form) - distinct from
+  // settingsLabelClass, which labels one field, not a group of them.
+  const settingsSectionLabelClass = 'text-2xs font-bold uppercase tracking-wider text-ledger-green';
   const settingsInputClass =
     'w-full min-h-10 px-3 rounded-xl border border-ink/15 bg-paper text-ink text-sm focus:outline-none focus:ring-2 focus:ring-ledger-green/40';
   // Same custom chevron everywhere a <select> appears in this modal - append
@@ -399,6 +635,17 @@ export default function SettingsModal({
             }`}
           >
             Reminders
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('cards')}
+            className={`px-3 py-2 text-xs sm:text-sm font-semibold border-b-2 transition-colors shrink-0 whitespace-nowrap flex items-center min-h-[38px] ${
+              activeTab === 'cards'
+                ? 'border-ledger-green text-ledger-green'
+                : 'border-transparent text-muted-text hover:text-ink'
+            }`}
+          >
+            Cards
           </button>
           <button
             type="button"
@@ -811,6 +1058,452 @@ export default function SettingsModal({
                 />
               </div>
               {reminderMessage && <p className="text-xs text-muted-text">{reminderMessage}</p>}
+            </div>
+          )}
+
+          {activeTab === 'cards' && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-ink mb-0.5">Credit Cards</h3>
+                <p className="text-xs text-muted-text">
+                  Every reward rule below was cross-checked against each bank's current terms, not guessed from a
+                  spreadsheet formula - tune the numbers here if a card's real terms change.
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-ink/10 bg-paper/60 overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowAddCardForm((v) => !v)}
+                  className="w-full flex items-center justify-between px-3.5 py-3 text-sm font-bold text-ink"
+                >
+                  <span>💳 Add a card</span>
+                  <span className="text-xs font-semibold text-ledger-green">{showAddCardForm ? 'Collapse' : 'Expand'}</span>
+                </button>
+
+                {showAddCardForm && (
+                  <form onSubmit={handleAddCard} className="space-y-4 px-3.5 pb-4 pt-1 border-t border-ink/10">
+                    <div className="space-y-2.5">
+                      <p className={settingsSectionLabelClass}>Card details</p>
+                      <div>
+                        <label className={settingsLabelClass}>Card name</label>
+                        <input
+                          type="text"
+                          value={newCardName}
+                          onChange={(e) => setNewCardName(e.target.value)}
+                          placeholder="e.g. HDFC Diners Club Black Metal"
+                          className={settingsInputClass}
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className={settingsLabelClass}>Owner</label>
+                          <select
+                            value={newCardOwner}
+                            onChange={(e) => setNewCardOwner(e.target.value)}
+                            className={settingsSelectClass}
+                          >
+                            {dbMembers.map((m) => (
+                              <option key={m} value={m}>{m}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className={settingsLabelClass}>Reward strategy</label>
+                          <select
+                            value={newCardStrategy}
+                            onChange={(e) => handleNewCardStrategyChange(e.target.value)}
+                            className={settingsSelectClass}
+                          >
+                            {CARD_REWARD_STRATEGIES.map((s) => (
+                              <option key={s.key} value={s.key}>{s.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2.5 pt-3 border-t border-ink/10">
+                      <p className={settingsSectionLabelClass}>Billing cycle</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className={settingsLabelClass}>Billing cycle day</label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="31"
+                            value={newCardBillingDay}
+                            onChange={(e) => setNewCardBillingDay(e.target.value)}
+                            className={settingsInputClass}
+                          />
+                        </div>
+                        <div>
+                          <label className={settingsLabelClass}>Due date offset (days)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            value={newCardDueOffset}
+                            onChange={(e) => setNewCardDueOffset(e.target.value)}
+                            className={settingsInputClass}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2.5 pt-3 border-t border-ink/10">
+                      <p className={settingsSectionLabelClass}>Milestone tracking</p>
+                      <p className="text-2xs text-muted-text">
+                        The annual milestone (fee waiver / bonus) runs on the card's own 12-month cycle from the month below, not the calendar year. Adding this card partway through that period? Use the spend/points fields to carry over what already happened before you started tracking here.
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className={settingsLabelClass}>Annual milestone starts from</label>
+                          <select
+                            value={newCardAnnualAnchorMonth}
+                            onChange={(e) => setNewCardAnnualAnchorMonth(e.target.value)}
+                            className={settingsSelectClass}
+                          >
+                            {MONTH_NAMES.map((name, i) => (
+                              <option key={name} value={i + 1}>{name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className={settingsLabelClass}>Spend already counted this period (₹)</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={newCardAnnualStartingSpend}
+                            onChange={(e) => setNewCardAnnualStartingSpend(e.target.value)}
+                            placeholder="0"
+                            className={settingsInputClass}
+                          />
+                        </div>
+                        {CARD_REWARD_STRATEGIES.find((s) => s.key === newCardStrategy)?.unit === 'points' && (
+                          <div>
+                            <label className={settingsLabelClass}>Starting reward points balance</label>
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={newCardStartingPoints}
+                              onChange={(e) => setNewCardStartingPoints(e.target.value)}
+                              placeholder="0"
+                              className={settingsInputClass}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2.5 pt-3 border-t border-ink/10">
+                      <p className={settingsSectionLabelClass}>Reward rules</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {(CARD_PARAM_FIELDS[newCardStrategy] || []).map((field) => (
+                          <div key={field.key}>
+                            <label className={settingsLabelClass}>{field.label}</label>
+                            <input
+                              type={field.isText ? 'text' : 'number'}
+                              step={field.isText ? undefined : 'any'}
+                              value={newCardParams[field.key] ?? ''}
+                              onChange={(e) => updateNewCardParam(field.key, e.target.value)}
+                              className={settingsInputClass}
+                            />
+                          </div>
+                        ))}
+                      </div>
+
+                      {newCardStrategy === 'hdfc_diners_slab_milestone' && (
+                        <div className="space-y-1.5 pt-1">
+                          <p className="text-2xs text-muted-text">Categories (fixed per-category rates, verified against HDFC's T&C - not editable here; use Rules after adding the card to revise its other terms):</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {(newCardParams.categories || []).map((c) => (
+                              <span key={c.key} className="text-2xs px-2 py-1 rounded-full bg-paper border border-ink/10 text-muted-text">
+                                {c.label}: {c.multiplier}× {c.capAmount ? `(cap ${c.capAmount}/${c.capPeriod})` : ''}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={addingCard || !newCardName.trim()}
+                      className="w-full min-h-10 rounded-xl bg-ledger-green text-white font-semibold text-sm disabled:opacity-50 hover:bg-ledger-green/90 transition-colors"
+                    >
+                      {addingCard ? 'Saving...' : 'Add Card'}
+                    </button>
+                    {cardMessage && <p className="text-xs text-muted-text">{cardMessage}</p>}
+                  </form>
+                )}
+              </div>
+
+              {creditCards.length === 0 ? (
+                <p className="text-xs text-muted-text">No cards yet - add your first one above.</p>
+              ) : (
+                <div className="space-y-2">
+                  {creditCards.map((card) => {
+                    const strategyMeta = CARD_REWARD_STRATEGIES.find((s) => s.key === card.rewardStrategy);
+                    const strategyLabel = strategyMeta?.label || card.rewardStrategy;
+                    const strategyIcon = strategyMeta?.unit === 'points' ? '🎫' : '💰';
+                    const isEditing = editingCardId === card.id;
+                    return (
+                      <div key={card.id} className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3 space-y-2.5">
+                        {isEditing ? (
+                          <div className="space-y-2.5">
+                            <div>
+                              <label className={settingsLabelClass}>Card name</label>
+                              <input
+                                type="text"
+                                value={editCardDrafts.name}
+                                onChange={(e) => setEditCardDrafts((prev) => ({ ...prev, name: e.target.value }))}
+                                className={settingsInputClass}
+                              />
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              <div>
+                                <label className={settingsLabelClass}>Owner</label>
+                                <select
+                                  value={editCardDrafts.owner}
+                                  onChange={(e) => setEditCardDrafts((prev) => ({ ...prev, owner: e.target.value }))}
+                                  className={settingsSelectClass}
+                                >
+                                  {dbMembers.map((m) => (
+                                    <option key={m} value={m}>{m}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className={settingsLabelClass}>Billing day</label>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="31"
+                                  value={editCardDrafts.billingCycleDay}
+                                  onChange={(e) => setEditCardDrafts((prev) => ({ ...prev, billingCycleDay: e.target.value }))}
+                                  className={settingsInputClass}
+                                />
+                              </div>
+                              <div>
+                                <label className={settingsLabelClass}>Due offset (days)</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={editCardDrafts.dueDateOffsetDays}
+                                  onChange={(e) => setEditCardDrafts((prev) => ({ ...prev, dueDateOffsetDays: e.target.value }))}
+                                  className={settingsInputClass}
+                                />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                              <div>
+                                <label className={settingsLabelClass}>Annual milestone from</label>
+                                <select
+                                  value={editCardDrafts.annualMilestoneAnchorMonth}
+                                  onChange={(e) => setEditCardDrafts((prev) => ({ ...prev, annualMilestoneAnchorMonth: e.target.value }))}
+                                  className={settingsSelectClass}
+                                >
+                                  {MONTH_NAMES.map((name, i) => (
+                                    <option key={name} value={i + 1}>{name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className={settingsLabelClass}>Spend counted so far (₹)</label>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  value={editCardDrafts.annualMilestoneStartingSpend}
+                                  onChange={(e) => setEditCardDrafts((prev) => ({ ...prev, annualMilestoneStartingSpend: e.target.value }))}
+                                  className={settingsInputClass}
+                                />
+                              </div>
+                              {strategyMeta?.unit === 'points' && (
+                                <div>
+                                  <label className={settingsLabelClass}>Starting points balance</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    value={editCardDrafts.startingRewardPoints}
+                                    onChange={(e) => setEditCardDrafts((prev) => ({ ...prev, startingRewardPoints: e.target.value }))}
+                                    className={settingsInputClass}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex gap-2">
+                              <button type="button" onClick={() => saveEditCard(card.id)} className="min-h-9 px-3 rounded-lg bg-ledger-green text-white text-xs font-semibold">
+                                Save
+                              </button>
+                              <button type="button" onClick={() => setEditingCardId(null)} className="min-h-9 px-3 rounded-lg border border-ink/15 text-xs font-semibold text-muted-text">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-ink truncate">
+                                {strategyIcon} {card.name}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                                <span className="text-2xs px-2 py-0.5 rounded-md bg-paper border border-ink/10 text-muted-text font-medium">{card.owner}</span>
+                                <span className="text-2xs px-2 py-0.5 rounded-md bg-paper border border-ink/10 text-muted-text font-medium">{strategyLabel}</span>
+                                <span className="text-2xs px-2 py-0.5 rounded-md bg-paper border border-ink/10 text-muted-text font-medium">Billing day {card.billingCycleDay}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => (editingRulesCardId === card.id ? setEditingRulesCardId(null) : startEditRules(card))}
+                                className={`min-h-8 px-2.5 py-1 rounded-full text-2xs font-semibold transition-colors ${
+                                  editingRulesCardId === card.id ? 'bg-ledger-green text-white' : 'bg-ledger-green/10 text-ledger-green hover:bg-ledger-green/20'
+                                }`}
+                                title="Rules history - revise rates/caps from a chosen date onward without changing past transactions"
+                              >
+                                🗓 Rules
+                              </button>
+                              <button type="button" onClick={() => startEditCard(card)} className="min-h-8 min-w-8 px-2 py-1 rounded-lg text-xs font-semibold text-muted-text hover:text-ink hover:bg-ink/5 transition-colors" title="Edit">
+                                ✎
+                              </button>
+                              <button type="button" onClick={() => handleDeleteCard(card)} className="min-h-8 min-w-8 px-2 py-1 rounded-lg text-xs font-semibold text-stamp-red/70 hover:text-stamp-red hover:bg-stamp-red/10 transition-colors" title="Delete">
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {editingRulesCardId === card.id && (
+                          <div className="space-y-3 rounded-lg border border-ink/10 bg-paper px-3 py-3 mt-2">
+                            <div className="space-y-1.5">
+                              <p className={settingsSectionLabelClass}>Rule history (oldest to newest)</p>
+                              {[...(card.strategyParamsHistory || [])]
+                                .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))
+                                .map((version) => (
+                                  <div key={version.effectiveFrom} className="rounded-lg border border-ink/10 bg-paper-card px-2.5 py-2 space-y-0.5">
+                                    <p className="text-xs font-bold text-ink">{version.effectiveFrom}</p>
+                                    {(CARD_PARAM_FIELDS[card.rewardStrategy] || [])
+                                      .filter((f) => !f.isText)
+                                      .map((f) => (
+                                        <p key={f.key} className="text-2xs text-muted-text">
+                                          {f.label}: <span className="text-ink font-medium">{version.params[f.key] ?? '-'}</span>
+                                        </p>
+                                      ))}
+                                  </div>
+                                ))}
+                            </div>
+                            <div className="space-y-2 pt-2 border-t border-ink/10">
+                              <p className={settingsSectionLabelClass}>Add a new rule version</p>
+                              <div>
+                                <label className={settingsLabelClass}>Effective from</label>
+                                <input
+                                  type="date"
+                                  value={newVersionEffectiveFrom}
+                                  onChange={(e) => setNewVersionEffectiveFrom(e.target.value)}
+                                  className={settingsInputClass}
+                                />
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                {(CARD_PARAM_FIELDS[card.rewardStrategy] || []).map((field) => (
+                                  <div key={field.key}>
+                                    <label className={settingsLabelClass}>{field.label}</label>
+                                    <input
+                                      type={field.isText ? 'text' : 'number'}
+                                      step={field.isText ? undefined : 'any'}
+                                      value={newVersionParams[field.key] ?? ''}
+                                      onChange={(e) => updateNewVersionParam(field.key, e.target.value)}
+                                      className={settingsInputClass}
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                              {card.rewardStrategy === 'hdfc_diners_slab_milestone' && (
+                                <div className="space-y-2 pt-1 border-t border-ink/10">
+                                  <p className={settingsSectionLabelClass}>Categories</p>
+                                  <p className="text-2xs text-muted-text">
+                                    Renaming a category is safe - it doesn't touch past transactions. Removing one that past transactions still use falls back to the base 1x rate for them, same as an unrecognized category.
+                                  </p>
+                                  {(newVersionParams.categories || []).map((cat, i) => (
+                                    <div key={i} className="rounded-lg border border-ink/10 bg-paper px-2.5 py-2 space-y-2">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <input
+                                          type="text"
+                                          value={cat.label}
+                                          onChange={(e) => updateCategoryField(i, 'label', e.target.value)}
+                                          placeholder="Category name"
+                                          className={`${settingsInputClass} font-semibold`}
+                                        />
+                                        <button type="button" onClick={() => removeCategory(i)} className="shrink-0 min-h-9 min-w-9 rounded-lg text-xs font-semibold text-stamp-red/70 hover:text-stamp-red hover:bg-stamp-red/10 transition-colors" title="Remove category">
+                                          ✕
+                                        </button>
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-2">
+                                        <div>
+                                          <label className={settingsLabelClass}>Multiplier</label>
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            step="any"
+                                            value={cat.multiplier ?? ''}
+                                            onChange={(e) => updateCategoryField(i, 'multiplier', e.target.value === '' ? '' : Number(e.target.value))}
+                                            className={settingsInputClass}
+                                          />
+                                        </div>
+                                        <div>
+                                          <label className={settingsLabelClass}>Cap amount</label>
+                                          <input
+                                            type="number"
+                                            min="0"
+                                            step="any"
+                                            value={cat.capAmount ?? ''}
+                                            onChange={(e) => updateCategoryField(i, 'capAmount', e.target.value === '' ? null : Number(e.target.value))}
+                                            placeholder="None"
+                                            className={settingsInputClass}
+                                          />
+                                        </div>
+                                        <div>
+                                          <label className={settingsLabelClass}>Cap period</label>
+                                          <select
+                                            value={cat.capPeriod ?? ''}
+                                            onChange={(e) => updateCategoryField(i, 'capPeriod', e.target.value === '' ? null : e.target.value)}
+                                            className={settingsSelectClass}
+                                          >
+                                            <option value="">No cap</option>
+                                            <option value="day">Per day</option>
+                                            <option value="month">Per month</option>
+                                          </select>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                  <button type="button" onClick={addCategory} className="w-full min-h-9 rounded-lg border border-dashed border-ink/20 text-xs font-semibold text-muted-text hover:text-ink hover:border-ink/40 transition-colors">
+                                    + Add category
+                                  </button>
+                                </div>
+                              )}
+                              <p className="text-2xs text-muted-text">
+                                Transactions on or after this date use these rules; earlier transactions keep using whichever rule was active on their own date.
+                              </p>
+                              <div className="flex gap-2">
+                                <button type="button" onClick={() => saveNewRuleVersion(card)} disabled={savingRuleVersion || !newVersionEffectiveFrom} className="min-h-9 px-3 rounded-lg bg-ledger-green text-white text-xs font-semibold disabled:opacity-50">
+                                  {savingRuleVersion ? 'Saving...' : 'Save new version'}
+                                </button>
+                                <button type="button" onClick={() => setEditingRulesCardId(null)} className="min-h-9 px-3 rounded-lg border border-ink/15 text-xs font-semibold text-muted-text">
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

@@ -1452,3 +1452,660 @@ export function getStoredCurrencies() {
 export function setStoredCurrencies(currencies) {
   setItem(CURRENCIES_KEY, JSON.stringify(currencies));
 }
+
+// ============================================================================
+// Credit card transaction audit + reward points
+//
+// Every strategy below was cross-checked against each bank's current terms
+// (not just reverse-engineered from a spreadsheet formula) as of Aug 2026 -
+// see the design doc for sources. Two structural decisions apply across all
+// of them:
+//
+// 1. A card's reward for a period is computed over the WHOLE set of
+//    transactions in that billing cycle, never per-transaction-then-summed.
+//    Caps (SBI's ₹2,000/channel, Diners' 75,000/cycle, HSBC's ₹1,200/month,
+//    Premier's ₹1L/category) are enforced against a running cycle total, not
+//    against each transaction in isolation - capping each transaction at
+//    the same number (like the old sheets did) lets a second qualifying
+//    transaction blow past the real monthly/cycle limit.
+// 2. HSBC's tiered cashback (Live+ and Premier) is calculated on the
+//    aggregate eligible spend for the whole cycle, then rounded once - not
+//    rounded per transaction and summed. HSBC's own cashback terms describe
+//    it as "based on total eligible purchases posted... by the last day of
+//    each calendar month," which avoids the per-transaction rounding loss a
+//    naive sum-of-ROUND(x) would produce. Per-transaction figures shown in
+//    the UI for this strategy are therefore an *estimate*, not the
+//    authoritative number - the cycle total is authoritative.
+// ============================================================================
+
+export const CARD_REWARD_STRATEGIES = [
+  { key: 'hdfc_diners_slab_milestone', label: 'HDFC Diners Club Black Metal', unit: 'points' },
+  { key: 'sbi_two_channel_cashback', label: 'SBI Cashback', unit: 'inr' },
+  { key: 'hsbc_tiered_cashback_aggregate', label: 'HSBC Live+', unit: 'inr' },
+  { key: 'axis_supermoney_dual_pool', label: 'Axis SuperMoney RuPay', unit: 'inr' },
+  { key: 'hsbc_premier_flat_capped', label: 'HSBC Premier', unit: 'points' },
+];
+
+// Sensible starting params for each strategy, straight from the verified
+// terms - a new card of that strategy starts here and can be tuned per-card
+// (issuers do revise these; SBI's own terms changed as recently as April
+// 2026, which is exactly why these live as editable data, not hardcoded
+// constants inside the formulas).
+export const CARD_STRATEGY_DEFAULTS = {
+  hdfc_diners_slab_milestone: {
+    pointsPerUnit: 5,
+    unitAmount: 150,
+    categories: [
+      { key: 'regular', label: 'Regular', multiplier: 1, capAmount: null, capPeriod: null },
+      { key: 'weekend_dining', label: 'Weekend Dining', multiplier: 2, capAmount: 1000, capPeriod: 'day' },
+      { key: 'smartbuy_hotel', label: 'Smartbuy Booking', multiplier: 10, capAmount: 10000, capPeriod: 'month' },
+      { key: 'grocery', label: 'Grocery', multiplier: 1, capAmount: 2000, capPeriod: 'month' },
+      { key: 'utility', label: 'Utility', multiplier: 1, capAmount: 2000, capPeriod: 'month' },
+      { key: 'insurance', label: 'Insurance', multiplier: 1, capAmount: 5000, capPeriod: 'day' },
+      { key: 'excluded', label: 'Excluded (Fuel / EMI / Rent / Govt / Cash Advance / Card Fee / Wallet)', multiplier: 0, capAmount: null, capPeriod: null },
+    ],
+    cycleCap: 75000,
+    quarterlyMilestoneTarget: 400000,
+    quarterlyMilestoneBonus: 10000,
+    annualMilestoneTarget: 800000,
+    annualMilestoneLabel: 'Annual fee waived',
+  },
+  sbi_two_channel_cashback: {
+    onlineRate: 5,
+    offlineRate: 1,
+    onlineCycleCap: 2000,
+    offlineCycleCap: 2000,
+    minTransaction: 100,
+    annualMilestoneTarget: 200000,
+    annualMilestoneLabel: 'Annual fee waived',
+  },
+  hsbc_tiered_cashback_aggregate: {
+    bonusRate: 10,
+    bonusMonthlyCap: 1200,
+    baseRate: 1.5,
+    annualMilestoneTarget: 200000,
+    annualMilestoneLabel: 'Annual fee waived',
+  },
+  axis_supermoney_dual_pool: {
+    baseRate: 1,
+    bonusRate: 3,
+    minTransaction: 100,
+    bonusFloor: 100,
+    annualMilestoneTarget: null,
+    annualMilestoneLabel: '',
+  },
+  hsbc_premier_flat_capped: {
+    baseRate: 3,
+    categoryMonthlyCap: 100000,
+    travelBonusMonthlyCap: 18000,
+    annualMilestoneTarget: null,
+    annualMilestoneLabel: '',
+  },
+};
+
+function daysInMonth(year, month) {
+  return new Date(year, month, 0).getDate();
+}
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
+
+// The billing cycle a given transaction date falls into, for a card whose
+// statement generates on `billingCycleDay` of each month - clamped to
+// however many days that month actually has (e.g. day 31 on a card with a
+// 31st cycle day becomes the 28th/29th in February). A transaction dated
+// exactly on the cycle day belongs to the cycle that's just starting, not
+// the one that just closed - the statement for the closing cycle has
+// already been cut by the time that day's spend happens.
+export function getCardCycleForDate(dateStr, billingCycleDay) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const thisMonthDay = Math.min(billingCycleDay, daysInMonth(y, m));
+  let endY = y;
+  let endM = m;
+  if (d >= thisMonthDay) {
+    endM += 1;
+    if (endM > 12) {
+      endM = 1;
+      endY += 1;
+    }
+  }
+  const endDay = Math.min(billingCycleDay, daysInMonth(endY, endM));
+  const cycleEnd = `${endY}-${pad2(endM)}-${pad2(endDay)}`;
+
+  let startY = endY;
+  let startM = endM - 1;
+  if (startM < 1) {
+    startM = 12;
+    startY -= 1;
+  }
+  const startDay = Math.min(billingCycleDay, daysInMonth(startY, startM));
+  const cycleStart = `${startY}-${pad2(startM)}-${pad2(startDay)}`;
+
+  return { cycleStart, cycleEnd, cycleKey: cycleStart };
+}
+
+// All transactions for one card that fall in [cycleStart, cycleEnd).
+export function getTransactionsInCycle(transactions, cardId, cycleStart, cycleEnd) {
+  return transactions.filter((t) => t.cardId === cardId && t.date >= cycleStart && t.date < cycleEnd);
+}
+
+// Enumerates a card's billing cycles going backward from today - used to
+// build the billing-cycle history list and to find which closed cycles
+// still need confirming, without the user ever having to pick a month by
+// hand. `count` includes the currently-open cycle.
+export function listRecentCardCycles(billingCycleDay, today, count = 12) {
+  const cycles = [];
+  let cursor = today;
+  for (let i = 0; i < count; i++) {
+    const { cycleStart, cycleEnd, cycleKey } = getCardCycleForDate(cursor, billingCycleDay);
+    cycles.push({ cycleStart, cycleEnd, cycleKey, isOpen: today < cycleEnd && today >= cycleStart });
+    // Step into the previous cycle by asking for the cycle of the day right
+    // before this one's start.
+    const [y, m, d] = cycleStart.split('-').map(Number);
+    const prev = new Date(y, m - 1, d - 1);
+    cursor = `${prev.getFullYear()}-${pad2(prev.getMonth() + 1)}-${pad2(prev.getDate())}`;
+  }
+  return cycles;
+}
+
+// Calendar-quarter bounds (Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec) for whichever
+// quarter `dateStr` falls in - HDFC Diners' quarterly milestone is
+// calendar-quarter based, not cycle-based.
+export function getQuarterBounds(dateStr) {
+  const [y, m] = dateStr.split('-').map(Number);
+  const qStartMonth = Math.floor((m - 1) / 3) * 3 + 1;
+  const qEndMonth = qStartMonth + 3;
+  const endY = qEndMonth > 12 ? y + 1 : y;
+  const endM = qEndMonth > 12 ? qEndMonth - 12 : qEndMonth;
+  return {
+    quarterStart: `${y}-${pad2(qStartMonth)}-01`,
+    quarterEnd: `${endY}-${pad2(endM)}-01`,
+  };
+}
+
+function applyCycleCap(rawValue, alreadyEarned, cap) {
+  if (cap == null) return rawValue;
+  return Math.max(0, Math.min(rawValue, cap - alreadyEarned));
+}
+
+// HDFC Diners Club Black Metal: 5 points per ₹150 (slab, not percentage),
+// times a per-category multiplier, with day/month sub-caps on specific
+// categories plus one overall per-cycle cap layered on top of everything.
+export function computeDinersCycleReward(params, transactions) {
+  const categories = params.categories || [];
+  const categoriesByKey = Object.fromEntries(categories.map((c) => [c.key, c]));
+  // Falls back to an uncapped 1x category rather than crashing if a card's
+  // categories list is ever missing/empty (e.g. hand-edited data) - every
+  // transaction still earns the base slab rate instead of throwing.
+  const fallbackCategory = { key: 'regular', multiplier: 1, capAmount: null, capPeriod: null };
+  const regularCategory = categoriesByKey.regular || categories[0] || fallbackCategory;
+  const dayTotals = {};
+  const monthTotals = {};
+  let cycleTotal = 0;
+  const perTransaction = [];
+
+  const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+  for (const txn of sorted) {
+    const category = categoriesByKey[txn.category] || regularCategory;
+    const basePoints = Math.floor(txn.amount / params.unitAmount) * params.pointsPerUnit;
+    // SmartBuy's real accelerated rate varies by what's actually booked
+    // (hotels earn more than flights, for example), so a transaction can
+    // carry its own multiplier instead of always using the category's
+    // default - falls back to the category's fixed rate when not set, so
+    // existing transactions are unaffected.
+    const effectiveMultiplier = txn.travelMultiplier != null ? txn.travelMultiplier : category.multiplier;
+    let earned = basePoints * effectiveMultiplier;
+
+    if (category.capAmount != null) {
+      const bucketKey = category.capPeriod === 'day' ? `${category.key}|${txn.date}` : `${category.key}|${getMonthKey(txn.date)}`;
+      const bucketTotals = category.capPeriod === 'day' ? dayTotals : monthTotals;
+      const already = bucketTotals[bucketKey] || 0;
+      earned = applyCycleCap(earned, already, category.capAmount);
+      bucketTotals[bucketKey] = already + earned;
+    }
+
+    earned = applyCycleCap(earned, cycleTotal, params.cycleCap);
+    cycleTotal += earned;
+    perTransaction.push({ id: txn.id, basePoints, categoryKey: category.key, multiplier: effectiveMultiplier, earned });
+  }
+
+  return { totalReward: cycleTotal, perTransaction, unit: 'points' };
+}
+
+// SBI Cashback (effective April 1, 2026): 5% on online spend and 1% on
+// offline spend, each capped independently at ₹2,000/cycle - a transaction
+// flagged 'excluded' (fuel, digital gaming, tolls, government, wallet,
+// rent, jewellery, education, utility, insurance, gift shops, railways,
+// EMI) earns nothing on either channel.
+export function computeSbiCycleReward(params, transactions) {
+  let onlineTotal = 0;
+  let offlineTotal = 0;
+  // SBI's own Cashback T&C (clause 11.1.s): "Card Cashback is not applicable
+  // on transactions less than ₹100." A blank/cleared minTransaction should
+  // mean "no minimum," not "everything is under the minimum."
+  const minTransaction = params.minTransaction ?? 0;
+  const perTransaction = [];
+
+  for (const txn of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
+    let earned = 0;
+    if (txn.amount < minTransaction) {
+      perTransaction.push({ id: txn.id, earned: 0, channel: txn.channel });
+      continue;
+    }
+    if (txn.channel === 'online') {
+      const raw = Math.floor((txn.amount * params.onlineRate) / 100);
+      earned = applyCycleCap(raw, onlineTotal, params.onlineCycleCap);
+      onlineTotal += earned;
+    } else if (txn.channel === 'offline') {
+      const raw = Math.floor((txn.amount * params.offlineRate) / 100);
+      earned = applyCycleCap(raw, offlineTotal, params.offlineCycleCap);
+      offlineTotal += earned;
+    }
+    perTransaction.push({ id: txn.id, earned, channel: txn.channel });
+  }
+
+  return { totalReward: onlineTotal + offlineTotal, onlineTotal, offlineTotal, perTransaction, unit: 'inr' };
+}
+
+// HSBC Live+: 10% on dining/food-delivery/grocery/shopping/utility spend
+// (Amazon/Flipkart/Myntra explicitly excluded from this tier despite
+// reading as "shopping" - encode that by leaving isBonusEligible false for
+// those), capped ₹1,200/month combined; 1.5% uncapped on everything else
+// not flagged excluded. Computed on the cycle's aggregate spend per tier,
+// not per transaction - see the file-level note on why.
+export function computeHsbcCycleReward(params, transactions) {
+  const eligible = transactions.filter((t) => t.channel !== 'excluded' && t.isBonusEligible);
+  const base = transactions.filter((t) => t.channel !== 'excluded' && !t.isBonusEligible);
+  const eligibleSum = eligible.reduce((s, t) => s + t.amount, 0);
+  const baseSum = base.reduce((s, t) => s + t.amount, 0);
+
+  const bonusRaw = Math.round((eligibleSum * params.bonusRate) / 100);
+  // Routed through applyCycleCap (not a bare Math.min) so a blank/cleared
+  // cap field is treated as "uncapped," not "capped at zero" - Math.min(x,
+  // null) coerces null to 0 in JS, which would silently wipe out every
+  // bonus-tier reward if someone cleared this field while adding a card.
+  const bonusEarned = applyCycleCap(bonusRaw, 0, params.bonusMonthlyCap);
+  const baseEarned = Math.round((baseSum * params.baseRate) / 100);
+
+  const perTransaction = transactions.map((t) => ({
+    id: t.id,
+    // Estimate only - HSBC settles on the cycle aggregate, not per
+    // transaction, so this is illustrative, not what actually gets paid.
+    estimated: t.channel === 'excluded' ? 0 : Math.round((t.amount * (t.isBonusEligible ? params.bonusRate : params.baseRate)) / 100),
+  }));
+
+  return { totalReward: bonusEarned + baseEarned, bonusEarned, baseEarned, eligibleSum, baseSum, perTransaction, unit: 'inr' };
+}
+
+// Axis Bank SuperMoney RuPay: 1% uncapped on all UPI-outside-the-app and
+// non-UPI spend, 3% on UPI paid through the super.money app - but the 3%
+// pool can never exceed the 1% pool earned the same cycle, with a ₹100
+// floor (you always get at least ₹100 from the 3% pool even if the 1% pool
+// earned less). Any single transaction under ₹100 earns nothing on either
+// tier - a real rule the old sheet's ROUNDDOWN only enforced by coincidence
+// on the 1% tier and not at all on the 3% tier.
+export function computeSuperMoneyCycleReward(params, transactions) {
+  let baseTotal = 0;
+  let bonusRawTotal = 0;
+  const perTransaction = [];
+
+  // A blank/cleared minTransaction or bonusFloor should mean "no floor,"
+  // not silently coerce to 0 via JS's null-to-number rules (`amount < null`
+  // is `amount < 0`, always false, which would disable the ₹100 minimum
+  // entirely rather than leaving it at its intended default).
+  const minTransaction = params.minTransaction ?? 0;
+  const bonusFloor = params.bonusFloor ?? 0;
+
+  for (const txn of transactions) {
+    if (txn.amount < minTransaction) {
+      perTransaction.push({ id: txn.id, earned: 0, pool: null });
+      continue;
+    }
+    if (txn.isBonusEligible) {
+      const earned = Math.floor((txn.amount * params.bonusRate) / 100);
+      bonusRawTotal += earned;
+      perTransaction.push({ id: txn.id, earned, pool: 'bonus' });
+    } else {
+      const earned = Math.floor((txn.amount * params.baseRate) / 100);
+      baseTotal += earned;
+      perTransaction.push({ id: txn.id, earned, pool: 'base' });
+    }
+  }
+
+  const bonusCap = Math.max(baseTotal, bonusFloor);
+  const bonusFinal = Math.min(bonusRawTotal, bonusCap);
+
+  return { totalReward: baseTotal + bonusFinal, baseTotal, bonusRawTotal, bonusFinal, perTransaction, unit: 'inr' };
+}
+
+// HSBC Premier: flat 3 points per ₹100 on everything except fuel (0), with
+// a ₹1L/month spend cap on a specific bucket of categories (insurance,
+// utilities, education, government, wallet loads, real estate) - spend
+// past that cap in those categories still counts toward the cap tracker
+// but stops earning points. `travel_bonus` lets a Travel-with-Points
+// booking's real multiplier (6-36% depending on the booking) be entered
+// per-transaction rather than hardcoding the portal's tiered table.
+export function computeHsbcPremierCycleReward(params, transactions) {
+  let cappedCategorySpend = 0;
+  let travelBonusEarned = 0;
+  let totalPoints = 0;
+  // HSBC's own Rewards T&C worked example carries a sub-₹100 remainder
+  // forward to the next qualifying transaction rather than dropping it
+  // (₹130 -> 3pts + ₹30 carried, ₹270+₹30=₹300 -> 6pts, ...) - this pool is
+  // shared by regular and capped-category spend since both earn at the same
+  // baseRate; Travel with Points is a separate booking product with its own
+  // multiplier and cap, so it doesn't participate.
+  let carry = 0;
+  const perTransaction = [];
+
+  for (const txn of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
+    let points = 0;
+    if (txn.category === 'fuel_excluded') {
+      points = 0;
+    } else if (txn.category === 'travel_bonus') {
+      const multiplier = txn.travelMultiplier || 1;
+      const raw = Math.floor((txn.amount * params.baseRate) / 100) * multiplier;
+      points = applyCycleCap(raw, travelBonusEarned, params.travelBonusMonthlyCap);
+      travelBonusEarned += points;
+    } else {
+      let eligibleAmount = txn.amount;
+      if (txn.category === 'capped_category') {
+        // A blank/cleared categoryMonthlyCap means "no cap," not "no room
+        // left" - `null - cappedCategorySpend` would otherwise coerce to a
+        // negative number and Math.max(0, ...) would floor allowedSpend at
+        // 0, silently earning nothing on every transaction in this category.
+        const allowedSpend = params.categoryMonthlyCap == null
+          ? txn.amount
+          : Math.max(0, params.categoryMonthlyCap - cappedCategorySpend);
+        eligibleAmount = Math.min(txn.amount, allowedSpend);
+        cappedCategorySpend += txn.amount;
+      }
+      const total = carry + eligibleAmount;
+      const wholeUnits = Math.floor(total / 100);
+      carry = total - wholeUnits * 100;
+      points = wholeUnits * params.baseRate;
+    }
+    totalPoints += points;
+    perTransaction.push({ id: txn.id, earned: points });
+  }
+
+  return { totalReward: totalPoints, perTransaction, unit: 'points' };
+}
+
+// A card's reward rules aren't fixed forever - banks revise rates and caps
+// (this app has already tracked 3 such revisions across its 5 cards), so a
+// card stores its rules as a dated history rather than one mutable object.
+// This picks whichever version was actually in effect on a given date, so
+// editing a card's current rules never rewrites what a past transaction
+// earned. Falls back to the earliest version for a date before any of them
+// (e.g. a transaction older than the card's first recorded rule set).
+export function resolveStrategyParamsForDate(strategyParamsHistory, date) {
+  const versions = strategyParamsHistory || [];
+  if (versions.length === 0) return {};
+  const sorted = [...versions].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  let active = sorted[0];
+  for (const version of sorted) {
+    if (version.effectiveFrom <= date) active = version;
+    else break;
+  }
+  return active.params || {};
+}
+
+// Single entry point the UI calls - dispatches on the card's chosen
+// strategy so callers never need a switch of their own. `asOfDate` picks
+// which dated rule version applies (defaults to today); callers computing a
+// specific billing cycle should pass that cycle's start date so the whole
+// cycle is evaluated under the one rule that was active when it opened,
+// even if the card's rules have since been revised.
+export function computeCardCycleReward(card, cycleTransactions, asOfDate) {
+  const params = resolveStrategyParamsForDate(card?.strategyParamsHistory, asOfDate ?? todayISO());
+  switch (card?.rewardStrategy) {
+    case 'hdfc_diners_slab_milestone':
+      return computeDinersCycleReward(params, cycleTransactions);
+    case 'sbi_two_channel_cashback':
+      return computeSbiCycleReward(params, cycleTransactions);
+    case 'hsbc_tiered_cashback_aggregate':
+      return computeHsbcCycleReward(params, cycleTransactions);
+    case 'axis_supermoney_dual_pool':
+      return computeSuperMoneyCycleReward(params, cycleTransactions);
+    case 'hsbc_premier_flat_capped':
+      return computeHsbcPremierCycleReward(params, cycleTransactions);
+    default:
+      return { totalReward: 0, perTransaction: [], unit: 'inr' };
+  }
+}
+
+// What a single transaction (still being typed in, or already saved and
+// being edited) would earn, given the other real transactions already in
+// its billing cycle - lets the add/edit forms show a live calculated
+// estimate before the transaction is saved. `draftTxn.id` should match an
+// existing transaction's id when editing (so it's excluded from "the other
+// transactions" and replaced by the draft's own values), or be omitted/any
+// placeholder when adding a brand new one.
+export function previewTransactionReward(card, existingCardTxns, draftTxn) {
+  if (!card || !draftTxn?.date || !draftTxn?.amount) return null;
+  const { cycleStart, cycleEnd } = getCardCycleForDate(draftTxn.date, card.billingCycleDay ?? 1);
+  const previewId = draftTxn.id || '__preview__';
+  const othersInCycle = (existingCardTxns || []).filter(
+    (t) => t.id !== previewId && t.date >= cycleStart && t.date < cycleEnd,
+  );
+  const combined = [...othersInCycle, { ...draftTxn, id: previewId }];
+  const result = computeCardCycleReward(card, combined, cycleStart);
+  return result.perTransaction.find((p) => p.id === previewId) || null;
+}
+
+// Progress toward a spend milestone (quarterly/annual fee-waiver/bonus) -
+// same shape as computeBudgetStatus so the UI can reuse the same progress
+// bar treatment. `periodStart`/`periodEnd` are the calendar window the
+// milestone counts within. `startingSpend` lets a card record spend that
+// already happened in the current period before this app started tracking
+// it (e.g. adding the card mid-year), so the progress bar doesn't restart
+// from zero every time.
+export function computeCardMilestoneProgress(transactions, cardId, periodStart, periodEnd, target, startingSpend = 0) {
+  const trackedSpend = transactions
+    .filter((t) => t.cardId === cardId && t.date >= periodStart && t.date < periodEnd && t.category !== 'excluded' && t.channel !== 'excluded')
+    .reduce((s, t) => s + t.amount, 0);
+  const spent = (startingSpend || 0) + trackedSpend;
+  return {
+    spent,
+    target,
+    pctUsed: target ? spent / target : 0,
+    remaining: target != null ? Math.max(0, target - spent) : null,
+  };
+}
+
+// The annual fee-waiver/bonus milestone runs on the card's own 12-month
+// renewal cycle, not the calendar year - anchorMonth is the month (1-12) it
+// starts on each year, defaulting to January for cards that haven't set one.
+export function getAnnualMilestoneWindow(anchorMonth, dateStr) {
+  const anchor = anchorMonth || 1;
+  const [y, m] = dateStr.split('-').map(Number);
+  const startY = m >= anchor ? y : y - 1;
+  return {
+    periodStart: `${startY}-${pad2(anchor)}-01`,
+    periodEnd: `${startY + 1}-${pad2(anchor)}-01`,
+  };
+}
+
+// How much room is left in each capped category/pool for the period
+// containing `today` - lets the UI show "SmartBuy: 4,200 of 10,000 pts used
+// this month" directly, instead of the cap only being visible indirectly
+// when a transaction unexpectedly earns less than its raw rate would give.
+function computeDinersCapStatus(params, cardTransactions, today) {
+  const categories = (params.categories || []).filter((c) => c.capAmount != null);
+  return categories.map((c) => {
+    const periodTxns = cardTransactions.filter((t) =>
+      c.capPeriod === 'day' ? t.date === today : getMonthKey(t.date) === getMonthKey(today),
+    );
+    const { perTransaction } = computeDinersCycleReward(params, periodTxns);
+    const earned = perTransaction.filter((p) => p.categoryKey === c.key).reduce((s, p) => s + p.earned, 0);
+    return {
+      key: c.key,
+      label: c.label,
+      capAmount: c.capAmount,
+      capPeriod: c.capPeriod,
+      earned,
+      remaining: Math.max(0, c.capAmount - earned),
+      unit: 'points',
+    };
+  });
+}
+
+function computeHsbcLiveCapStatus(params, cardTransactions, today) {
+  if (params.bonusMonthlyCap == null) return [];
+  const monthTxns = cardTransactions.filter((t) => getMonthKey(t.date) === getMonthKey(today));
+  const { bonusEarned } = computeHsbcCycleReward(params, monthTxns);
+  return [{
+    key: 'bonus',
+    label: 'Bonus category cashback',
+    capAmount: params.bonusMonthlyCap,
+    capPeriod: 'month',
+    earned: bonusEarned,
+    remaining: Math.max(0, params.bonusMonthlyCap - bonusEarned),
+    unit: 'inr',
+  }];
+}
+
+// SBI's caps run per billing cycle, not calendar month, so this reads the
+// current cycle's transactions rather than a calendar-month slice.
+function computeSbiCapStatus(params, currentCycleTxns) {
+  const results = [];
+  const { onlineTotal, offlineTotal } = computeSbiCycleReward(params, currentCycleTxns);
+  if (params.onlineCycleCap != null) {
+    results.push({
+      key: 'online', label: 'Online cashback', capAmount: params.onlineCycleCap, capPeriod: 'cycle',
+      earned: onlineTotal, remaining: Math.max(0, params.onlineCycleCap - onlineTotal), unit: 'inr',
+    });
+  }
+  if (params.offlineCycleCap != null) {
+    results.push({
+      key: 'offline', label: 'Offline cashback', capAmount: params.offlineCycleCap, capPeriod: 'cycle',
+      earned: offlineTotal, remaining: Math.max(0, params.offlineCycleCap - offlineTotal), unit: 'inr',
+    });
+  }
+  return results;
+}
+
+function computeHsbcPremierCapStatus(params, cardTransactions, today) {
+  const results = [];
+  if (params.categoryMonthlyCap != null) {
+    const monthSpend = cardTransactions
+      .filter((t) => getMonthKey(t.date) === getMonthKey(today) && t.category === 'capped_category')
+      .reduce((s, t) => s + t.amount, 0);
+    results.push({
+      key: 'capped_category', label: 'Capped-category spend', capAmount: params.categoryMonthlyCap, capPeriod: 'month',
+      earned: monthSpend, remaining: Math.max(0, params.categoryMonthlyCap - monthSpend), unit: 'inr',
+    });
+  }
+  if (params.travelBonusMonthlyCap != null) {
+    const monthTxns = cardTransactions.filter((t) => getMonthKey(t.date) === getMonthKey(today) && t.category === 'travel_bonus');
+    const { totalReward } = computeHsbcPremierCycleReward(params, monthTxns);
+    results.push({
+      key: 'travel_bonus', label: 'Travel with Points', capAmount: params.travelBonusMonthlyCap, capPeriod: 'month',
+      earned: totalReward, remaining: Math.max(0, params.travelBonusMonthlyCap - totalReward), unit: 'points',
+    });
+  }
+  return results;
+}
+
+// Single entry point the UI calls - dispatches on the card's strategy so
+// callers never need a switch of their own. `cardTransactions` is every
+// transaction ever logged for the card (used for calendar-month/day caps);
+// `currentCycleTxns` is just the open billing cycle (used for per-cycle
+// caps like SBI's). Returns [] for strategies with no hard cap to track
+// (e.g. SuperMoney's bonus pool, which is capped by the base pool itself
+// rather than a fixed ceiling).
+export function computeCardCapStatus(card, cardTransactions, currentCycleTxns, today) {
+  const params = resolveStrategyParamsForDate(card?.strategyParamsHistory, today);
+  switch (card?.rewardStrategy) {
+    case 'hdfc_diners_slab_milestone':
+      return computeDinersCapStatus(params, cardTransactions, today);
+    case 'hsbc_tiered_cashback_aggregate':
+      return computeHsbcLiveCapStatus(params, cardTransactions, today);
+    case 'sbi_two_channel_cashback':
+      return computeSbiCapStatus(params, currentCycleTxns);
+    case 'hsbc_premier_flat_capped':
+      return computeHsbcPremierCapStatus(params, cardTransactions, today);
+    default:
+      return [];
+  }
+}
+
+// Lets a specific transaction's earned reward be corrected by hand (e.g.
+// the bank credited something different than the formula predicts, or a
+// case the formula doesn't model like a refund) without losing the
+// formula's own workings for everything else. Only recomputes the total
+// when at least one override is actually present, so an untouched card's
+// totals stay the pure formula result.
+export function applyRewardOverrides(cycleReward, transactions) {
+  const overrides = new Map(
+    transactions.filter((t) => t.rewardOverride != null).map((t) => [t.id, t.rewardOverride]),
+  );
+  if (overrides.size === 0) return cycleReward;
+  let totalReward = 0;
+  const perTransaction = cycleReward.perTransaction.map((p) => {
+    const override = overrides.get(p.id);
+    const value = override != null ? override : (p.earned ?? p.estimated ?? 0);
+    totalReward += value;
+    return override != null ? { ...p, earned: value, overridden: true } : p;
+  });
+  return { ...cycleReward, perTransaction, totalReward };
+}
+
+export const CREDIT_CARDS_KEY = 'splitkhata_credit_cards';
+export const CARD_TRANSACTIONS_KEY = 'splitkhata_card_transactions';
+export const CARD_BILLING_CYCLES_KEY = 'splitkhata_card_billing_cycles';
+
+export function getCreditCards() {
+  const raw = getItem(CREDIT_CARDS_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setCreditCards(cards) {
+  setItem(CREDIT_CARDS_KEY, JSON.stringify(cards || []));
+}
+
+export function getCardTransactions() {
+  const raw = getItem(CARD_TRANSACTIONS_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setCardTransactions(transactions) {
+  setItem(CARD_TRANSACTIONS_KEY, JSON.stringify(transactions || []));
+}
+
+// Billing-cycle confirmation records, keyed by `${cardId}|${cycleStart}` -
+// only cycles someone has actually confirmed or archived exist here; an
+// unconfirmed cycle simply has no entry and is computed live from
+// transactions until it does.
+export function getCardBillingCycles() {
+  const raw = getItem(CARD_BILLING_CYCLES_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function setCardBillingCycles(cycles) {
+  setItem(CARD_BILLING_CYCLES_KEY, JSON.stringify(cycles || []));
+}
+
+export function getCardBillingCycleKey(cardId, cycleStart) {
+  return `${cardId}|${cycleStart}`;
+}

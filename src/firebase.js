@@ -63,6 +63,16 @@ import {
   HOUSEHOLD_BUDGETS_KEY,
   RECURRING_RULES_KEY,
   PAYMENT_REMINDER_CONFIG_KEY,
+  getCreditCards,
+  setCreditCards,
+  getCardTransactions,
+  setCardTransactions,
+  getCardBillingCycles,
+  setCardBillingCycles,
+  getCardBillingCycleKey,
+  CREDIT_CARDS_KEY,
+  CARD_TRANSACTIONS_KEY,
+  CARD_BILLING_CYCLES_KEY,
 } from './utils';
 
 // Firestore write batches are capped at 500 operations.
@@ -106,6 +116,9 @@ let membersRef = null;
 let tripsRef = null;
 let cashMovementsRef = null;
 let paymentMethodsRef = null;
+let creditCardsRef = null;
+let cardTransactionsRef = null;
+let cardBillingCyclesRef = null;
 let authInstance = null;
 let firebaseAppInstance = null;
 
@@ -134,6 +147,9 @@ if (isFirebaseConfigured()) {
     tripsRef = collection(dbInstance, 'trips');
     cashMovementsRef = collection(dbInstance, 'cashMovements');
     paymentMethodsRef = collection(dbInstance, 'paymentMethods');
+    creditCardsRef = collection(dbInstance, 'creditCards');
+    cardTransactionsRef = collection(dbInstance, 'cardTransactions');
+    cardBillingCyclesRef = collection(dbInstance, 'cardBillingCycles');
   } catch (err) {
     console.warn('Firebase initialization failed, falling back to local database:', err);
   }
@@ -251,6 +267,9 @@ const paymentMethodListeners = new Set();
 const budgetListeners = new Set();
 const recurringRuleListeners = new Set();
 const paymentReminderConfigListeners = new Set();
+const creditCardListeners = new Set();
+const cardTransactionListeners = new Set();
+const cardBillingCycleListeners = new Set();
 
 let categoriesSeededFlag = false;
 
@@ -1272,6 +1291,192 @@ export async function savePaymentReminderConfigToDb(config) {
     } catch (err) {
       console.error('Error saving payment reminder config to Firestore:', err);
     }
+  }
+}
+
+// Credit cards - a handful of user-managed entities, same shape as trips
+// (real collection, one doc per card, ordered by creation).
+export function subscribeToCreditCards(onData, onError) {
+  if (creditCardsRef) {
+    const q = query(creditCardsRef, orderBy('createdAt', 'asc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      onError,
+    );
+  } else {
+    const handler = (data) => onData(data);
+    creditCardListeners.add(handler);
+    onData(getCreditCards());
+
+    const storageListener = (e) => {
+      if (e.key === CREDIT_CARDS_KEY) onData(getCreditCards());
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      creditCardListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+export async function addCreditCardToDb(card) {
+  if (creditCardsRef) {
+    const docRef = await addDoc(creditCardsRef, { ...card, createdAt: serverTimestamp() });
+    return docRef.id;
+  } else {
+    const current = getCreditCards();
+    const newCard = { id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), ...card };
+    const updated = [...current, newCard];
+    setCreditCards(updated);
+    creditCardListeners.forEach((fn) => fn(updated));
+    return newCard.id;
+  }
+}
+
+export async function updateCreditCardInDb(cardId, updates) {
+  if (creditCardsRef) {
+    if (cardId) await updateDoc(doc(dbInstance, 'creditCards', cardId), updates);
+  } else {
+    const current = getCreditCards();
+    const updated = current.map((c) => (c.id === cardId ? { ...c, ...updates } : c));
+    setCreditCards(updated);
+    creditCardListeners.forEach((fn) => fn(updated));
+  }
+}
+
+export async function deleteCreditCardFromDb(cardId) {
+  if (creditCardsRef) {
+    if (cardId) await deleteDoc(doc(dbInstance, 'creditCards', cardId));
+  } else {
+    const current = getCreditCards();
+    const updated = current.filter((c) => c.id !== cardId);
+    setCreditCards(updated);
+    creditCardListeners.forEach((fn) => fn(updated));
+  }
+}
+
+// Card transactions - potentially large over time (multiple cards, years of
+// history), so a real collection like expenses rather than a single
+// settings doc. Fetched in full (not scoped server-side per card) since the
+// realistic volume here is still well under what a scoped query would save,
+// and every screen that needs this (dashboard totals, milestone progress
+// across a whole quarter) wants the full set anyway - same reasoning as
+// Ask's always-on cross-ledger subscriptions.
+export function subscribeToCardTransactions(onData, onError) {
+  if (cardTransactionsRef) {
+    const q = query(cardTransactionsRef, orderBy('date', 'desc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        onData(snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+          createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? null,
+        })));
+      },
+      onError,
+    );
+  } else {
+    const handler = (data) => onData(data);
+    cardTransactionListeners.add(handler);
+    onData(getCardTransactions());
+
+    const storageListener = (e) => {
+      if (e.key === CARD_TRANSACTIONS_KEY) onData(getCardTransactions());
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      cardTransactionListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+export async function addCardTransaction(transaction) {
+  if (cardTransactionsRef) {
+    const docRef = await addDoc(cardTransactionsRef, { ...transaction, createdAt: serverTimestamp() });
+    return docRef.id;
+  } else {
+    const current = getCardTransactions();
+    const newTxn = { id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), ...transaction, createdAt: new Date().toISOString() };
+    const updated = [newTxn, ...current];
+    setCardTransactions(updated);
+    cardTransactionListeners.forEach((fn) => fn(updated));
+    return newTxn.id;
+  }
+}
+
+export async function updateCardTransaction(id, updates) {
+  if (cardTransactionsRef) {
+    if (id) await updateDoc(doc(dbInstance, 'cardTransactions', id), updates);
+  } else {
+    const current = getCardTransactions();
+    const updated = current.map((t) => (t.id === id ? { ...t, ...updates } : t));
+    setCardTransactions(updated);
+    cardTransactionListeners.forEach((fn) => fn(updated));
+  }
+}
+
+export async function deleteCardTransaction(id) {
+  if (cardTransactionsRef) {
+    if (id) await deleteDoc(doc(dbInstance, 'cardTransactions', id));
+  } else {
+    const current = getCardTransactions();
+    const updated = current.filter((t) => t.id !== id);
+    setCardTransactions(updated);
+    cardTransactionListeners.forEach((fn) => fn(updated));
+  }
+}
+
+// Billing-cycle confirmation records - "did the real statement match what
+// we expected, and have the points actually landed." Keyed deterministically
+// by `${cardId}|${cycleStart}` (see getCardBillingCycleKey in utils.js) so
+// confirming the same cycle twice updates the same record instead of
+// creating a duplicate - no query-then-write race to worry about.
+export function subscribeToCardBillingCycles(onData, onError) {
+  if (cardBillingCyclesRef) {
+    return onSnapshot(
+      cardBillingCyclesRef,
+      (snapshot) => {
+        onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      onError,
+    );
+  } else {
+    const handler = (data) => onData(data);
+    cardBillingCycleListeners.add(handler);
+    onData(getCardBillingCycles());
+
+    const storageListener = (e) => {
+      if (e.key === CARD_BILLING_CYCLES_KEY) onData(getCardBillingCycles());
+    };
+    window.addEventListener('storage', storageListener);
+
+    return () => {
+      cardBillingCycleListeners.delete(handler);
+      window.removeEventListener('storage', storageListener);
+    };
+  }
+}
+
+export async function saveCardBillingCycle(cardId, cycleStart, updates) {
+  const key = getCardBillingCycleKey(cardId, cycleStart);
+  if (cardBillingCyclesRef) {
+    await setDoc(doc(dbInstance, 'cardBillingCycles', key), { cardId, cycleStart, ...updates, updatedAt: serverTimestamp() }, { merge: true });
+  } else {
+    const current = getCardBillingCycles();
+    const existingIndex = current.findIndex((c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === key);
+    const merged = { id: key, cardId, cycleStart, ...(existingIndex >= 0 ? current[existingIndex] : {}), ...updates };
+    const updated = existingIndex >= 0
+      ? current.map((c, i) => (i === existingIndex ? merged : c))
+      : [...current, merged];
+    setCardBillingCycles(updated);
+    cardBillingCycleListeners.forEach((fn) => fn(updated));
   }
 }
 

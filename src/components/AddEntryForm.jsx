@@ -89,7 +89,7 @@ export default function AddEntryForm({
   }, [ledger, categories, category]);
 
   // Default the payer to this device's identity, but only when the identity
-  // itself changes (or the member list changes) — not on every payer edit,
+  // itself changes (or the member list changes) - not on every payer edit,
   // otherwise manually picking a different payer gets immediately overwritten.
   useEffect(() => {
     if (deviceName && membersList.includes(deviceName)) {
