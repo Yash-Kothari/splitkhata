@@ -347,7 +347,9 @@ export default function SettingsModal({
         dueDateOffsetDays: Math.max(0, Math.round(Number(newCardDueOffset)) || 0),
         annualMilestoneAnchorMonth: Math.min(12, Math.max(1, Math.round(Number(newCardAnnualAnchorMonth)) || 1)),
         annualMilestoneStartingSpend: Math.max(0, Number(newCardAnnualStartingSpend) || 0),
-        startingRewardPoints: Math.max(0, Number(newCardStartingPoints) || 0),
+        startingRewardPoints: CARD_REWARD_STRATEGIES.find((s) => s.key === newCardStrategy)?.unit === 'points'
+          ? Math.max(0, Number(newCardStartingPoints) || 0)
+          : 0,
         active: true,
       });
       setNewCardName('');
@@ -375,6 +377,8 @@ export default function SettingsModal({
 
   async function saveEditCard(cardId) {
     try {
+      const strategyKey = creditCards.find((c) => c.id === cardId)?.rewardStrategy;
+      const isPointsCard = CARD_REWARD_STRATEGIES.find((s) => s.key === strategyKey)?.unit === 'points';
       await updateCreditCardInDb(cardId, {
         name: editCardDrafts.name.trim(),
         owner: editCardDrafts.owner,
@@ -382,7 +386,7 @@ export default function SettingsModal({
         dueDateOffsetDays: Math.max(0, Math.round(Number(editCardDrafts.dueDateOffsetDays)) || 0),
         annualMilestoneAnchorMonth: Math.min(12, Math.max(1, Math.round(Number(editCardDrafts.annualMilestoneAnchorMonth)) || 1)),
         annualMilestoneStartingSpend: Math.max(0, Number(editCardDrafts.annualMilestoneStartingSpend) || 0),
-        startingRewardPoints: Math.max(0, Number(editCardDrafts.startingRewardPoints) || 0),
+        startingRewardPoints: isPointsCard ? Math.max(0, Number(editCardDrafts.startingRewardPoints) || 0) : 0,
       });
       setEditingCardId(null);
     } catch (err) {
