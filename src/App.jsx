@@ -614,14 +614,23 @@ export default function App() {
         {!hasFirebase && <SetupBanner onShowDetails={() => setShowSettingsModal(true)} />}
 
         <header className="px-3 sm:px-4 pt-4 sm:pt-6 pb-4 max-w-5xl mx-auto border-b border-ink/10 mb-4 sm:mb-6">
-          <div className="flex items-center gap-2">
-            <div className="shrink-0">
-              <h1 className="font-display text-xl sm:text-2xl font-bold text-ink tracking-tight">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
+            <div className="flex items-center gap-2 shrink-0">
+              <h1 className="font-display text-xl sm:text-2xl font-bold text-ink tracking-tight shrink-0">
                 Splitkhata
               </h1>
+              <span className="inline-flex items-center gap-1 px-2.5 sm:px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-[11px] sm:text-xs font-bold tracking-wide shadow-2xs whitespace-nowrap">
+                {activeLedger === 'travel'
+                  ? (selectedTrip ? `✈️ ${selectedTrip}` : '✈️ Travel')
+                  : activeLedger === 'payments'
+                    ? '💰 Payments'
+                    : activeLedger === 'cards'
+                      ? '💳 Cards'
+                      : '🏠 Household Ledger'}
+              </span>
             </div>
 
-            <div className="flex-1 flex items-center justify-end gap-1">
+            <div className="flex items-center gap-1 ml-auto">
               <button
                 type="button"
                 onClick={() => setShowGlobalSearch(true)}
@@ -690,12 +699,6 @@ export default function App() {
               </div>
             </div>
           </div>
-
-          {activeLedger === 'travel' && selectedTrip && (
-            <div className="mt-2 inline-flex max-w-full items-center gap-1 px-2.5 py-1 rounded-lg border border-ledger-green/30 bg-ledger-green/10 text-ledger-green text-[11px] sm:text-xs font-bold tracking-wide truncate">
-              ✈️ {selectedTrip}
-            </div>
-          )}
         </header>
 
         <div className="px-3 sm:px-4 max-w-5xl mx-auto mb-4 sm:mb-6">
