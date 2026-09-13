@@ -196,7 +196,7 @@ export default function AddEntryForm({
   return (
     <Card className="p-4 mb-4">
       <Pressable onPress={() => setExpanded((v) => !v)} className="flex-row items-center justify-between">
-        <Text className="font-display text-lg font-bold text-ink">
+        <Text className="font-display text-lg text-ink">
           Add Entry{isTravel && tripName ? ` (${tripName})` : ''}
         </Text>
         <View className="px-2.5 py-1 rounded-md bg-paper border border-ink/10">

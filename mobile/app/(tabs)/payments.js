@@ -78,7 +78,7 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
 
   return (
     <Card className="p-4 mb-4">
-      <Text className="font-display text-lg font-bold text-ink mb-1">Reward Points Owed</Text>
+      <Text className="font-display text-lg text-ink mb-1">Reward Points Owed</Text>
       {pointsBalance.status === 'settled' ? (
         <Text className="font-body-semibold text-sm text-ledger-green">All settled up across every trip</Text>
       ) : (
@@ -111,7 +111,7 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
             <PickerField label="Paid to" value={owedBy} options={dbMembers} onChange={setOwedBy} />
           </View>
           {payer && owedBy && payer === owedBy && (
-            <Text className="font-body text-xs text-stamp-red font-medium mb-3">"Paid by" and "Paid to" can't be the same person.</Text>
+            <Text className="font-body text-xs text-stamp-red mb-3">"Paid by" and "Paid to" can't be the same person.</Text>
           )}
 
           <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Points</Text>
@@ -119,7 +119,7 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
             value={amount}
             onChangeText={setAmount}
             keyboardType="number-pad"
-            className="font-mono text-base font-bold text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+            className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
           />
 
           <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
@@ -145,7 +145,7 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
                 <>
                   After this, <Text className="font-body-semibold text-ink">{previewBalance.debtor}</Text> will owe{' '}
                   <Text className="font-body-semibold text-ink">{previewBalance.creditor}</Text>{' '}
-                  <Text className="font-mono font-body-semibold text-ink">{Math.round(previewBalance.amount).toLocaleString('en-IN')} pts</Text>.
+                  <Text className="font-mono text-ink">{Math.round(previewBalance.amount).toLocaleString('en-IN')} pts</Text>.
                 </>
               )}
             </Text>

@@ -198,7 +198,7 @@ export default function TripSettings({
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View className="flex-1 bg-paper">
         <View className="flex-row items-center justify-between px-4 pt-14 pb-3 border-b border-ink/10 bg-paper-card">
-          <Text className="font-display text-lg font-bold text-ink flex-1" numberOfLines={1}>
+          <Text className="font-display text-lg text-ink flex-1" numberOfLines={1}>
             {trip.name} Settings
           </Text>
           <Pressable onPress={onClose} className="w-8 h-8 rounded-full border border-ink/15 bg-paper items-center justify-center">

@@ -17,7 +17,7 @@ export default function AppHeader({ badge }) {
     <SafeAreaView className="bg-paper" edges={['top']}>
       <View className="flex-row items-center gap-1.5 px-4 pt-2 pb-3 border-b border-ink/10">
         <View className="flex-row items-center gap-1.5 flex-shrink" style={{ flexShrink: 1 }}>
-          <Text className="font-display text-xl font-bold text-ink tracking-tight" numberOfLines={1}>
+          <Text className="font-display text-xl text-ink tracking-tight" numberOfLines={1}>
             Splitkhata
           </Text>
           <View className="px-2 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 flex-shrink" style={{ flexShrink: 1 }}>

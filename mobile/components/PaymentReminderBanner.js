@@ -16,7 +16,7 @@ export default function PaymentReminderBanner({ entries, dbMembers, config }) {
       style={cardShadow}
       className="rounded-2xl bg-paper-card border border-ink/10 border-l-4 border-l-mustard/60 p-4 mb-4"
     >
-      <Text className="font-display text-sm font-bold text-ink mb-1">⏰ Payment Reminder</Text>
+      <Text className="font-display text-sm text-ink mb-1">⏰ Payment Reminder</Text>
       <Text className="font-body text-sm text-ink">
         <Text className="font-body-semibold">{reminder.debtor}</Text> owes{' '}
         <Text className="font-body-semibold">{reminder.creditor}</Text> {formatCurrency(reminder.amount)}

@@ -17,7 +17,7 @@ export default function BudgetAlerts({ entries, ledger, month = null, budgets = 
       style={cardShadow}
       className="rounded-2xl bg-paper-card border border-ink/10 border-l-4 border-l-stamp-red/60 p-4 mb-4"
     >
-      <Text className="font-display text-sm font-bold text-ink mb-3">⚠️ Budget Alerts</Text>
+      <Text className="font-display text-sm text-ink mb-3">⚠️ Budget Alerts</Text>
       <View className="gap-3">
         {alerts.map((a) => (
           <View key={a.category}>

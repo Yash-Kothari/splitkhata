@@ -55,7 +55,7 @@ export default function SignInScreen() {
         style={cardShadow}
         className="w-full max-w-sm rounded-2xl border border-ink/15 bg-paper-card px-6 py-8 items-center"
       >
-        <Text className="font-display text-3xl font-bold text-ink mb-2">Splitkhata</Text>
+        <Text className="font-display text-3xl text-ink mb-2">Splitkhata</Text>
         <Text className="font-body text-sm text-muted-text text-center mb-6">
           Sign in with an approved Google account to access the shared ledger.
         </Text>

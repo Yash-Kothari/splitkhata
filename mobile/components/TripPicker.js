@@ -130,7 +130,7 @@ export default function TripPicker({
   if (trips.length === 0) {
     return (
       <Card className="p-4 mb-4">
-        <Text className="font-display text-lg font-bold text-ink mb-1">Create Your First Trip</Text>
+        <Text className="font-display text-lg text-ink mb-1">Create Your First Trip</Text>
         <Text className="font-body text-sm text-muted-text mb-3">
           Give it a name, pick a currency, and start tracking travel spend separately from the household.
         </Text>
@@ -142,7 +142,7 @@ export default function TripPicker({
   return (
     <Card className="p-4 mb-4">
       <View className="flex-row items-center justify-between">
-        <Text className="font-display text-lg font-bold text-ink">Trips</Text>
+        <Text className="font-display text-lg text-ink">Trips</Text>
         <Pressable onPress={() => setAddingTrip((v) => !v)} className="px-2.5 py-1 rounded-md bg-paper border border-ink/10">
           <Text className="font-body-semibold text-xs text-muted-text">{addingTrip ? 'Cancel' : '+ Add Trip'}</Text>
         </Pressable>
@@ -213,7 +213,7 @@ export default function TripPicker({
             </View>
             <View className="flex-1 rounded-lg bg-paper border border-ink/10 px-3 py-2.5">
               <Text className="font-body text-2xs text-muted-text">Cash in Hand</Text>
-              <Text className="font-mono text-sm font-bold text-ink">
+              <Text className="font-mono text-sm text-ink">
                 {(cashStats ?? 0).toLocaleString('en-IN')} {selectedTripObj.currency}
               </Text>
             </View>

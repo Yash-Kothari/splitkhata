@@ -171,7 +171,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
 
   return (
     <Card className="p-4 mb-4">
-      <Text className="font-display text-lg font-bold text-ink mb-1">
+      <Text className="font-display text-lg text-ink mb-1">
         {isTravel ? 'Trip Summary' : 'Household Net Balance'}
       </Text>
 
@@ -205,14 +205,14 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
 
       {isTravel && totalSpend > 0 && (
         <Text className="font-body text-sm text-muted-text mt-1">
-          Total trip expense: <Text className="font-mono font-body-semibold text-ink">{formatCurrency(totalSpend, displayCurrency)}</Text>
+          Total trip expense: <Text className="font-mono text-ink">{formatCurrency(totalSpend, displayCurrency)}</Text>
         </Text>
       )}
 
       {isTravel && totalPointsSpent !== 0 && (
         <Text className="font-body text-sm text-muted-text mt-1">
           💳 Points {totalPointsSpent > 0 ? 'spent' : 'earned'}:{' '}
-          <Text className="font-mono font-body-semibold text-ink">{Math.abs(Math.round(totalPointsSpent)).toLocaleString('en-IN')} pts</Text>
+          <Text className="font-mono text-ink">{Math.abs(Math.round(totalPointsSpent)).toLocaleString('en-IN')} pts</Text>
         </Text>
       )}
 
@@ -226,7 +226,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
               <Text> owes </Text>
               <Text className="font-body-semibold text-ledger-green">{s.creditor}</Text>
               <Text> </Text>
-              <Text className="font-mono font-body-semibold text-ink">{Math.round(s.amount).toLocaleString('en-IN')} pts</Text>
+              <Text className="font-mono text-ink">{Math.round(s.amount).toLocaleString('en-IN')} pts</Text>
             </Text>
           ))
         )
@@ -239,7 +239,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
             <Text> owes </Text>
             <Text className="font-body-semibold text-ledger-green">{pointsBalance.creditor}</Text>
             <Text> </Text>
-            <Text className="font-mono font-body-semibold text-ink">{Math.round(pointsBalance.amount).toLocaleString('en-IN')} pts</Text>
+            <Text className="font-mono text-ink">{Math.round(pointsBalance.amount).toLocaleString('en-IN')} pts</Text>
           </Text>
         )
       ) : null}
@@ -248,7 +248,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
         <View className="mt-3 pt-3 border-t border-ink/10 flex-row flex-wrap gap-x-4 gap-y-1.5">
           {dbMembers.map((m) => (
             <Text key={m} className="text-xs text-muted-text">
-              {m} <Text className="font-mono font-body-semibold text-ink">{formatCurrency(memberTotals?.[m] || 0)}</Text>
+              {m} <Text className="font-mono text-ink">{formatCurrency(memberTotals?.[m] || 0)}</Text>
             </Text>
           ))}
         </View>
@@ -259,7 +259,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
           {dbMembers.map((m) => (
             <Text key={m} className="text-xs text-muted-text">
               {m}{' '}
-              <Text className="font-mono font-body-semibold text-ink">
+              <Text className="font-mono text-ink">
                 💳 {Math.round(pointsMemberTotals?.[m] || 0).toLocaleString('en-IN')} pts
               </Text>
             </Text>
@@ -345,7 +345,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
             <PickerField label="Paid to" value={settleOwedBy} options={dbMembers} onChange={setSettleOwedBy} />
           </View>
           {settlePayer && settleOwedBy && settlePayer === settleOwedBy && (
-            <Text className="font-body text-xs text-stamp-red font-medium mb-3">"Paid by" and "Paid to" can't be the same person.</Text>
+            <Text className="font-body text-xs text-stamp-red mb-3">"Paid by" and "Paid to" can't be the same person.</Text>
           )}
 
           <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Amount (₹)</Text>
@@ -353,7 +353,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
             value={amount}
             onChangeText={setAmount}
             keyboardType="decimal-pad"
-            className="font-mono text-base font-bold text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+            className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
           />
 
           <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
@@ -379,7 +379,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
                 <>
                   After this, <Text className="font-body-semibold text-ink">{previewBalance.debtor}</Text> will owe{' '}
                   <Text className="font-body-semibold text-ink">{previewBalance.creditor}</Text>{' '}
-                  <Text className="font-mono font-body-semibold text-ink">{formatCurrency(previewBalance.amount, displayCurrency)}</Text>.
+                  <Text className="font-mono text-ink">{formatCurrency(previewBalance.amount, displayCurrency)}</Text>.
                 </>
               )}
             </Text>
