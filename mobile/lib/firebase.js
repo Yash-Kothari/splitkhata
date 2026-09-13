@@ -24,6 +24,7 @@ import {
   addDoc,
   deleteDoc,
   updateDoc,
+  setDoc,
   doc,
   getDocs,
   onSnapshot,
@@ -84,6 +85,15 @@ const tripsRef = collection(dbInstance, 'trips');
 const cashMovementsRef = collection(dbInstance, 'cashMovements');
 const paymentMethodsRef = collection(dbInstance, 'paymentMethods');
 const currenciesRef = collection(dbInstance, 'currencies');
+const creditCardsRef = collection(dbInstance, 'creditCards');
+
+// Always true on mobile - the Firebase config above is hardcoded, not
+// environment-gated the way web's "no config, run in a local-only demo
+// mode" branch is. Exists so Settings can share the exact same
+// `hasFirebase` check web uses, without needing its local-mode UI at all.
+export function isFirebaseConfigured() {
+  return true;
+}
 
 export function isAllowedUser(user) {
   return Boolean(user?.email && user.emailVerified && ALLOWED_EMAILS.has(user.email.toLowerCase()));
@@ -389,6 +399,139 @@ async function seedDefaultCurrencies() {
     batch.set(doc(currenciesRef), { name: cur, createdAt: serverTimestamp() });
   }
   await batch.commit();
+}
+
+// --- Currencies (add/delete) ---
+
+export async function addCurrencyToDb(name, existingRawDocs = []) {
+  const trimmed = name.trim().toUpperCase();
+  if (!trimmed) return;
+  const exists = existingRawDocs.some((d) => d.name && d.name.trim().toUpperCase() === trimmed);
+  if (!exists) {
+    await addDoc(currenciesRef, { name: trimmed, createdAt: serverTimestamp() });
+  }
+}
+
+export async function deleteCurrencyFromDb(name, rawDocs = []) {
+  const trimmed = name.trim().toUpperCase();
+  if (!trimmed) return;
+  const docToDelete = rawDocs.find((d) => d.name && d.name.trim().toUpperCase() === trimmed);
+  if (docToDelete?.id) {
+    await deleteDoc(doc(dbInstance, 'currencies', docToDelete.id));
+    return;
+  }
+  const q = query(currenciesRef, where('name', '==', trimmed));
+  const snap = await getDocs(q);
+  if (!snap.empty) {
+    await Promise.all(snap.docs.map((d) => deleteDoc(doc(dbInstance, 'currencies', d.id))));
+  }
+}
+
+// --- Members (add/delete - subscribeToMembers already exists above) ---
+
+export async function addMemberToDb(name, existingRawDocs = []) {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const exists = existingRawDocs.some((d) => d.name && d.name.trim().toLowerCase() === trimmed.toLowerCase());
+  if (!exists) {
+    await addDoc(membersRef, { name: trimmed, createdAt: serverTimestamp() });
+  }
+}
+
+export async function deleteMemberFromDb(name, rawDocs = []) {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const docToDelete = rawDocs.find((d) => d.name && d.name.trim().toLowerCase() === trimmed.toLowerCase());
+  if (docToDelete?.id) {
+    await deleteDoc(doc(dbInstance, 'members', docToDelete.id));
+    return;
+  }
+  const q = query(membersRef, where('name', '==', trimmed));
+  const snap = await getDocs(q);
+  if (!snap.empty) {
+    await Promise.all(snap.docs.map((d) => deleteDoc(doc(dbInstance, 'members', d.id))));
+  }
+}
+
+// --- Household budgets (save - subscribeToHouseholdBudgets already exists above) ---
+
+export async function saveHouseholdBudgetsToDb(budgets) {
+  const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+  await setDoc(budgetsDocRef, { budgets, updatedAt: serverTimestamp() });
+}
+
+// --- Payment reminder config (save - subscribeToPaymentReminderConfig already exists above) ---
+
+export async function savePaymentReminderConfigToDb(config) {
+  const configDocRef = doc(dbInstance, 'settings', 'payment_reminder_config');
+  await setDoc(configDocRef, { ...config, updatedAt: serverTimestamp() });
+}
+
+// --- Recurring expense rules (rent, subscriptions, utilities) - one settings
+// doc holding the whole array, matching web's shape exactly. ---
+
+export function subscribeToRecurringRules(callback) {
+  const rulesDocRef = doc(dbInstance, 'settings', 'recurring_rules');
+  return onSnapshot(
+    rulesDocRef,
+    (docSnap) => callback(docSnap.exists() && Array.isArray(docSnap.data().rules) ? docSnap.data().rules : []),
+    (err) => { console.warn('Recurring rules subscription error:', err); callback([]); },
+  );
+}
+
+export async function saveRecurringRulesToDb(rules) {
+  const rulesDocRef = doc(dbInstance, 'settings', 'recurring_rules');
+  await setDoc(rulesDocRef, { rules, updatedAt: serverTimestamp() });
+}
+
+// --- PIN lock config - stored as plain text (not hashed), matching web's
+// own storage exactly (a 4-digit device passcode, not an account credential). ---
+
+export function subscribeToPinConfig(callback) {
+  const pinDocRef = doc(dbInstance, 'settings', 'pin_config');
+  return onSnapshot(
+    pinDocRef,
+    (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        callback({ pin: typeof data.pin === 'string' ? data.pin : '', enabled: Boolean(data.enabled) });
+      } else {
+        callback({ pin: '', enabled: false });
+      }
+    },
+    (err) => { console.warn('PIN config subscription error:', err); callback({ pin: '', enabled: false }); },
+  );
+}
+
+export async function savePinConfigToDb(config) {
+  const pinDocRef = doc(dbInstance, 'settings', 'pin_config');
+  await setDoc(pinDocRef, { pin: config.pin || '', enabled: Boolean(config.enabled), updatedAt: serverTimestamp() });
+}
+
+// --- Credit cards - a handful of user-managed entities, one doc per card. ---
+
+export function subscribeToCreditCards(onData, onError) {
+  const q = query(creditCardsRef, orderBy('createdAt', 'asc'));
+  return onSnapshot(
+    q,
+    (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError,
+  );
+}
+
+export async function addCreditCardToDb(card) {
+  const docRef = await addDoc(creditCardsRef, { ...card, createdAt: serverTimestamp() });
+  return docRef.id;
+}
+
+export async function updateCreditCardInDb(cardId, updates) {
+  if (!cardId) return;
+  await updateDoc(doc(dbInstance, 'creditCards', cardId), updates);
+}
+
+export async function deleteCreditCardFromDb(cardId) {
+  if (!cardId) return;
+  await deleteDoc(doc(dbInstance, 'creditCards', cardId));
 }
 
 // --- Categories (add/delete - subscribeToCategories already exists above) ---
