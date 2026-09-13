@@ -6,6 +6,8 @@ import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-goog
 import { IBMPlexMono_500Medium, IBMPlexMono_600SemiBold, IBMPlexMono_700Bold } from '@expo-google-fonts/ibm-plex-mono';
 import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider } from '../lib/AuthContext';
+import { LockProvider } from '../lib/LockContext';
+import { JumpProvider } from '../lib/JumpContext';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -29,7 +31,11 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <Stack screenOptions={{ headerShown: false }} />
+      <LockProvider>
+        <JumpProvider>
+          <Stack screenOptions={{ headerShown: false }} />
+        </JumpProvider>
+      </LockProvider>
     </AuthProvider>
   );
 }

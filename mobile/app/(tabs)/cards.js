@@ -1,12 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   subscribeToCreditCards,
   subscribeToCardTransactions,
   subscribeToCardBillingCycles,
   deleteCardTransaction,
-  signOutUser,
 } from '../../lib/firebase';
 import {
   todayISO,
@@ -25,7 +23,7 @@ import Card from '../../components/Card';
 import CardTransactionForm from '../../components/CardTransactionForm';
 import CardTransactionRow from '../../components/CardTransactionRow';
 import CardBillingHistory from '../../components/CardBillingHistory';
-import SettingsModal from '../../components/SettingsModal';
+import AppHeader from '../../components/AppHeader';
 
 const UNDO_WINDOW_MS = 6000;
 
@@ -154,25 +152,7 @@ export default function Cards() {
   if (creditCards.length === 0) {
     return (
       <View className="flex-1 bg-paper">
-        <SafeAreaView className="bg-paper" edges={['top']}>
-          <View className="flex-row items-center gap-1.5 px-4 pt-2 pb-3 border-b border-ink/10">
-            <Text className="font-display text-xl text-ink tracking-tight" numberOfLines={1}>
-              Splitkhata
-            </Text>
-            <View className="px-2 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10">
-              <Text className="font-body-semibold text-2xs text-ledger-green" numberOfLines={1}>
-                💳 Cards
-              </Text>
-            </View>
-            <View className="flex-1" />
-            <Pressable onPress={() => setShowSettings(true)} hitSlop={8} className="px-2 py-1.5 rounded-xl border border-ink/15 bg-paper shrink-0">
-              <Text className="font-body-semibold text-2xs text-ink">⚙️</Text>
-            </Pressable>
-            <Pressable onPress={() => signOutUser()} hitSlop={8} className="px-2.5 py-1.5 rounded-xl border border-ink/15 bg-paper shrink-0">
-              <Text className="font-body-semibold text-2xs text-stamp-red">Sign out</Text>
-            </Pressable>
-          </View>
-        </SafeAreaView>
+        <AppHeader badge="💳 Cards" showSettings={showSettings} onShowSettingsChange={setShowSettings} />
         <View className="flex-1 items-center justify-center px-6">
           <Card className="items-center px-6 py-8 w-full max-w-sm">
             <Text className="font-display text-lg text-ink mb-2">No cards yet</Text>
@@ -184,32 +164,13 @@ export default function Cards() {
             </Pressable>
           </Card>
         </View>
-        <SettingsModal visible={showSettings} onClose={() => setShowSettings(false)} />
       </View>
     );
   }
 
   return (
     <View className="flex-1 bg-paper">
-      <SafeAreaView className="bg-paper" edges={['top']}>
-        <View className="flex-row items-center gap-1.5 px-4 pt-2 pb-3 border-b border-ink/10">
-          <Text className="font-display text-xl text-ink tracking-tight" numberOfLines={1}>
-            Splitkhata
-          </Text>
-          <View className="px-2 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10">
-            <Text className="font-body-semibold text-2xs text-ledger-green" numberOfLines={1}>
-              💳 Cards
-            </Text>
-          </View>
-          <View className="flex-1" />
-          <Pressable onPress={() => setShowSettings(true)} hitSlop={8} className="px-2 py-1.5 rounded-xl border border-ink/15 bg-paper shrink-0">
-            <Text className="font-body-semibold text-2xs text-ink">⚙️</Text>
-          </Pressable>
-          <Pressable onPress={() => signOutUser()} hitSlop={8} className="px-2.5 py-1.5 rounded-xl border border-ink/15 bg-paper shrink-0">
-            <Text className="font-body-semibold text-2xs text-stamp-red">Sign out</Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
+      <AppHeader badge="💳 Cards" showSettings={showSettings} onShowSettingsChange={setShowSettings} />
 
       <ScrollView contentContainerStyle={{ paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
         <View className="px-4">
@@ -347,7 +308,7 @@ export default function Cards() {
                     value={txnSearch}
                     onChangeText={setTxnSearch}
                     placeholder="Search..."
-                    className="h-9 px-3 text-xs font-body rounded-lg border border-ink/15 bg-paper text-ink w-36"
+                    className="h-9 px-3 text-xs font-body rounded-lg border border-ink/15 bg-paper text-ink w-36 shadow-2xs"
                   />
                 </View>
                 {filteredTxns.length === 0 ? (
@@ -393,8 +354,6 @@ export default function Cards() {
           ))}
         </View>
       )}
-
-      <SettingsModal visible={showSettings} onClose={() => setShowSettings(false)} />
     </View>
   );
 }

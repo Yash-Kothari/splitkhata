@@ -142,21 +142,21 @@ export default function EditEntryRow({
           value={amount}
           onChangeText={setAmount}
           keyboardType="decimal-pad"
-          className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+          className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
         />
 
         <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
         <TextInput
           value={date}
           onChangeText={setDate}
-          className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+          className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
         />
 
         <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
         <TextInput
           value={note}
           onChangeText={setNote}
-          className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+          className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
         />
 
         <View className="flex-row gap-2">
@@ -202,7 +202,7 @@ export default function EditEntryRow({
             value={localAmount}
             onChangeText={setLocalAmount}
             keyboardType="decimal-pad"
-            className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+            className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
           />
 
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Reward Points</Text>
@@ -210,7 +210,7 @@ export default function EditEntryRow({
             value={rewardPoints}
             onChangeText={setRewardPoints}
             keyboardType="numbers-and-punctuation"
-            className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+            className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
           />
         </>
       )}
@@ -260,7 +260,7 @@ export default function EditEntryRow({
         value={date}
         onChangeText={setDate}
         placeholder="2026-08-24"
-        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
       />
 
       {isTravel && (
@@ -281,7 +281,7 @@ export default function EditEntryRow({
         value={note}
         onChangeText={setNote}
         placeholder="What was this for?"
-        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
       />
 
       <View className="flex-row gap-2">

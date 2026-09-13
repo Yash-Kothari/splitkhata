@@ -82,15 +82,15 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
           <TextInput value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="0.00" className={`${input} font-bold`} />
 
           <Text className={label}>Date</Text>
-          <TextInput value={date} onChangeText={setDate} placeholder="2026-08-24" className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper" />
+          <TextInput value={date} onChangeText={setDate} placeholder="2026-08-24" className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs" />
 
           <Text className={label}>Description (optional)</Text>
-          <TextInput value={description} onChangeText={setDescription} placeholder="e.g. Zepto" className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper" />
+          <TextInput value={description} onChangeText={setDescription} placeholder="e.g. Zepto" className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs" />
 
           <CardStrategyFields card={card} draft={draft} onChange={updateDraft} />
 
           <Text className={label}>Calculated Reward</Text>
-          <View className="rounded-xl px-3 py-2.5 mb-3 bg-paper border border-ink/15">
+          <View className="rounded-xl px-3 py-2.5 mb-3 bg-paper border border-ink/15 shadow-2xs">
             <Text className="font-mono text-base text-muted-text">
               {calculatedReward != null ? formatReward(calculatedReward, rewardUnit) : '-'}
             </Text>

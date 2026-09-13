@@ -213,14 +213,14 @@ export default function TripSettings({
             value={datesStart}
             onChangeText={setDatesStart}
             placeholder="2026-08-24"
-            className="font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper"
+            className="font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper shadow-2xs"
           />
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">End Date</Text>
           <TextInput
             value={datesEnd}
             onChangeText={setDatesEnd}
             placeholder="2026-09-02"
-            className="font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper"
+            className="font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper shadow-2xs"
           />
           <Pressable onPress={handleSaveDates} className="min-h-10 rounded-lg border border-ink/15 items-center justify-center mb-5">
             <Text className="font-body-semibold text-sm text-ink">Save Dates</Text>
@@ -233,7 +233,7 @@ export default function TripSettings({
               onChangeText={setOpeningCash}
               keyboardType="decimal-pad"
               placeholder="0"
-              className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper"
+              className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper shadow-2xs"
             />
             <Pressable onPress={handleSaveCash} className="min-h-10 rounded-lg bg-ledger-green items-center justify-center">
               <Text className="font-body-semibold text-sm text-white">Save Starting Cash</Text>
@@ -247,7 +247,7 @@ export default function TripSettings({
               onChangeText={setWithdrawalAmount}
               keyboardType="decimal-pad"
               placeholder="0"
-              className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper"
+              className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper shadow-2xs"
             />
             <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">INR Cost (required)</Text>
             <TextInput
@@ -255,13 +255,13 @@ export default function TripSettings({
               onChangeText={setWithdrawalInr}
               keyboardType="decimal-pad"
               placeholder="From card/forex statement"
-              className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper"
+              className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper shadow-2xs"
             />
             <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
             <TextInput
               value={withdrawalDate}
               onChangeText={setWithdrawalDate}
-              className="font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper"
+              className="font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper shadow-2xs"
             />
             <View className="mb-3">
               <PickerField label="Withdrawn By" value={withdrawalPayer} options={dbMembers} onChange={setWithdrawalPayer} />
@@ -284,7 +284,7 @@ export default function TripSettings({
                 value={categoryDraft}
                 onChangeText={setCategoryDraft}
                 placeholder="Add travel category"
-                className="flex-1 font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2 bg-paper"
+                className="flex-1 font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2 bg-paper shadow-2xs"
               />
               <Pressable onPress={handleAddCategory} className="px-3.5 rounded-lg border border-ink/15 items-center justify-center">
                 <Text className="font-body-semibold text-xs text-ink">Add</Text>
@@ -312,7 +312,7 @@ export default function TripSettings({
                   onChangeText={setNewBudgetAmount}
                   keyboardType="decimal-pad"
                   placeholder="₹ limit"
-                  className="w-24 font-mono text-sm text-ink border border-ink/15 rounded-lg px-2 py-2 bg-paper"
+                  className="w-24 font-mono text-sm text-ink border border-ink/15 rounded-lg px-2 py-2 bg-paper shadow-2xs"
                 />
                 <Pressable
                   onPress={() => {
@@ -362,7 +362,7 @@ export default function TripSettings({
                 value={paymentMethodDraft}
                 onChangeText={setPaymentMethodDraft}
                 placeholder="e.g. Yash Forex, Kruti Diners"
-                className="flex-1 font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2 bg-paper"
+                className="flex-1 font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2 bg-paper shadow-2xs"
               />
               <Pressable onPress={handleAddPaymentMethod} className="px-3.5 rounded-lg border border-ink/15 items-center justify-center">
                 <Text className="font-body-semibold text-xs text-ink">Add</Text>
@@ -390,7 +390,7 @@ export default function TripSettings({
                 value={guestDraft}
                 onChangeText={setGuestDraft}
                 placeholder="e.g. Priya"
-                className="flex-1 font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2 bg-paper"
+                className="flex-1 font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2 bg-paper shadow-2xs"
               />
               <Pressable onPress={handleAddGuest} className="px-3.5 rounded-lg border border-ink/15 items-center justify-center">
                 <Text className="font-body-semibold text-xs text-ink">Add Guest</Text>

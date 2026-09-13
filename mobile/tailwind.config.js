@@ -9,6 +9,17 @@ module.exports = {
   darkMode: 'class',
   theme: {
     extend: {
+      fontSize: {
+        '2xs': ['10px', { lineHeight: '14px' }],
+      },
+      // Tailwind v3 (what mobile runs, via nativewind/preset) has no
+      // shadow-2xs/shadow-xs sizes - those are v4-only. Web is on v4 and
+      // uses shadow-2xs on nearly every form input/button; these match its
+      // default values so the two stay in sync.
+      boxShadow: {
+        '2xs': '0 1px rgb(0 0 0 / 0.05)',
+        xs: '0 1px 2px 0 rgb(0 0 0 / 0.05)',
+      },
       colors: {
         ink: '#24304A',
         paper: '#F2ECDD',

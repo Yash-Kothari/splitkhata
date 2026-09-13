@@ -91,14 +91,14 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
         <Text className={label}>Amount (₹)</Text>
         <TextInput value={draftAmount} onChangeText={setDraftAmount} keyboardType="decimal-pad" className={`${input} font-bold`} />
         <Text className={label}>Date</Text>
-        <TextInput value={draftDate} onChangeText={setDraftDate} className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper" />
+        <TextInput value={draftDate} onChangeText={setDraftDate} className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs" />
         <Text className={label}>Description (optional)</Text>
-        <TextInput value={draftDescription} onChangeText={setDraftDescription} className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper" />
+        <TextInput value={draftDescription} onChangeText={setDraftDescription} className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs" />
 
         <CardStrategyFields card={card} draft={draft} onChange={updateDraft} />
 
         <Text className={label}>Calculated Reward</Text>
-        <View className="rounded-xl px-3 py-2.5 mb-3 bg-paper border border-ink/15">
+        <View className="rounded-xl px-3 py-2.5 mb-3 bg-paper border border-ink/15 shadow-2xs">
           <Text className="font-mono text-base text-muted-text">
             {editCalculatedReward != null ? formatReward(editCalculatedReward, editRewardUnit) : '-'}
           </Text>

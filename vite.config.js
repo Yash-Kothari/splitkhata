@@ -38,6 +38,13 @@ export default defineConfig({
         // effectively immutable and otherwise silently fall back to system
         // fonts offline.
         navigateFallback: 'index.html',
+        // The mobile (React Native Web) build deploys to /staging/ under this
+        // same origin, as its own separate app with its own index.html. This
+        // SW's scope is the whole origin, so without this denylist entry its
+        // navigateFallback swallows navigation into /staging/ too and serves
+        // this app's cached shell there instead of letting the request reach
+        // the actual staging build.
+        navigateFallbackDenylist: [/\/staging\//],
         cleanupOutdatedCaches: true,
         runtimeCaching: [
           {

@@ -91,7 +91,7 @@ export default function TripPicker({
         value={name}
         onChangeText={setName}
         placeholder="e.g. Japan 2026"
-        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
       />
       <View className="mb-3">
         <PickerField label="Currency" value={currency} options={currencies} onChange={setCurrency} />
@@ -101,21 +101,21 @@ export default function TripPicker({
         value={year}
         onChangeText={setYear}
         keyboardType="number-pad"
-        className="font-mono text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+        className="font-mono text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
       />
       <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Start Date (optional)</Text>
       <TextInput
         value={startDate}
         onChangeText={setStartDate}
         placeholder="2026-08-24"
-        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
       />
       <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">End Date (optional)</Text>
       <TextInput
         value={endDate}
         onChangeText={setEndDate}
         placeholder="2026-09-02"
-        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
       />
       <Pressable
         onPress={handleCreate}
@@ -172,7 +172,7 @@ export default function TripPicker({
         value={searchTerm}
         onChangeText={setSearchTerm}
         placeholder="Search trips..."
-        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mt-3 mb-1 bg-paper"
+        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mt-3 mb-1 bg-paper shadow-2xs"
       />
 
       <View className="mt-2">

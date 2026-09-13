@@ -98,7 +98,7 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, onSaveError }
                 onChangeText={setBillDraft}
                 keyboardType="decimal-pad"
                 placeholder="Actual ₹"
-                className="w-20 font-body text-xs text-ink border border-ink/15 rounded-lg px-2 py-1.5 bg-paper"
+                className="w-20 font-body text-xs text-ink border border-ink/15 rounded-lg px-2 py-1.5 bg-paper shadow-2xs"
               />
               <Pressable onPress={confirmBill} disabled={saving || !billDraft} className="px-2.5 py-1.5 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50">
                 {saving ? <ActivityIndicator color="white" size="small" /> : <Text className="font-body-semibold text-2xs text-white">Confirm</Text>}
@@ -121,7 +121,7 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, onSaveError }
                 onChangeText={setPointsDraft}
                 keyboardType="decimal-pad"
                 placeholder="Actual"
-                className="w-20 font-body text-xs text-ink border border-ink/15 rounded-lg px-2 py-1.5 bg-paper"
+                className="w-20 font-body text-xs text-ink border border-ink/15 rounded-lg px-2 py-1.5 bg-paper shadow-2xs"
               />
               <Pressable onPress={confirmPoints} disabled={saving || !pointsDraft} className="px-2.5 py-1.5 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50">
                 {saving ? <ActivityIndicator color="white" size="small" /> : <Text className="font-body-semibold text-2xs text-white">Confirm</Text>}

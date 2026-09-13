@@ -12,6 +12,9 @@
   --font-display: "Fraunces", serif;
   --font-body: "Inter", sans-serif;
   --font-mono: "IBM Plex Mono", monospace;
+
+  --text-2xs: 0.625rem;
+  --text-2xs--line-height: 0.875rem;
 }
 
 *,

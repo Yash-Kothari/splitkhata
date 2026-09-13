@@ -8,6 +8,7 @@ import {
   subscribeToPaymentReminderConfig,
 } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
+import { useJump } from '../../lib/JumpContext';
 import { DEFAULT_PERSONS, DEFAULT_CATEGORIES, todayISO, getMonthKey, getAvailableMonths } from '../../lib/utils';
 import AddEntryForm from '../../components/AddEntryForm';
 import EntryList from '../../components/EntryList';
@@ -19,6 +20,7 @@ import CategoryChart from '../../components/CategoryChart';
 
 export default function Household() {
   const { user } = useAuth();
+  const { pendingJump, setPendingJump } = useJump();
   const [entries, setEntries] = useState(null);
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   const [members, setMembers] = useState(DEFAULT_PERSONS);
@@ -48,6 +50,13 @@ export default function Household() {
 
   const availableMonths = useMemo(() => getAvailableMonths(entries || []), [entries]);
 
+  useEffect(() => {
+    if (pendingJump?.ledger === 'household') {
+      setSelectedMonth(pendingJump.monthKey || getMonthKey(todayISO()));
+      setPendingJump(null);
+    }
+  }, [pendingJump, setPendingJump]);
+
   return (
     <View className="flex-1 bg-paper">
       <AppHeader badge="🏠 Household Ledger" />
@@ -75,6 +84,9 @@ export default function Household() {
           title="Passbook Entries"
           emptyMessage="No entries recorded yet. Add your first expense above!"
           entries={entries}
+          selectedMonth={selectedMonth}
+          onMonthChange={setSelectedMonth}
+          availableMonths={availableMonths}
           ledger="household"
           categories={categories}
           members={members}

@@ -53,7 +53,7 @@ export default function PickerField({ label, value, options, onChange, labelExtr
       <Pressable
         ref={rowRef}
         onPress={handleOpen}
-        className="flex-row items-center justify-between border border-ink/15 rounded-xl px-3 py-2.5 bg-paper"
+        className="flex-row items-center justify-between border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
       >
         <Text className="font-body-medium text-sm text-ink">{selected ? selected.label : value}</Text>
         <Text className="text-muted-text text-xs">▾</Text>

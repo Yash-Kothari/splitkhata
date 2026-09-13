@@ -151,7 +151,7 @@ export default function MonthChart({ entries, ledger }) {
           </View>
 
           {selectedDatum && (
-            <View className="mt-2 rounded-xl bg-paper-card border border-ink/15 px-3.5 py-2.5 self-start">
+            <View className="mt-2 rounded-xl bg-paper-card border border-ink/15 px-3.5 py-2.5 self-start shadow-2xs">
               <Text className="font-body-semibold text-sm text-ink mb-1">{selectedDatum.label}</Text>
               <Text className="font-body-medium text-xs text-muted-text">
                 Total Spend: <Text className="font-mono-bold text-sm text-ink">{formatCurrency(selectedDatum.total)}</Text>

@@ -233,7 +233,7 @@ export default function AddEntryForm({
                 onChangeText={setLocalAmount}
                 keyboardType="decimal-pad"
                 placeholder="Optional"
-                className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+                className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
               />
 
               <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
@@ -244,7 +244,7 @@ export default function AddEntryForm({
                 onChangeText={setRewardPoints}
                 keyboardType="numbers-and-punctuation"
                 placeholder="Optional"
-                className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+                className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
               />
             </>
           )}
@@ -299,7 +299,7 @@ export default function AddEntryForm({
             value={date}
             onChangeText={setDate}
             placeholder="2026-08-24"
-            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
           />
 
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
@@ -307,7 +307,7 @@ export default function AddEntryForm({
             value={note}
             onChangeText={setNote}
             placeholder="What was this for?"
-            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
           />
 
           {!isTravel && (
@@ -333,7 +333,7 @@ export default function AddEntryForm({
                     value={monthsCount}
                     onChangeText={setMonthsCount}
                     keyboardType="number-pad"
-                    className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2 bg-paper"
+                    className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2 bg-paper shadow-2xs"
                   />
                   {amount && parseFloat(amount) > 0 && (
                     <Text className="font-body text-2xs text-muted-text mt-1">

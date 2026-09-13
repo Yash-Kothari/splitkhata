@@ -128,7 +128,7 @@ const TABS = [
 
 function Tag({ label, onRemove, removable = true }) {
   return (
-    <View className="flex-row items-center gap-1.5 rounded-xl border border-ink/15 bg-paper px-3 py-1.5 mr-1.5 mb-1.5">
+    <View className="flex-row items-center gap-1.5 rounded-xl border border-ink/15 bg-paper px-3 py-1.5 mr-1.5 mb-1.5 shadow-2xs">
       <Text className="font-body-medium text-xs text-ink">{label}</Text>
       {removable && (
         <Pressable onPress={onRemove} hitSlop={6}>
@@ -680,7 +680,7 @@ export default function SettingsModal({ visible, onClose }) {
                           if (amount > 0) persistBudgets({ ...budgetDrafts, [s.category]: amount });
                         }}
                         keyboardType="decimal-pad"
-                        className="w-20 font-mono text-sm text-ink border border-ink/15 rounded-lg px-2 py-1.5 bg-paper text-right"
+                        className="w-24 min-h-8 font-body text-sm text-ink border border-ink/15 rounded-lg px-2 py-1 bg-paper text-right"
                       />
                       <Pressable onPress={() => handleRemoveBudget(s.category)}>
                         <Text className="font-body-semibold text-xs text-muted-text">✕</Text>
@@ -766,7 +766,7 @@ export default function SettingsModal({ visible, onClose }) {
                 A nudge when the household balance owed crosses an amount you set.
               </Text>
 
-              <View className="flex-row items-center justify-between rounded-xl border border-ink/10 bg-paper-card px-3.5 py-3 mb-3">
+              <View className="flex-row items-center justify-between rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3 mb-3">
                 <Text className="font-body-medium text-sm text-ink flex-1 mr-2">Remind us about unsettled balances</Text>
                 <Switch value={reminderDraft.enabled} onValueChange={handleReminderToggle} trackColor={{ true: '#3D7068' }} />
               </View>
@@ -779,7 +779,7 @@ export default function SettingsModal({ visible, onClose }) {
                   onBlur={handleReminderThresholdBlur}
                   editable={reminderDraft.enabled}
                   keyboardType="decimal-pad"
-                  className={`w-24 font-mono text-sm text-ink border border-ink/15 rounded-lg px-2 py-2 bg-paper text-center ${!reminderDraft.enabled ? 'opacity-50' : ''}`}
+                  className={`w-24 min-h-10 font-body text-sm text-ink border border-ink/15 rounded-xl px-3 bg-paper text-center ${!reminderDraft.enabled ? 'opacity-50' : ''}`}
                 />
               </View>
               {reminderMessage ? <Text className="font-body text-xs text-muted-text mt-2">{reminderMessage}</Text> : null}
@@ -1038,7 +1038,7 @@ export default function SettingsModal({ visible, onClose }) {
               <Text className="font-body text-xs text-muted-text mb-3">Currencies stored here are synchronized in real-time across devices.</Text>
               <View className="flex-row gap-2 mb-3">
                 <TextInput value={newCurrencyName} onChangeText={setNewCurrencyName} placeholder="e.g. USD" className={`${input} flex-1 mb-0`} autoCapitalize="characters" />
-                <Pressable onPress={handleAddCurrency} disabled={addingCurr || !newCurrencyName.trim()} className="px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                <Pressable onPress={handleAddCurrency} disabled={addingCurr || !newCurrencyName.trim()} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
                   <Text className="font-body-semibold text-white text-sm">{addingCurr ? 'Saving...' : 'Add'}</Text>
                 </Pressable>
               </View>
@@ -1056,7 +1056,7 @@ export default function SettingsModal({ visible, onClose }) {
               <Text className="font-body text-xs text-muted-text mb-3">Members stored here are synchronized in real-time across devices.</Text>
               <View className="flex-row gap-2 mb-3">
                 <TextInput value={newMemberName} onChangeText={setNewMemberName} placeholder="e.g. Priya" className={`${input} flex-1 mb-0`} />
-                <Pressable onPress={handleAddMember} disabled={addingMember || !newMemberName.trim()} className="px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                <Pressable onPress={handleAddMember} disabled={addingMember || !newMemberName.trim()} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
                   <Text className="font-body-semibold text-white text-sm">{addingMember ? 'Saving...' : 'Add'}</Text>
                 </Pressable>
               </View>
@@ -1070,7 +1070,7 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'database' && (
             <View>
-              <View className="p-4 rounded-xl border border-ink/15 bg-paper-card">
+              <View className="p-4 rounded-xl border border-ink/15 bg-paper">
                 <View className="flex-row items-center justify-between gap-2 mb-2">
                   <Text className="font-body-semibold text-sm text-ink">Database Engine Status</Text>
                   <View className={`px-2.5 py-0.5 rounded-full border ${hasFirebase ? 'bg-ledger-green/15 border-ledger-green/30' : 'bg-mustard/20 border-mustard/40'}`}>
@@ -1090,7 +1090,7 @@ export default function SettingsModal({ visible, onClose }) {
             <View>
               <Text className="font-body-semibold text-sm text-ink mb-0.5">App Passcode & Security PIN</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
-                Set a 4-digit security PIN. (Setting a PIN here syncs it - the app-launch lock screen itself isn't built into mobile yet.)
+                Set a 4-digit security PIN to restrict access to your expense entries on this device.
               </Text>
               {pinMessage ? (
                 <View className="p-3 rounded-xl bg-ledger-green/10 border border-ledger-green/30 mb-3">
@@ -1098,7 +1098,7 @@ export default function SettingsModal({ visible, onClose }) {
                 </View>
               ) : null}
 
-              <View className="p-4 rounded-xl border border-ink/15 bg-paper-card">
+              <View className="p-4 rounded-xl border border-ink/15 bg-paper">
                 <View className="flex-row items-center justify-between gap-3 mb-4">
                   <View className="flex-1">
                     <Text className="font-body-semibold text-sm text-ink">Require PIN Protection</Text>
@@ -1117,9 +1117,9 @@ export default function SettingsModal({ visible, onClose }) {
                       keyboardType="number-pad"
                       secureTextEntry
                       maxLength={4}
-                      className="flex-1 font-mono text-base text-ink border border-ink/15 rounded-xl px-3.5 py-2.5 bg-paper tracking-widest"
+                      className="flex-1 font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3.5 py-2.5 bg-paper tracking-widest"
                     />
-                    <Pressable onPress={() => handleSavePinConfig()} disabled={newPin.length !== 4} className="px-5 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                    <Pressable onPress={() => handleSavePinConfig()} disabled={newPin.length !== 4} className="min-h-11 px-5 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
                       <Text className="font-body-semibold text-white text-sm">Save PIN</Text>
                     </Pressable>
                   </View>

@@ -119,14 +119,14 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
             value={amount}
             onChangeText={setAmount}
             keyboardType="number-pad"
-            className="font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+            className="font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
           />
 
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
           <TextInput
             value={date}
             onChangeText={setDate}
-            className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+            className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
           />
 
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
@@ -134,7 +134,7 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
             value={note}
             onChangeText={setNote}
             placeholder="e.g. Transferred miles"
-            className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+            className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
           />
 
           {parsedAmount > 0 && previewBalance && (

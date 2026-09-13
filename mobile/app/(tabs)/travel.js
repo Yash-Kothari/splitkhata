@@ -10,6 +10,7 @@ import {
   subscribeToCurrencies,
 } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
+import { useJump } from '../../lib/JumpContext';
 import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger } from '../../lib/utils';
 import AppHeader from '../../components/AppHeader';
 import TripPicker from '../../components/TripPicker';
@@ -22,6 +23,7 @@ import CategoryChart from '../../components/CategoryChart';
 
 export default function Travel() {
   const { user } = useAuth();
+  const { pendingJump, setPendingJump } = useJump();
   const [allTravelEntries, setAllTravelEntries] = useState(null);
   const [trips, setTrips] = useState([]);
   const [cashMovements, setCashMovements] = useState([]);
@@ -85,6 +87,13 @@ export default function Travel() {
         creditor: selectedTripObj.rolledUpCreditor,
       }
     : null;
+
+  useEffect(() => {
+    if (pendingJump?.ledger === 'travel') {
+      if (pendingJump.tripName) setSelectedTrip(pendingJump.tripName);
+      setPendingJump(null);
+    }
+  }, [pendingJump, setPendingJump]);
 
   return (
     <View className="flex-1 bg-paper">
