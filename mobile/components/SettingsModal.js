@@ -139,7 +139,7 @@ function Tag({ label, onRemove, removable = true }) {
   );
 }
 
-const label = 'font-body text-2xs uppercase tracking-wider text-muted-text mb-1';
+const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
 const sectionLabel = 'font-body-semibold text-2xs uppercase tracking-wider text-ledger-green mb-1';
 const input = 'font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper';
 
@@ -565,11 +565,11 @@ export default function SettingsModal({ visible, onClose }) {
         >
         <View className="flex-row items-center justify-between px-4 py-3.5 border-b border-ink/10 bg-paper/60">
           <View className="flex-row items-center gap-2 flex-1">
-            <Text className="font-display text-lg text-ink" numberOfLines={1}>
+            <Text className="font-display text-base text-ink" numberOfLines={1}>
               Settings & Configuration
             </Text>
             <View className="px-2 py-0.5 rounded-full bg-ledger-green/15">
-              <Text className="font-body-semibold text-2xs text-ledger-green">Sync Active</Text>
+              <Text className="font-body-semibold text-[10px] text-ledger-green">Sync Active</Text>
             </View>
           </View>
           <Pressable onPress={onClose} className="w-8 h-8 rounded-full border border-ink/15 bg-paper items-center justify-center">
@@ -594,7 +594,7 @@ export default function SettingsModal({ visible, onClose }) {
         <ScrollView className="flex-1" contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
           {activeTab === 'categories' && (
             <View>
-              <Text className="font-display text-base text-ink mb-0.5">Manage Categories Database</Text>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Categories Database</Text>
               <Text className="font-body text-xs text-muted-text mb-3">Categories stored here are synchronized in real-time across devices.</Text>
 
               <View className="flex-row gap-2 mb-3">
@@ -619,7 +619,7 @@ export default function SettingsModal({ visible, onClose }) {
                   placeholder={`New ${categoryLedger} category name...`}
                   className={`${input} flex-1 mb-0`}
                 />
-                <Pressable onPress={handleAddCategory} disabled={addingCat || !newCatName.trim()} className="px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                <Pressable onPress={handleAddCategory} disabled={addingCat || !newCatName.trim()} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
                   <Text className="font-body-semibold text-white text-sm">{addingCat ? 'Saving...' : 'Add'}</Text>
                 </Pressable>
               </View>
@@ -635,7 +635,7 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'budgets' && (
             <View>
-              <Text className="font-display text-base text-ink mb-0.5">Household Category Budgets</Text>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Household Category Budgets</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
                 Pick a category and set a monthly limit - it applies every month, not just this one. Warns at 80% of the limit, alerts once it's exceeded.
               </Text>
@@ -708,7 +708,7 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'recurring' && (
             <View>
-              <Text className="font-display text-base text-ink mb-0.5">Recurring Household Expenses</Text>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Recurring Household Expenses</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
                 Rent, subscriptions, utilities - bills that repeat every month. Each rule auto-creates this month's entry the next time the app is opened.
               </Text>
@@ -761,7 +761,7 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'reminders' && (
             <View>
-              <Text className="font-display text-base text-ink mb-0.5">Payment Reminders</Text>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Payment Reminders</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
                 A nudge when the household balance owed crosses an amount you set.
               </Text>
@@ -788,7 +788,7 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'cards' && (
             <View>
-              <Text className="font-display text-base text-ink mb-0.5">Credit Cards</Text>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Credit Cards</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
                 Every reward rule below was cross-checked against each bank's current terms - tune the numbers here if a card's real terms change.
               </Text>
@@ -1034,7 +1034,7 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'currencies' && (
             <View>
-              <Text className="font-display text-base text-ink mb-0.5">Manage Currencies</Text>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Currencies</Text>
               <Text className="font-body text-xs text-muted-text mb-3">Currencies stored here are synchronized in real-time across devices.</Text>
               <View className="flex-row gap-2 mb-3">
                 <TextInput value={newCurrencyName} onChangeText={setNewCurrencyName} placeholder="e.g. USD" className={`${input} flex-1 mb-0`} autoCapitalize="characters" />
@@ -1052,7 +1052,7 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'members' && (
             <View>
-              <Text className="font-display text-base text-ink mb-0.5">Manage Members</Text>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Members</Text>
               <Text className="font-body text-xs text-muted-text mb-3">Members stored here are synchronized in real-time across devices.</Text>
               <View className="flex-row gap-2 mb-3">
                 <TextInput value={newMemberName} onChangeText={setNewMemberName} placeholder="e.g. Priya" className={`${input} flex-1 mb-0`} />
@@ -1088,7 +1088,7 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'security' && (
             <View>
-              <Text className="font-display text-base text-ink mb-0.5">App Passcode & Security PIN</Text>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">App Passcode & Security PIN</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
                 Set a 4-digit security PIN. (Setting a PIN here syncs it - the app-launch lock screen itself isn't built into mobile yet.)
               </Text>

@@ -86,7 +86,7 @@ export default function TripPicker({
 
   const addTripForm = (
     <View className={trips.length === 0 ? '' : 'mt-3 pt-3 border-t border-ink/10'}>
-      <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Trip Name</Text>
+      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Trip Name</Text>
       <TextInput
         value={name}
         onChangeText={setName}
@@ -96,21 +96,21 @@ export default function TripPicker({
       <View className="mb-3">
         <PickerField label="Currency" value={currency} options={currencies} onChange={setCurrency} />
       </View>
-      <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Year</Text>
+      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Year</Text>
       <TextInput
         value={year}
         onChangeText={setYear}
         keyboardType="number-pad"
         className="font-mono text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
       />
-      <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Start Date (optional)</Text>
+      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Start Date (optional)</Text>
       <TextInput
         value={startDate}
         onChangeText={setStartDate}
         placeholder="2026-08-24"
         className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
       />
-      <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">End Date (optional)</Text>
+      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">End Date (optional)</Text>
       <TextInput
         value={endDate}
         onChangeText={setEndDate}
@@ -129,7 +129,7 @@ export default function TripPicker({
 
   if (trips.length === 0) {
     return (
-      <Card className="p-4 mb-4">
+      <Card className="px-5 py-4 mb-4">
         <Text className="font-display text-lg text-ink mb-1">Create Your First Trip</Text>
         <Text className="font-body text-sm text-muted-text mb-3">
           Give it a name, pick a currency, and start tracking travel spend separately from the household.
@@ -140,7 +140,7 @@ export default function TripPicker({
   }
 
   return (
-    <Card className="p-4 mb-4">
+    <Card className="px-5 py-4 mb-4">
       <View className="flex-row items-center justify-between">
         <Text className="font-display text-lg text-ink">Trips</Text>
         <Pressable onPress={() => setAddingTrip((v) => !v)} className="px-2.5 py-1 rounded-md bg-paper border border-ink/10">
@@ -150,15 +150,18 @@ export default function TripPicker({
 
       {addingTrip && addTripForm}
 
-      {activeTrip && activeTrip.name !== selectedTrip && (
-        <View className="mt-3 rounded-xl border border-ledger-green/20 bg-ledger-green/10 px-3.5 py-3 flex-row items-center justify-between">
-          <Text className="font-body text-xs text-ink flex-1 mr-2">✈️ You're currently on {activeTrip.name}</Text>
+      {!searchTerm.trim() && activeTrip && activeTrip.name !== selectedTrip && (
+        <View className="mt-3 rounded-lg border border-ledger-green/40 bg-ledger-green/10 px-3.5 py-2.5 flex-row items-center justify-between gap-2">
+          <View>
+            <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-ledger-green">🧳 Currently Traveling</Text>
+            <Text className="font-body-semibold text-sm text-ink mt-0.5">{activeTrip.name}</Text>
+          </View>
           <Pressable
             onPress={() => {
               onTripSelect?.(activeTrip.name);
               onCurrencyChange?.(activeTrip.currency);
             }}
-            className="px-3 py-1.5 rounded-lg bg-ledger-green"
+            className="min-h-9 px-3 rounded-lg bg-ledger-green items-center justify-center shrink-0"
           >
             <Text className="font-body-semibold text-xs text-white">View</Text>
           </Pressable>
@@ -201,19 +204,19 @@ export default function TripPicker({
       {selectedTripObj && (
         <View className="mt-3 pt-3 border-t border-ink/10">
           <View className="flex-row gap-2 mb-3">
-            <View className="flex-1 rounded-lg bg-paper border border-ink/10 px-3 py-2.5">
-              <Text className="font-body text-2xs text-muted-text">Trip</Text>
-              <Text className="font-body-semibold text-sm text-ink" numberOfLines={1}>
+            <View className="flex-1 rounded-lg bg-paper-card border border-ink/10 px-3.5 py-2.5">
+              <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-muted-text">Trip</Text>
+              <Text className="font-body-semibold text-sm text-ink mt-0.5" numberOfLines={1}>
                 {selectedTripObj.name}
               </Text>
             </View>
-            <View className="flex-1 rounded-lg bg-paper border border-ink/10 px-3 py-2.5">
-              <Text className="font-body text-2xs text-muted-text">Currency</Text>
-              <Text className="font-body-semibold text-sm text-ink">{selectedTripObj.currency}</Text>
+            <View className="flex-1 rounded-lg bg-paper-card border border-ink/10 px-3.5 py-2.5">
+              <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-muted-text">Currency</Text>
+              <Text className="font-body-semibold text-sm text-ink mt-0.5">{selectedTripObj.currency}</Text>
             </View>
-            <View className="flex-1 rounded-lg bg-paper border border-ink/10 px-3 py-2.5">
-              <Text className="font-body text-2xs text-muted-text">Cash in Hand</Text>
-              <Text className="font-mono text-sm text-ink">
+            <View className="flex-1 rounded-lg bg-paper-card border border-ink/10 px-3.5 py-2.5">
+              <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-muted-text">Cash in Hand</Text>
+              <Text className="font-mono-bold text-sm text-ink mt-0.5">
                 {(cashStats ?? 0).toLocaleString('en-IN')} {selectedTripObj.currency}
               </Text>
             </View>

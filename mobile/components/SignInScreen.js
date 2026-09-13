@@ -3,7 +3,17 @@ import { View, Text, Pressable, ActivityIndicator } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import { signInWithGoogleIdToken } from '../lib/firebase';
-import { cardShadow } from './Card';
+
+// Matches web's shadow-xl on this specific card (GoogleSignIn in App.jsx) -
+// a taller, softer shadow than .panel-card's own box-shadow, which is what
+// Card.js's cardShadow is tuned for instead.
+const signInCardShadow = {
+  shadowColor: '#000000',
+  shadowOffset: { width: 0, height: 20 },
+  shadowOpacity: 0.1,
+  shadowRadius: 25,
+  elevation: 12,
+};
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -52,7 +62,7 @@ export default function SignInScreen() {
   return (
     <View className="flex-1 items-center justify-center bg-paper px-6">
       <View
-        style={cardShadow}
+        style={signInCardShadow}
         className="w-full max-w-sm rounded-2xl border border-ink/15 bg-paper-card px-6 py-8 items-center"
       >
         <Text className="font-display text-3xl text-ink mb-2">Splitkhata</Text>
@@ -69,7 +79,7 @@ export default function SignInScreen() {
           <Pressable
             disabled={!request || signingIn}
             onPress={() => promptAsync()}
-            className="w-full min-h-11 rounded-xl bg-ledger-green items-center justify-center px-4 disabled:opacity-50"
+            className="w-full min-h-12 rounded-xl bg-ledger-green items-center justify-center px-4 disabled:opacity-50"
           >
             {signingIn ? (
               <ActivityIndicator color="white" />
@@ -79,7 +89,7 @@ export default function SignInScreen() {
           </Pressable>
         )}
 
-        {error ? <Text className="font-body text-xs text-stamp-red text-center mt-3">{error}</Text> : null}
+        {error ? <Text className="font-body text-sm text-red-700 text-center mt-3">{error}</Text> : null}
       </View>
     </View>
   );

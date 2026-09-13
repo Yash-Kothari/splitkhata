@@ -47,7 +47,7 @@ export default function PickerField({ label, value, options, onChange, labelExtr
   return (
     <View>
       <View className="flex-row items-center justify-between mb-1">
-        <Text className="font-body text-2xs uppercase tracking-wider text-muted-text">{label}</Text>
+        <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text">{label}</Text>
         {labelExtra}
       </View>
       <Pressable

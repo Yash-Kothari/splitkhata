@@ -5,7 +5,7 @@ import CardStrategyFields from './CardStrategyFields';
 import { addCardTransaction } from '../lib/firebase';
 import { todayISO, CARD_REWARD_STRATEGIES, previewTransactionReward, formatCurrency } from '../lib/utils';
 
-const label = 'font-body text-2xs uppercase tracking-wider text-muted-text mb-1';
+const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
 const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper';
 
 function formatReward(amount, unit) {

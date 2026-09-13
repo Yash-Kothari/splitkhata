@@ -137,7 +137,7 @@ export default function EditEntryRow({
           <Text className="font-body-semibold text-ledger-green">{entry.owedBy}</Text>
         </Text>
 
-        <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Amount</Text>
+        <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Amount</Text>
         <TextInput
           value={amount}
           onChangeText={setAmount}
@@ -145,14 +145,14 @@ export default function EditEntryRow({
           className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
         />
 
-        <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
+        <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
         <TextInput
           value={date}
           onChangeText={setDate}
           className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
         />
 
-        <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
+        <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
         <TextInput
           value={note}
           onChangeText={setNote}
@@ -177,7 +177,7 @@ export default function EditEntryRow({
 
   return (
     <View style={cardShadow} className="mx-4 mb-4 p-4 rounded-2xl bg-paper-card border border-ledger-green/40">
-      <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">
+      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
         Amount (₹){isTravel ? ' - real cost' : ''}
       </Text>
       <TextInput
@@ -195,7 +195,7 @@ export default function EditEntryRow({
 
       {isTravel && (
         <>
-          <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
             Local Amount ({currentCurrency})
           </Text>
           <TextInput
@@ -205,7 +205,7 @@ export default function EditEntryRow({
             className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
           />
 
-          <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Reward Points</Text>
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Reward Points</Text>
           <TextInput
             value={rewardPoints}
             onChangeText={setRewardPoints}
@@ -246,7 +246,7 @@ export default function EditEntryRow({
 
       {splitType === 'shared' && members.length > 2 && (
         <View className="mb-3">
-          <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Split Among</Text>
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Split Among</Text>
           <View className="flex-row flex-wrap">
             {members.map((m) => (
               <Chip key={m} label={m} selected={splitAmong.includes(m)} onPress={() => toggleSplitAmong(m)} />
@@ -255,7 +255,7 @@ export default function EditEntryRow({
         </View>
       )}
 
-      <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Date (YYYY-MM-DD)</Text>
+      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date (YYYY-MM-DD)</Text>
       <TextInput
         value={date}
         onChangeText={setDate}
@@ -276,7 +276,7 @@ export default function EditEntryRow({
         </Pressable>
       )}
 
-      <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
+      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
       <TextInput
         value={note}
         onChangeText={setNote}

@@ -4,7 +4,7 @@ import CardStrategyFields from './CardStrategyFields';
 import { updateCardTransaction } from '../lib/firebase';
 import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward } from '../lib/utils';
 
-const label = 'font-body text-2xs uppercase tracking-wider text-muted-text mb-1';
+const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
 const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper';
 
 function formatReward(amount, unit) {
@@ -131,7 +131,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
       <View className="flex-1 min-w-0">
         <View className="flex-row items-baseline justify-between gap-2">
           <View className="flex-row items-baseline flex-wrap gap-1.5 flex-1">
-            <Text className="font-mono text-base text-ink">{formatCurrency(txn.amount)}</Text>
+            <Text className="font-mono-bold text-base text-ink">{formatCurrency(txn.amount)}</Text>
             {perTxn && perTxn.overridden && (
               <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
                 💳 {formatReward(perTxn.earned, cycleReward.unit)} (edited)

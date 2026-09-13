@@ -77,7 +77,7 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
   }
 
   return (
-    <Card className="p-4 mb-4">
+    <Card className="px-5 py-4 mb-4">
       <Text className="font-display text-lg text-ink mb-1">Reward Points Owed</Text>
       {pointsBalance.status === 'settled' ? (
         <Text className="font-body-semibold text-sm text-ledger-green">All settled up across every trip</Text>
@@ -87,7 +87,7 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
           <Text> owes </Text>
           <Text className="font-body-semibold text-ledger-green">{pointsBalance.creditor}</Text>
           <Text> </Text>
-          <Text className="font-mono text-lg text-ink">{Math.round(pointsBalance.amount).toLocaleString('en-IN')} pts</Text>
+          <Text className="font-mono-bold text-lg text-ink">{Math.round(pointsBalance.amount).toLocaleString('en-IN')} pts</Text>
         </Text>
       )}
       <Text className="font-body text-xs text-muted-text mt-1">Combined across every trip's reward points, not just one.</Text>
@@ -114,22 +114,22 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
             <Text className="font-body text-xs text-stamp-red mb-3">"Paid by" and "Paid to" can't be the same person.</Text>
           )}
 
-          <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Points</Text>
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Points</Text>
           <TextInput
             value={amount}
             onChangeText={setAmount}
             keyboardType="number-pad"
-            className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+            className="font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
           />
 
-          <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
           <TextInput
             value={date}
             onChangeText={setDate}
             className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
           />
 
-          <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
           <TextInput
             value={note}
             onChangeText={setNote}

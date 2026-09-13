@@ -161,7 +161,7 @@ export default function Cards() {
             </Text>
             <View className="px-2 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10">
               <Text className="font-body-semibold text-2xs text-ledger-green" numberOfLines={1}>
-                💳 Credit Cards
+                💳 Cards
               </Text>
             </View>
             <View className="flex-1" />
@@ -198,7 +198,7 @@ export default function Cards() {
           </Text>
           <View className="px-2 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10">
             <Text className="font-body-semibold text-2xs text-ledger-green" numberOfLines={1}>
-              💳 Credit Cards
+              💳 Cards
             </Text>
           </View>
           <View className="flex-1" />
@@ -247,18 +247,18 @@ export default function Cards() {
                   <Text className="font-body-semibold text-2xs text-ledger-green uppercase tracking-wider">
                     Total reward points in account
                   </Text>
-                  <Text className="font-mono text-ledger-green text-2xl">
+                  <Text className="font-mono-bold text-ledger-green text-2xl">
                     {formatReward(lifetimeRewardTotal, currentCycleReward.unit)}
                   </Text>
                 </View>
                 <View className="flex-row gap-3">
                   <View className="flex-1">
                     <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Spent so far</Text>
-                    <Text className="font-mono text-ink text-lg">{formatCurrency(currentCycleSpend)}</Text>
+                    <Text className="font-mono-bold text-ink text-lg">{formatCurrency(currentCycleSpend)}</Text>
                   </View>
                   <View className="flex-1">
                     <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Estimated reward</Text>
-                    <Text className="font-mono text-ink text-lg">
+                    <Text className="font-mono-bold text-ink text-lg">
                       {formatReward(currentCycleReward.totalReward, currentCycleReward.unit)}
                     </Text>
                   </View>

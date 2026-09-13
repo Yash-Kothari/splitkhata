@@ -81,7 +81,7 @@ export default function MonthChart({ entries, ledger }) {
       {latestMonth && latestMonth.total > 0 && (
         <View className="flex-row items-center gap-2 bg-paper px-3 py-1.5 rounded-xl border border-ink/10 self-start mb-3 mt-2">
           <Text className="font-body-medium text-xs text-muted-text">{latestMonth.label}:</Text>
-          <Text className="font-mono text-xs text-ink">{formatCurrency(latestMonth.total)}</Text>
+          <Text className="font-mono-bold text-xs text-ink">{formatCurrency(latestMonth.total)}</Text>
           {latestMonth.prevTotal > 0 && (
             <View
               className={`px-1.5 py-0.5 rounded ${
@@ -154,7 +154,7 @@ export default function MonthChart({ entries, ledger }) {
             <View className="mt-2 rounded-xl bg-paper-card border border-ink/15 px-3.5 py-2.5 self-start">
               <Text className="font-body-semibold text-sm text-ink mb-1">{selectedDatum.label}</Text>
               <Text className="font-body-medium text-xs text-muted-text">
-                Total Spend: <Text className="font-mono text-sm text-ink">{formatCurrency(selectedDatum.total)}</Text>
+                Total Spend: <Text className="font-mono-bold text-sm text-ink">{formatCurrency(selectedDatum.total)}</Text>
               </Text>
               {selectedDatum.prevTotal > 0 ? (
                 <View className="flex-row items-center gap-1 mt-1">

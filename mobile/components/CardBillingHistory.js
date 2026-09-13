@@ -12,7 +12,7 @@ import {
   getCardBillingCycleKey,
 } from '../lib/utils';
 
-const label = 'font-body text-2xs uppercase tracking-wider text-muted-text mb-1';
+const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
 
 function formatReward(amount, unit) {
   return unit === 'points' ? `${Math.round(amount).toLocaleString('en-IN')} pts` : formatCurrency(amount);

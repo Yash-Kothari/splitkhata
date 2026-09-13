@@ -12,6 +12,7 @@ import {
   computeTripTotalSpend,
   getTripLastDate,
   todayISO,
+  PERSON_COLORS,
 } from '../lib/utils';
 
 // RN port of web's BalanceStrip.jsx - household net balance, or (ledger=
@@ -170,7 +171,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
   }
 
   return (
-    <Card className="p-4 mb-4">
+    <Card className="px-5 py-4 mb-4">
       <Text className="font-display text-lg text-ink mb-1">
         {isTravel ? 'Trip Summary' : 'Household Net Balance'}
       </Text>
@@ -247,9 +248,11 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
       {isTravel && dbMembers.length > 0 && (
         <View className="mt-3 pt-3 border-t border-ink/10 flex-row flex-wrap gap-x-4 gap-y-1.5">
           {dbMembers.map((m) => (
-            <Text key={m} className="text-xs text-muted-text">
-              {m} <Text className="font-mono text-ink">{formatCurrency(memberTotals?.[m] || 0)}</Text>
-            </Text>
+            <View key={m} className="flex-row items-center gap-1.5">
+              <View className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: PERSON_COLORS[m] || '#3D7068' }} />
+              <Text className="text-xs text-muted-text">{m}</Text>
+              <Text className="font-mono text-xs text-ink">{formatCurrency(memberTotals?.[m] || 0)}</Text>
+            </View>
           ))}
         </View>
       )}
@@ -257,12 +260,13 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
       {hasPoints && dbMembers.length > 0 && (
         <View className="mt-1.5 flex-row flex-wrap gap-x-4 gap-y-1.5">
           {dbMembers.map((m) => (
-            <Text key={m} className="text-xs text-muted-text">
-              {m}{' '}
-              <Text className="font-mono text-ink">
+            <View key={m} className="flex-row items-center gap-1.5">
+              <View className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: PERSON_COLORS[m] || '#3D7068' }} />
+              <Text className="text-xs text-muted-text">{m}</Text>
+              <Text className="font-mono text-xs text-ink">
                 💳 {Math.round(pointsMemberTotals?.[m] || 0).toLocaleString('en-IN')} pts
               </Text>
-            </Text>
+            </View>
           ))}
         </View>
       )}
@@ -348,7 +352,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
             <Text className="font-body text-xs text-stamp-red mb-3">"Paid by" and "Paid to" can't be the same person.</Text>
           )}
 
-          <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Amount (₹)</Text>
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Amount (₹)</Text>
           <TextInput
             value={amount}
             onChangeText={setAmount}
@@ -356,14 +360,14 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
             className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
           />
 
-          <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
           <TextInput
             value={date}
             onChangeText={setDate}
             className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
           />
 
-          <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
           <TextInput
             value={note}
             onChangeText={setNote}

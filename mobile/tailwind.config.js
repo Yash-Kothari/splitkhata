@@ -32,6 +32,7 @@ module.exports = {
         'body-semibold': ['Inter_600SemiBold'],
         mono: ['IBMPlexMono_600SemiBold'],
         'mono-medium': ['IBMPlexMono_500Medium'],
+        'mono-bold': ['IBMPlexMono_700Bold'],
       },
     },
   },

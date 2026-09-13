@@ -20,8 +20,8 @@ export default function AppHeader({ badge }) {
           <Text className="font-display text-xl text-ink tracking-tight" numberOfLines={1}>
             Splitkhata
           </Text>
-          <View className="px-2 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 flex-shrink" style={{ flexShrink: 1 }}>
-            <Text className="font-body-semibold text-2xs text-ledger-green" numberOfLines={1}>
+          <View className="px-2.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 flex-shrink" style={{ flexShrink: 1 }}>
+            <Text className="font-body-semibold text-[11px] tracking-wide text-ledger-green" numberOfLines={1}>
               {badge}
             </Text>
           </View>
@@ -30,16 +30,16 @@ export default function AppHeader({ badge }) {
         <Pressable
           onPress={() => setShowSettings(true)}
           hitSlop={8}
-          className="px-2 py-1.5 rounded-xl border border-ink/15 bg-paper shrink-0"
+          className="min-w-9 min-h-9 px-2 py-1.5 items-center justify-center rounded-xl border border-ink/15 bg-paper shrink-0"
         >
-          <Text className="font-body-semibold text-2xs text-ink">⚙️</Text>
+          <Text className="font-body-semibold text-xs text-ink">⚙️</Text>
         </Pressable>
         <Pressable
           onPress={() => signOutUser()}
           hitSlop={8}
-          className="px-2.5 py-1.5 rounded-xl border border-ink/15 bg-paper shrink-0"
+          className="min-h-9 px-2.5 py-1.5 items-center justify-center rounded-xl border border-ink/15 bg-paper shrink-0"
         >
-          <Text className="font-body-semibold text-2xs text-stamp-red">Sign out</Text>
+          <Text className="font-body-semibold text-xs text-stamp-red">Sign out</Text>
         </Pressable>
       </View>
 

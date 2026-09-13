@@ -98,7 +98,7 @@ function CategoryDrilldownModal({ category, entries, currency, isTravel, selecte
                     <Text className="font-body-semibold text-sm text-ink" numberOfLines={1}>{biggest.note || 'No note'}</Text>
                     <Text className="font-body text-xs text-muted-text">{biggest.date} · Paid by {biggest.payer}</Text>
                   </View>
-                  <Text className="font-mono text-sm text-ink shrink-0">{formatCurrency(biggest.amount, currency)}</Text>
+                  <Text className="font-mono-bold text-sm text-ink shrink-0">{formatCurrency(biggest.amount, currency)}</Text>
                 </View>
               </View>
             )}
@@ -241,7 +241,7 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
                     <Text className="font-body-semibold text-sm text-ink flex-1" numberOfLines={1}>{entry.category}</Text>
                   </View>
                   <View className="flex-row items-center gap-2 shrink-0">
-                    <Text className="font-mono text-sm text-ink">{formatCurrency(entry.amount, currency)}</Text>
+                    <Text className="font-mono-bold text-sm text-ink">{formatCurrency(entry.amount, currency)}</Text>
                     {!isTravel && (
                       <View style={{ minWidth: 56, alignItems: 'flex-end' }}>
                         {entry.prevAmount > 0 ? (

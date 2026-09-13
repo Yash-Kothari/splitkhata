@@ -24,11 +24,11 @@ function Chip({ label, selected, onPress }) {
   return (
     <Pressable
       onPress={onPress}
-      className={`px-3 py-2 rounded-xl border mr-2 mb-2 ${
+      className={`min-h-10 px-3.5 items-center justify-center rounded-lg border mr-2 mb-2 ${
         selected ? 'bg-ledger-green border-ledger-green' : 'bg-paper border-ink/15'
       }`}
     >
-      <Text className={`font-body-semibold text-xs ${selected ? 'text-white' : 'text-ink'}`}>{label}</Text>
+      <Text className={`font-body-semibold text-sm ${selected ? 'text-white' : 'text-ink'}`}>{label}</Text>
     </Pressable>
   );
 }
@@ -206,7 +206,7 @@ export default function AddEntryForm({
 
       {expanded && (
         <View className="mt-3">
-          <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
             Amount (₹){isTravel ? ' - real cost' : ''}
           </Text>
           <TextInput
@@ -215,7 +215,7 @@ export default function AddEntryForm({
             keyboardType="decimal-pad"
             editable={!amountLocked}
             placeholder="0.00"
-            className={`font-mono text-base border border-ink/15 rounded-xl px-3 py-2.5 mb-3 ${
+            className={`font-mono-bold text-sm border border-ink/15 rounded-xl px-3 py-2.5 mb-3 ${
               amountLocked ? 'bg-paper/60 text-muted-text' : 'bg-paper text-ink'
             }`}
           />
@@ -225,7 +225,7 @@ export default function AddEntryForm({
 
           {isTravel && (
             <>
-              <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
                 Local Amount ({currentCurrency})
               </Text>
               <TextInput
@@ -233,10 +233,10 @@ export default function AddEntryForm({
                 onChangeText={setLocalAmount}
                 keyboardType="decimal-pad"
                 placeholder="Optional"
-                className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+                className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
               />
 
-              <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
                 Reward Points (+ spent / − earned)
               </Text>
               <TextInput
@@ -244,7 +244,7 @@ export default function AddEntryForm({
                 onChangeText={setRewardPoints}
                 keyboardType="numbers-and-punctuation"
                 placeholder="Optional"
-                className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+                className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
               />
             </>
           )}
@@ -280,7 +280,7 @@ export default function AddEntryForm({
 
           {splitType === 'shared' && membersList.length > 2 && (
             <View className="mb-3">
-              <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Split Among</Text>
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Split Among</Text>
               <View className="flex-row flex-wrap">
                 {membersList.map((m) => (
                   <Chip key={m} label={m} selected={splitAmong.includes(m)} onPress={() => toggleSplitAmong(m)} />
@@ -294,27 +294,27 @@ export default function AddEntryForm({
             </View>
           )}
 
-          <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
           <TextInput
             value={date}
             onChangeText={setDate}
             placeholder="2026-08-24"
-            className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
           />
 
-          <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
           <TextInput
             value={note}
             onChangeText={setNote}
             placeholder="What was this for?"
-            className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
+            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper"
           />
 
           {!isTravel && (
             <View className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3 mb-3">
               <Pressable onPress={() => setSplitAcrossMonths((v) => !v)} className="flex-row items-center gap-2.5">
                 <View
-                  className={`w-5 h-5 rounded border items-center justify-center ${
+                  className={`w-4 h-4 rounded border items-center justify-center ${
                     splitAcrossMonths ? 'bg-ledger-green border-ledger-green' : 'border-ink/30 bg-paper'
                   }`}
                 >
@@ -328,12 +328,12 @@ export default function AddEntryForm({
 
               {splitAcrossMonths && (
                 <View className="mt-3 ml-7 max-w-[8rem]">
-                  <Text className="font-body text-2xs uppercase tracking-wider text-muted-text mb-1">Number of Months</Text>
+                  <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Number of Months</Text>
                   <TextInput
                     value={monthsCount}
                     onChangeText={setMonthsCount}
                     keyboardType="number-pad"
-                    className="font-mono text-sm text-ink border border-ink/15 rounded-xl px-3 py-2 bg-paper"
+                    className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2 bg-paper"
                   />
                   {amount && parseFloat(amount) > 0 && (
                     <Text className="font-body text-2xs text-muted-text mt-1">
@@ -349,8 +349,9 @@ export default function AddEntryForm({
             onPress={handleSubmit}
             disabled={saving || !amount}
             className="min-h-11 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+            style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 }}
           >
-            {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-white">Add to Ledger</Text>}
+            {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-sm text-white">Add to Ledger</Text>}
           </Pressable>
         </View>
       )}

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, Alert, ActivityIndicator } from 'react-native';
 import EditEntryRow from './EditEntryRow';
+import { cardShadow } from './Card';
 import { deleteExpense } from '../lib/firebase';
 import { formatCurrency } from '../lib/utils';
 
@@ -66,8 +67,8 @@ export default function EntryList({
   const loading = entries === null;
 
   return (
-    <View className="mb-4">
-      <View className="mx-4 rounded-t-2xl border border-b-0 border-ink/10 bg-paper-card px-4 pt-4 pb-3">
+    <View className="mx-4 mb-4 rounded-2xl" style={cardShadow}>
+      <View className="rounded-t-2xl border border-b-0 border-ink/10 bg-paper-card px-4 pt-4 pb-3">
         <Text className="font-display text-lg text-ink">{title}</Text>
         <Text className="font-body text-xs text-muted-text mt-0.5">
           {loading ? '' : `${filtered.length} ${filtered.length === 1 ? 'transaction' : 'transactions'} recorded`}
@@ -83,11 +84,11 @@ export default function EntryList({
       </View>
 
       {loading ? (
-        <View className="mx-4 items-center py-10 border border-t-0 border-ink/10 bg-paper-card rounded-b-2xl">
+        <View className="items-center py-10 border border-t-0 border-ink/10 bg-paper-card rounded-b-2xl">
           <ActivityIndicator color="#3D7068" />
         </View>
       ) : filtered.length === 0 ? (
-        <View className="mx-4 items-center py-10 border-2 border-dashed border-t-0 border-ink/20 rounded-b-2xl bg-paper/50 px-4">
+        <View className="items-center py-10 border-2 border-dashed border-t-0 border-ink/20 rounded-b-2xl bg-paper/50 px-4">
           <Text className="font-body text-sm text-muted-text text-center">
             {(entries || []).length === 0 ? emptyMessage : 'No entries match your search.'}
           </Text>
@@ -123,7 +124,7 @@ export default function EntryList({
           return (
             <View
               key={item.id}
-              className={`mx-4 bg-paper-card border-l border-r border-b border-ink/10 px-4 py-3 ${
+              className={`bg-paper-card border-l border-r border-b border-ink/10 px-4 py-3 ${
                 isLast ? 'rounded-b-2xl' : ''
               }`}
             >
@@ -132,7 +133,7 @@ export default function EntryList({
                   <View className="flex-row items-baseline justify-between gap-2">
                     <View className="flex-row items-baseline flex-wrap gap-1.5 flex-1">
                       {item.amount ? (
-                        <Text className="font-mono text-base text-ink">{formatCurrency(item.amount, 'INR')}</Text>
+                        <Text className="font-mono-bold text-base text-ink">{formatCurrency(item.amount, 'INR')}</Text>
                       ) : null}
                       {isTravel && item.localAmount != null && (
                         <Text className="font-mono text-xs text-muted-text">
@@ -145,7 +146,7 @@ export default function EntryList({
                             item.rewardPoints > 0 ? 'bg-mustard/20 text-mustard' : 'bg-ledger-green/15 text-ledger-green'
                           }`}
                         >
-                          {item.rewardPoints > 0 ? `-${item.rewardPoints}` : `+${Math.abs(item.rewardPoints)}`} pts
+                          💳 {item.rewardPoints > 0 ? `-${item.rewardPoints}` : `+${Math.abs(item.rewardPoints)}`} pts
                         </Text>
                       ) : null}
                     </View>
@@ -203,14 +204,14 @@ export default function EntryList({
                     hitSlop={8}
                     className="min-w-8 min-h-8 items-center justify-center rounded-lg"
                   >
-                    <Text className="text-base text-muted-text">✎</Text>
+                    <Text className="font-body-semibold text-xs text-muted-text">✎</Text>
                   </Pressable>
                   <Pressable
                     onPress={() => confirmDelete(item.id)}
                     hitSlop={8}
                     className="min-w-8 min-h-8 items-center justify-center rounded-lg"
                   >
-                    <Text className="text-base text-stamp-red/70">✕</Text>
+                    <Text className="font-body-semibold text-xs text-stamp-red/70">✕</Text>
                   </Pressable>
                 </View>
               </View>

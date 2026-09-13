@@ -2,7 +2,7 @@ import { View, Text, TextInput } from 'react-native';
 import PickerField from './PickerField';
 import { todayISO, resolveStrategyParamsForDate } from '../lib/utils';
 
-const label = 'font-body text-2xs uppercase tracking-wider text-muted-text mb-1';
+const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
 const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper';
 
 // Every reward strategy needs a different shape of "which category/channel
