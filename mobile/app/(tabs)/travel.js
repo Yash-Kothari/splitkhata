@@ -18,6 +18,7 @@ import BalanceStrip from '../../components/BalanceStrip';
 import BudgetAlerts from '../../components/BudgetAlerts';
 import AddEntryForm from '../../components/AddEntryForm';
 import EntryList from '../../components/EntryList';
+import CategoryChart from '../../components/CategoryChart';
 
 export default function Travel() {
   const { user } = useAuth();
@@ -124,6 +125,15 @@ export default function Travel() {
                 currentCurrency={selectedTripObj.currency}
                 dbPaymentMethods={paymentMethods}
                 tripEntries={tripEntries}
+              />
+
+              <CategoryChart
+                entries={tripEntries}
+                selectedMonth={null}
+                onMonthChange={() => {}}
+                availableMonths={[]}
+                ledger="travel"
+                budgets={selectedTripObj.categoryBudgets || {}}
               />
             </>
           )}

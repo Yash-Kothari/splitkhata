@@ -42,6 +42,7 @@ import {
   DEFAULT_CURRENCIES as CURRENCIES,
   DEFAULT_PAYMENT_METHODS as PAYMENT_METHODS,
   normalizeLedger,
+  getCardBillingCycleKey,
 } from './utils';
 
 // Same project the web app (yash-kothari.github.io/splitkhata) uses - public
@@ -86,6 +87,8 @@ const cashMovementsRef = collection(dbInstance, 'cashMovements');
 const paymentMethodsRef = collection(dbInstance, 'paymentMethods');
 const currenciesRef = collection(dbInstance, 'currencies');
 const creditCardsRef = collection(dbInstance, 'creditCards');
+const cardTransactionsRef = collection(dbInstance, 'cardTransactions');
+const cardBillingCyclesRef = collection(dbInstance, 'cardBillingCycles');
 
 // Always true on mobile - the Firebase config above is hardcoded, not
 // environment-gated the way web's "no config, run in a local-only demo
@@ -532,6 +535,58 @@ export async function updateCreditCardInDb(cardId, updates) {
 export async function deleteCreditCardFromDb(cardId) {
   if (!cardId) return;
   await deleteDoc(doc(dbInstance, 'creditCards', cardId));
+}
+
+// --- Card transactions - potentially large over time, a real collection
+// like expenses rather than a single settings doc. ---
+
+export function subscribeToCardTransactions(onData, onError) {
+  const q = query(cardTransactionsRef, orderBy('date', 'desc'));
+  return onSnapshot(
+    q,
+    (snapshot) =>
+      onData(
+        snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+          createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? null,
+        })),
+      ),
+    onError,
+  );
+}
+
+export async function addCardTransaction(transaction) {
+  const docRef = await addDoc(cardTransactionsRef, { ...transaction, createdAt: serverTimestamp() });
+  return docRef.id;
+}
+
+export async function updateCardTransaction(id, updates) {
+  if (!id) return;
+  await updateDoc(doc(dbInstance, 'cardTransactions', id), updates);
+}
+
+export async function deleteCardTransaction(id) {
+  if (!id) return;
+  await deleteDoc(doc(dbInstance, 'cardTransactions', id));
+}
+
+// --- Billing-cycle confirmation records - "did the real statement match
+// what we expected, and have the points actually landed." Keyed
+// deterministically by `${cardId}|${cycleStart}` so confirming the same
+// cycle twice updates the same record instead of creating a duplicate. ---
+
+export function subscribeToCardBillingCycles(onData, onError) {
+  return onSnapshot(
+    cardBillingCyclesRef,
+    (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    onError,
+  );
+}
+
+export async function saveCardBillingCycle(cardId, cycleStart, updates) {
+  const key = getCardBillingCycleKey(cardId, cycleStart);
+  await setDoc(doc(dbInstance, 'cardBillingCycles', key), { cardId, cycleStart, ...updates, updatedAt: serverTimestamp() }, { merge: true });
 }
 
 // --- Categories (add/delete - subscribeToCategories already exists above) ---

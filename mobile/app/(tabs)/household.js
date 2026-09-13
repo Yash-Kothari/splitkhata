@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { View, ScrollView } from 'react-native';
 import {
   subscribeToExpenses,
@@ -8,12 +8,14 @@ import {
   subscribeToPaymentReminderConfig,
 } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
-import { DEFAULT_PERSONS, DEFAULT_CATEGORIES, todayISO, getMonthKey } from '../../lib/utils';
+import { DEFAULT_PERSONS, DEFAULT_CATEGORIES, todayISO, getMonthKey, getAvailableMonths } from '../../lib/utils';
 import AddEntryForm from '../../components/AddEntryForm';
 import EntryList from '../../components/EntryList';
 import BudgetAlerts from '../../components/BudgetAlerts';
 import PaymentReminderBanner from '../../components/PaymentReminderBanner';
 import AppHeader from '../../components/AppHeader';
+import MonthChart from '../../components/MonthChart';
+import CategoryChart from '../../components/CategoryChart';
 
 export default function Household() {
   const { user } = useAuth();
@@ -22,6 +24,7 @@ export default function Household() {
   const [members, setMembers] = useState(DEFAULT_PERSONS);
   const [budgets, setBudgets] = useState({});
   const [reminderConfig, setReminderConfig] = useState({ enabled: true, amountThreshold: 2000 });
+  const [selectedMonth, setSelectedMonth] = useState(() => getMonthKey(todayISO()));
 
   useEffect(() => subscribeToExpenses('household', setEntries, (err) => console.warn(err)), []);
   useEffect(
@@ -43,6 +46,8 @@ export default function Household() {
   useEffect(() => subscribeToHouseholdBudgets(setBudgets), []);
   useEffect(() => subscribeToPaymentReminderConfig(setReminderConfig), []);
 
+  const availableMonths = useMemo(() => getAvailableMonths(entries || []), [entries]);
+
   return (
     <View className="flex-1 bg-paper">
       <AppHeader badge="🏠 Household Ledger" />
@@ -52,6 +57,18 @@ export default function Household() {
           {entries && <PaymentReminderBanner entries={entries} dbMembers={members} config={reminderConfig} />}
 
           <AddEntryForm deviceName={user?.displayName} ledger="household" dbCategories={categories} dbMembers={members} />
+
+          {entries && <MonthChart entries={entries} ledger="household" />}
+          {entries && (
+            <CategoryChart
+              entries={entries}
+              selectedMonth={selectedMonth}
+              onMonthChange={setSelectedMonth}
+              availableMonths={availableMonths}
+              ledger="household"
+              budgets={budgets}
+            />
+          )}
         </View>
 
         <EntryList
