@@ -39,6 +39,26 @@ jobs:
           VITE_RECAPTCHA_SITE_KEY: ${{ secrets.VITE_RECAPTCHA_SITE_KEY }}
           VITE_BASE_PATH: /splitkhata/
 
+      - name: Install mobile dependencies
+        run: npm ci
+        working-directory: mobile
+
+      # Unified-codebase (React Native Web) spike, served at a staging
+      # subpath alongside the current production app - does not touch or
+      # replace anything the existing Vite build above produces. See the
+      # architecture-unification plan for why this exists.
+      - name: Export mobile app for web (staging)
+        run: npx expo export --platform web
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID }}
+          EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID }}
+
+      - name: Merge staging export into the Pages artifact
+        run: |
+          mkdir -p dist/staging
+          cp -r mobile/dist/. dist/staging/
+
       - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
