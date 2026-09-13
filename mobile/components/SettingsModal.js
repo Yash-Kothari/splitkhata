@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, Modal, ScrollView, Alert, Switch } from 'react-native';
+import { View, Text, TextInput, Pressable, Modal, ScrollView, Alert, Switch, useWindowDimensions } from 'react-native';
 import PickerField from './PickerField';
 import {
   subscribeToExpenses,
@@ -149,6 +149,7 @@ const input = 'font-body text-sm text-ink border border-ink/15 rounded-xl px-3 p
 // subscribes to all its own Firestore data rather than needing each of the
 // 4 screens to thread half a dozen datasets down to it.
 export default function SettingsModal({ visible, onClose }) {
+  const { height: windowHeight } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState('categories');
 
   const [householdEntries, setHouseholdEntries] = useState([]);
@@ -556,9 +557,13 @@ export default function SettingsModal({ visible, onClose }) {
   if (!visible) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View className="flex-1 bg-paper">
-        <View className="flex-row items-center justify-between px-4 pt-14 pb-3 border-b border-ink/10 bg-paper-card">
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <View className="flex-1 bg-black/40 items-center justify-center px-2.5">
+        <View
+          className="w-full rounded-2xl bg-paper-card border border-ink/15 overflow-hidden"
+          style={{ maxWidth: 576, height: Math.round(windowHeight * 0.92), shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.25, shadowRadius: 30, elevation: 10 }}
+        >
+        <View className="flex-row items-center justify-between px-4 py-3.5 border-b border-ink/10 bg-paper/60">
           <View className="flex-row items-center gap-2 flex-1">
             <Text className="font-display text-lg font-bold text-ink" numberOfLines={1}>
               Settings & Configuration
@@ -586,7 +591,7 @@ export default function SettingsModal({ visible, onClose }) {
           ))}
         </ScrollView>
 
-        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+        <ScrollView className="flex-1" contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
           {activeTab === 'categories' && (
             <View>
               <Text className="font-display text-base font-bold text-ink mb-0.5">Manage Categories Database</Text>
@@ -1124,10 +1129,11 @@ export default function SettingsModal({ visible, onClose }) {
           )}
         </ScrollView>
 
-        <View className="px-4 py-3 border-t border-ink/10 bg-paper-card">
+        <View className="px-4 py-3 border-t border-ink/10 bg-paper/80">
           <Pressable onPress={onClose} className="min-h-11 rounded-xl bg-ledger-green items-center justify-center">
             <Text className="font-body-semibold text-white">Done</Text>
           </Pressable>
+        </View>
         </View>
       </View>
     </Modal>
