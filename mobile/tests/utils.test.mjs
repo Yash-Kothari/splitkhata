@@ -66,7 +66,7 @@ import {
   getCardBillingCycles,
   setCardBillingCycles,
   getCardBillingCycleKey,
-} from '../src/utils.js';
+} from '../lib/utils.js';
 
 test('uses Yash and Kruti as default pair names', () => {
   assert.deepEqual(PERSONS, ['Yash', 'Kruti']);

@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Splitkhata",
+    "slug": "splitkhata",
+    "scheme": "splitkhata",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F2ECDD",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.splitkhata.mobile",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.splitkhata.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#3D7068",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single"
+    },
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "backgroundColor": "#F2ECDD",
+      "resizeMode": "contain"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-splash-screen"
+    ],
+    "experiments": {
+      "baseUrl": "/splitkhata/staging"
+    }
+  }
+}
