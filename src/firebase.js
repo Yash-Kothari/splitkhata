@@ -695,7 +695,7 @@ export async function addTripToDb(name, currency, year, existingTrips = [], star
     await addDoc(tripsRef, { name: trimmed, currency, year, startDate, endDate, createdAt: serverTimestamp() });
   } else {
     const current = getStoredTrips();
-    const newTrip = { id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), name: trimmed, currency, year, startDate, endDate };
+    const newTrip = { id: 'local_' + crypto.randomUUID(), name: trimmed, currency, year, startDate, endDate };
     const updated = [...current, newTrip];
     setStoredTrips(updated);
     tripListeners.forEach((fn) => fn(updated));
@@ -762,7 +762,7 @@ export async function addCashMovementToDb(movement) {
   } else {
     const current = getStoredCashMovements();
     const newMovement = {
-      id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      id: 'local_' + crypto.randomUUID(),
       ...movement,
       createdAt: new Date().toISOString(),
     };
@@ -882,7 +882,7 @@ export async function addExpense(entry) {
   } else {
     const current = getLocalExpenses();
     const newEntry = {
-      id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      id: 'local_' + crypto.randomUUID(),
       ...entry,
       createdAt: new Date().toISOString(),
     };
@@ -908,7 +908,7 @@ export async function addExpensesBatch(entries) {
   } else {
     const current = getLocalExpenses();
     const newEntries = entries.map((entry, i) => ({
-      id: 'local_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2, 7),
+      id: 'local_' + i + '_' + crypto.randomUUID(),
       ...entry,
       createdAt: new Date().toISOString(),
     }));
@@ -1329,7 +1329,7 @@ export async function addCreditCardToDb(card) {
     return docRef.id;
   } else {
     const current = getCreditCards();
-    const newCard = { id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), ...card };
+    const newCard = { id: 'local_' + crypto.randomUUID(), ...card };
     const updated = [...current, newCard];
     setCreditCards(updated);
     creditCardListeners.forEach((fn) => fn(updated));
@@ -1403,7 +1403,7 @@ export async function addCardTransaction(transaction) {
     return docRef.id;
   } else {
     const current = getCardTransactions();
-    const newTxn = { id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7), ...transaction, createdAt: new Date().toISOString() };
+    const newTxn = { id: 'local_' + crypto.randomUUID(), ...transaction, createdAt: new Date().toISOString() };
     const updated = [newTxn, ...current];
     setCardTransactions(updated);
     cardTransactionListeners.forEach((fn) => fn(updated));

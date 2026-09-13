@@ -265,7 +265,7 @@ export default function SettingsModal({
     setRuleMessage('');
     try {
       const rule = {
-        id: 'rule_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        id: 'rule_' + crypto.randomUUID(),
         category: newRuleCategory,
         amount,
         payer: newRulePayer || dbMembers[0] || '',
