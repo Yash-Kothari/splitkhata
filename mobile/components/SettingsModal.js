@@ -819,7 +819,7 @@ export default function SettingsModal({ visible, onClose }) {
             <View>
               <Text className="font-body-semibold text-sm text-ink mb-0.5">Credit Cards</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
-                Every reward rule below was cross-checked against each bank's current terms - tune the numbers here if a card's real terms change.
+                Every reward rule below was cross-checked against each bank's current terms, not guessed from a spreadsheet formula - tune the numbers here if a card's real terms change.
               </Text>
 
               <View className="rounded-xl border border-ink/10 bg-paper-card mb-3 overflow-hidden">

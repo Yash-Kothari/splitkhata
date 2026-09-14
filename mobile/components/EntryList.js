@@ -3,7 +3,7 @@ import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-nativ
 import EditEntryRow from './EditEntryRow';
 import PickerField from './PickerField';
 import { cardShadow } from './Card';
-import { formatCurrency, formatMonthLabel } from '../lib/utils';
+import { formatCurrency, formatMonthLabel, PERSON_COLORS } from '../lib/utils';
 
 function formatShortDate(dateStr) {
   try {
@@ -39,6 +39,7 @@ export default function EntryList({
   pendingDeletes = {},
   onDelete,
   onSaveError,
+  excludePaymentEntries = false,
 }) {
   const isTravel = ledger === 'travel';
   const [searchTerm, setSearchTerm] = useState('');
@@ -50,6 +51,7 @@ export default function EntryList({
     return list
       .filter((e) => {
         if (pendingDeletes[e.id]) return false;
+        if (excludePaymentEntries && (e.splitType === 'settlement' || e.isTripRollup)) return false;
         if (!isTravel && selectedMonth !== 'all' && e.date?.slice(0, 7) !== selectedMonth) return false;
         if (!term) return true;
         const matchNote = e.note?.toLowerCase().includes(term);
@@ -63,7 +65,7 @@ export default function EntryList({
         if (dateCmp !== 0) return dateCmp;
         return (b.createdAt ?? '').localeCompare(a.createdAt ?? '');
       });
-  }, [entries, searchTerm, selectedMonth, isTravel, pendingDeletes]);
+  }, [entries, searchTerm, selectedMonth, isTravel, pendingDeletes, excludePaymentEntries]);
 
   const loading = entries === null;
 
@@ -144,10 +146,15 @@ export default function EntryList({
           return (
             <View
               key={item.id}
-              className={`bg-paper-card border-l border-r border-b border-ink/10 px-4 py-3 ${
+              className={`relative bg-paper-card border-r border-b border-ink/10 pl-5 pr-4 py-3 ${
                 isLast ? 'rounded-b-2xl' : ''
               }`}
+              style={{ borderLeftWidth: 2, borderLeftColor: 'rgba(36,48,74,0.25)', borderStyle: 'dashed' }}
             >
+              <View
+                className="absolute rounded-full"
+                style={{ left: -5, top: '50%', marginTop: -4, width: 8, height: 8, backgroundColor: PERSON_COLORS[item.payer] || '#3D7068' }}
+              />
               <View className="flex-row items-center justify-between gap-3">
                 <View className="flex-1 min-w-0">
                   <View className="flex-row items-baseline justify-between gap-2">

@@ -62,19 +62,19 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
         <Pressable
           onPress={() => setShowSettings(true)}
           hitSlop={8}
-          className="min-w-9 min-h-9 px-2 py-1.5 items-center justify-center rounded-xl border border-ink/15 bg-paper shrink-0 shadow-2xs"
+          className="min-w-9 min-h-9 flex-row items-center justify-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-xl border border-ink/15 bg-paper shrink-0 shadow-2xs"
         >
           <Text className="font-body-semibold text-xs text-ink">⚙️</Text>
+          <Text className="hidden sm:flex font-body-semibold text-xs text-ink">Settings</Text>
         </Pressable>
         <View>
           <Pressable
             onPress={() => setShowAccountMenu((v) => !v)}
             hitSlop={8}
-            className="min-w-9 min-h-9 max-w-24 px-2 py-1.5 items-center justify-center rounded-xl border border-ink/10 bg-paper-card shrink-0"
+            className="min-w-9 min-h-9 max-w-24 sm:max-w-none flex-row items-center justify-center px-2 sm:px-3 py-1.5 rounded-xl border border-ink/10 bg-paper-card shrink-0"
           >
-            <Text className="font-body-medium text-xs text-muted-text" numberOfLines={1}>
-              <Text className="font-body-semibold text-ink">{deviceName}</Text>
-            </Text>
+            <Text className="hidden sm:flex font-body-medium text-xs text-muted-text">User: </Text>
+            <Text className="font-body-semibold text-xs text-ink" numberOfLines={1}>{deviceName}</Text>
           </Pressable>
 
           {showAccountMenu && (

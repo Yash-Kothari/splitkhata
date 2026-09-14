@@ -141,7 +141,7 @@ export default function Cards() {
                 key={card.id}
                 onPress={() => setSelectedCardId(card.id)}
                 className={`px-3.5 py-2 rounded-xl ${
-                  selectedCard?.id === card.id ? 'bg-ledger-green' : 'bg-paper-card border border-ink/10'
+                  selectedCard?.id === card.id ? 'bg-ledger-green shadow-xs' : 'bg-paper border border-ink/10'
                 }`}
               >
                 <Text className={`font-body-semibold text-sm ${selectedCard?.id === card.id ? 'text-white' : 'text-muted-text'}`}>
@@ -244,7 +244,7 @@ export default function Cards() {
                           <View key={cap.key}>
                             <View className="flex-row items-center justify-between mb-1">
                               <Text className="font-body-medium text-xs text-ink">{cap.label}</Text>
-                              <Text className={`font-mono-bold text-xs ${remainingColor}`}>
+                              <Text className={`font-mono text-xs ${remainingColor}`}>
                                 {formatReward(cap.remaining, cap.unit)} left
                               </Text>
                             </View>

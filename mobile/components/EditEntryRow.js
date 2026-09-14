@@ -274,7 +274,7 @@ export default function EditEntryRow({
           </View>
         )}
 
-        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] order-last lg:order-none">
           <PickerField label="Category" value={category} options={categories} onChange={setCategory} />
         </View>
 

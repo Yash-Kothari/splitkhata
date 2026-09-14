@@ -39,14 +39,14 @@ export default function TripPicker({
   const selectedTripObj = trips.find((t) => t.name === selectedTrip);
 
   const cashStats = useMemo(() => {
-    if (!selectedTrip) return null;
+    if (!selectedTrip) return { balance: 0, withdrawn: 0 };
     const relevant = cashMovements.filter((m) => m.tripName === selectedTrip);
     const opening = relevant.filter((m) => m.type === 'opening').reduce((sum, m) => sum + Number(m.amount || 0), 0);
     const withdrawals = relevant.filter((m) => m.type === 'withdrawal').reduce((sum, m) => sum + Number(m.amount || 0), 0);
     const cashSpent = entries
       .filter((e) => normalizeLedger(e.ledger) === 'travel' && e.tripName === selectedTrip && e.paymentMethod === 'Cash')
       .reduce((sum, e) => sum + Number(e.localAmount || 0), 0);
-    return opening + withdrawals - cashSpent;
+    return { balance: opening + withdrawals - cashSpent, withdrawn: opening + withdrawals };
   }, [cashMovements, entries, selectedTrip]);
 
   async function handleCreate() {
@@ -106,7 +106,7 @@ export default function TripPicker({
           />
         </View>
         <View className="w-full sm:w-[calc(25%-9px)]">
-          <PickerField label="Currency" value={currency} options={currencies} onChange={setCurrency} />
+          <PickerField label="Default Currency" value={currency} options={currencies} onChange={setCurrency} />
         </View>
         <View className="w-full sm:w-[calc(25%-9px)]">
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Start Date (optional)</Text>
@@ -142,7 +142,7 @@ export default function TripPicker({
       <Card className="px-5 py-4 mb-4">
         <Text className="font-display text-lg text-ink mb-1">Create Your First Trip</Text>
         <Text className="font-body text-sm text-muted-text mb-3">
-          Give it a name, pick a currency, and start tracking travel spend separately from the household.
+          Create a trip to organize transactions, track cash balances, and manage trip currency.
         </Text>
         {addTripForm}
       </Card>
@@ -173,7 +173,7 @@ export default function TripPicker({
             }}
             className="min-h-9 px-3 rounded-lg bg-ledger-green items-center justify-center shrink-0"
           >
-            <Text className="font-body-semibold text-xs text-white">View</Text>
+            <Text className="font-body-semibold text-xs text-white">Switch to it</Text>
           </Pressable>
         </View>
       )}
@@ -186,6 +186,9 @@ export default function TripPicker({
       />
 
       <View className="mt-2">
+        {years.length === 0 && (
+          <Text className="font-body text-sm text-muted-text py-2">No trips match "{searchTerm.trim()}".</Text>
+        )}
         {years.map((y) => (
           <View key={y} className="mb-2">
             <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1.5">{y}</Text>
@@ -227,8 +230,13 @@ export default function TripPicker({
             <View className="flex-1 rounded-lg bg-paper-card border border-ink/10 px-3.5 py-2.5">
               <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-muted-text">Cash in Hand</Text>
               <Text className="font-mono-bold text-sm text-ink mt-0.5">
-                {(cashStats ?? 0).toLocaleString('en-IN')} {selectedTripObj.currency}
+                {cashStats.balance.toFixed(2)} {selectedTripObj.currency}
               </Text>
+              {cashStats.withdrawn > 0 && (
+                <Text className="font-mono text-2xs text-muted-text mt-0.5">
+                  {cashStats.withdrawn.toFixed(2)} {selectedTripObj.currency} withdrawn
+                </Text>
+              )}
             </View>
           </View>
           <Pressable onPress={onOpenSettings} className="min-h-10 rounded-xl border border-ink/15 items-center justify-center">

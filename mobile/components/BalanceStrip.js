@@ -354,11 +354,37 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
       {isTravel && !hasGuests && confirmingRollup && (
         <View className="mt-4 pt-4 border-t border-ink/10">
           <Text className="font-body text-sm text-ink mb-3">
-            {rollupNowSettled
-              ? `${tripName} is back to settled, but the main Payments ledger still has an old line for it. This removes that line - nothing about ${tripName}'s own entries changes.`
-              : rollupStale
-                ? `${tripName} changed since it was last added - this updates the main ledger line to match the current balance.`
-                : `This adds one line to the main Payments ledger, noted as coming from ${tripName}. ${tripName}'s own entries and balance here stay exactly as they are.`}
+            {rollupNowSettled ? (
+              <>
+                {tripName} is back to settled, but the main Payments ledger still has an old line for it:{' '}
+                <Text className="font-body-semibold">
+                  {tripRollup.debtor} owed {tripRollup.creditor} {formatCurrency(tripRollup.amount, displayCurrency)}
+                </Text>
+                . This removes that line - nothing about {tripName}'s own entries changes.
+              </>
+            ) : rollupStale ? (
+              <>
+                {tripName} changed since it was last added - the main Payments ledger still has{' '}
+                <Text className="font-body-semibold">
+                  {tripRollup.debtor} owed {tripRollup.creditor} {formatCurrency(tripRollup.amount, displayCurrency)}
+                </Text>
+                . This updates that same line to{' '}
+                <Text className="font-body-semibold text-stamp-red">{balance.debtor}</Text>
+                {' owes '}
+                <Text className="font-body-semibold text-ledger-green">{balance.creditor}</Text>{' '}
+                <Text className="font-mono-bold text-ink">{formatCurrency(balance.amount, displayCurrency)}</Text> instead of
+                adding a second one.
+              </>
+            ) : (
+              <>
+                This adds one line to the main Payments ledger:{' '}
+                <Text className="font-body-semibold text-stamp-red">{balance.debtor}</Text>
+                {' owes '}
+                <Text className="font-body-semibold text-ledger-green">{balance.creditor}</Text>{' '}
+                <Text className="font-mono-bold text-ink">{formatCurrency(balance.amount, displayCurrency)}</Text>, noted as
+                coming from {tripName}. {tripName}'s own entries and balance here stay exactly as they are.
+              </>
+            )}
           </Text>
           <View className="flex-row gap-2">
             <Pressable
@@ -388,8 +414,8 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
       {!isTravel && settling && (
         <View className="mt-4 pt-4 border-t border-ink/10">
           <Text className="font-body text-sm text-ink mb-3">
-            Record a real-world payment - either direction, any amount. It doesn't have to match the balance above; this just logs
-            money that actually changed hands.
+            Record a real-world payment - either direction, any amount. It doesn't have to match the balance above or pay
+            it down; this just logs money that actually changed hands.
           </Text>
 
           <View className="flex-row flex-wrap mb-3" style={{ gap: 12 }}>

@@ -432,7 +432,7 @@ export default function AddEntryForm({
               </View>
             )}
 
-            <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
+            <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)] order-last lg:order-none">
               <PickerField
                 label="Category"
                 value={category}

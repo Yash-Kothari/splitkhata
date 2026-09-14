@@ -337,7 +337,7 @@ export default function TripSettings({
           <View className="border-t border-ink/10 pt-4 mb-5">
             <Text className="font-body-semibold text-xs text-ink mb-1">Category Budgets (this trip)</Text>
             <Text className="font-body text-2xs text-muted-text mb-2">
-              Set a limit for the whole trip, not per month. Warns at 80%, alerts once exceeded.
+              Pick a category and set a limit for the whole trip, not per month. Nothing is flagged until you set one. Warns at 80% of the limit, alerts once it's exceeded.
             </Text>
             {unbudgetedCategories.length > 0 && (
               <View className="flex-row gap-2 mb-2">
@@ -420,7 +420,10 @@ export default function TripSettings({
           <View className="border-t border-ink/10 pt-4 mb-5">
             <Text className="font-body-semibold text-xs text-ink mb-1">Guests (this trip only)</Text>
             <Text className="font-body text-2xs text-muted-text mb-2">
-              Can be a payer/split target on {trip.name}'s entries only - never on the household ledger or Payments tab.
+              Someone who joined just this trip - they can be picked as a payer or split target on {trip.name}'s
+              entries, but never anywhere on the household ledger or Payments tab, and this trip won't get an
+              "Add to Main Ledger" option while it has any (there's no single honest "who owes whom" once a third
+              person is splitting bills, so settle with them separately).
             </Text>
             <View className="flex-row gap-2 mb-2">
               <TextInput

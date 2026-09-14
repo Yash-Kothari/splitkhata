@@ -116,8 +116,8 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
         <View className="flex-row flex-wrap mt-3.5" style={{ gap: 12 }}>
           <View className="w-full sm:w-[calc(50%-6px)]">
             <Text className={label}>Calculated Reward</Text>
-            <View className="rounded-xl px-3 py-2.5 bg-paper border border-ink/15 shadow-2xs">
-              <Text className="font-mono-bold text-base text-muted-text">
+            <View className="rounded-xl px-3 py-2.5 bg-paper-card border border-ink/15 shadow-2xs">
+              <Text className="font-mono text-base text-muted-text">
                 {editCalculatedReward != null ? formatReward(editCalculatedReward, editRewardUnit) : '-'}
               </Text>
             </View>
@@ -155,22 +155,22 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
           <View className="flex-row items-baseline flex-wrap gap-1.5 flex-1">
             <Text className="font-mono-bold text-base text-ink">{formatCurrency(txn.amount)}</Text>
             {perTxn && perTxn.overridden && (
-              <Text className="font-mono-bold text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
+              <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
                 💳 {formatReward(perTxn.earned, cycleReward.unit)} (edited)
               </Text>
             )}
             {perTxn && !perTxn.overridden && !isAggregate && (
-              <Text className="font-mono-bold text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
+              <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
                 💳 +{formatReward(perTxn.earned, cycleReward.unit)}
               </Text>
             )}
             {perTxn && !perTxn.overridden && isAggregate && perTxn.estimated > 0 && (
-              <Text className="font-mono-bold text-xs px-1.5 py-0.5 rounded bg-ledger-green/10 text-ledger-green/80">
+              <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-ledger-green/10 text-ledger-green/80">
                 💳 ~{formatReward(perTxn.estimated, 'inr')}
               </Text>
             )}
             {txn.pointsRedeemed > 0 && (
-              <Text className="font-mono-bold text-xs px-1.5 py-0.5 rounded bg-mustard/20 text-mustard">
+              <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-mustard/20 text-mustard">
                 🎟 -{txn.pointsRedeemed.toLocaleString('en-IN')} pts
               </Text>
             )}

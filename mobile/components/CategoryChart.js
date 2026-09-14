@@ -13,10 +13,16 @@ import {
   DEFAULT_CATEGORIES as CATEGORIES,
 } from '../lib/utils';
 
-const DONUT_SIZE = 190;
-const OUTER_R = 82;
-const INNER_R = 53;
-const CENTER = DONUT_SIZE / 2;
+// Web's donut is fluid (recharts ResponsiveContainer inside a h-56/224px
+// container, outerRadius 85%) rather than a fixed pixel size - fixed at
+// 190px here made mobile's chart visibly smaller than web's once the two
+// charts sit side by side on a wide screen (lg:grid-cols-2). Sized from the
+// card's actual measured width instead, capped at web's own 224px ceiling,
+// keeping the same 0.432/0.279 outer/inner radius ratios either way.
+const MAX_DONUT_SIZE = 224;
+const MIN_DONUT_SIZE = 160;
+const OUTER_R_RATIO = 82 / 190;
+const INNER_R_RATIO = 53 / 190;
 const PAD_DEG = 2;
 
 function polarToCartesian(cx, cy, r, angleDeg) {
@@ -138,6 +144,12 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
   const currency = 'INR';
   const totalLabel = formatCurrency(total, currency);
 
+  const [cardWidth, setCardWidth] = useState(0);
+  const donutSize = cardWidth > 0 ? Math.max(MIN_DONUT_SIZE, Math.min(cardWidth - 32, MAX_DONUT_SIZE)) : MIN_DONUT_SIZE;
+  const outerR = donutSize * OUTER_R_RATIO;
+  const innerR = donutSize * INNER_R_RATIO;
+  const center = donutSize / 2;
+
   const [selectedCategory, setSelectedCategory] = useState(null);
   const drilldownEntries = useMemo(
     () => (selectedCategory ? getCategoryEntries(entries, isTravel ? null : selectedMonth, ledger, selectedCategory) : []),
@@ -161,7 +173,7 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
   });
 
   return (
-    <Card className="p-4 mb-4">
+    <Card className="p-4 mb-4" onLayout={(e) => setCardWidth(e.nativeEvent.layout.width)}>
       <View className="flex-row items-center justify-between gap-2 mb-3">
         <View className="flex-1">
           <Text className="font-display text-lg text-ink">Category Breakdown</Text>
@@ -187,8 +199,8 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
         </View>
       ) : (
         <>
-          <View className="items-center justify-center" style={{ height: DONUT_SIZE }}>
-            <Svg width={DONUT_SIZE} height={DONUT_SIZE}>
+          <View className="items-center justify-center" style={{ height: donutSize }}>
+            <Svg width={donutSize} height={donutSize}>
               {slices.map(({ entry, startAngle, endAngle }, index) => {
                 const idx = CATEGORIES.indexOf(entry.category);
                 const colorIndex = idx >= 0 ? idx : index;
@@ -196,7 +208,7 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
                 return (
                   <Path
                     key={entry.category}
-                    d={donutSlicePath(CENTER, CENTER, INNER_R, OUTER_R, startAngle, endAngle)}
+                    d={donutSlicePath(center, center, innerR, outerR, startAngle, endAngle)}
                     fill={color}
                     onPress={() => setSelectedCategory(entry.category)}
                   />
@@ -204,9 +216,9 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
               })}
             </Svg>
             <View className="absolute inset-0 items-center justify-center" pointerEvents="none">
-              <View className="items-center px-2" style={{ maxWidth: DONUT_SIZE * 0.55 }}>
+              <View className="items-center px-2" style={{ maxWidth: donutSize * 0.38 }}>
                 <Text
-                  className={`font-mono text-ink text-center ${totalLabel.length > 12 ? 'text-xs' : totalLabel.length > 9 ? 'text-sm' : 'text-lg'}`}
+                  className={`font-mono-bold text-ink text-center ${totalLabel.length > 12 ? 'text-xs' : totalLabel.length > 9 ? 'text-sm' : 'text-lg'}`}
                 >
                   {totalLabel}
                 </Text>
@@ -251,8 +263,8 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
                             </Text>
                           </View>
                         ) : entry.isNew ? (
-                          <View className="px-1.5 py-0.5 rounded bg-mustard/20">
-                            <Text className="font-body-semibold text-2xs text-mustard">New</Text>
+                          <View className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#E0E7FF' }}>
+                            <Text className="font-body-semibold text-2xs" style={{ color: '#4338CA' }}>New</Text>
                           </View>
                         ) : (
                           <Text className="font-mono text-2xs text-muted-text">-</Text>

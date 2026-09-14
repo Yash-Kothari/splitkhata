@@ -107,8 +107,8 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
           <View className="flex-row flex-wrap mt-3.5" style={{ gap: 14 }}>
             <View className="w-full sm:w-[calc(50%-7px)]">
               <Text className={label}>Calculated Reward</Text>
-              <View className="rounded-xl px-3 py-2.5 bg-paper border border-ink/15 shadow-2xs">
-                <Text className="font-mono-bold text-base text-muted-text">
+              <View className="rounded-xl px-3 py-2.5 bg-paper-card border border-ink/15 shadow-2xs">
+                <Text className="font-mono text-base text-muted-text">
                   {calculatedReward != null ? formatReward(calculatedReward, rewardUnit) : '-'}
                 </Text>
               </View>

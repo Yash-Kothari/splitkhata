@@ -71,17 +71,25 @@ export default function Household() {
 
           <AddEntryForm deviceName={user?.displayName} ledger="household" dbCategories={categories} dbMembers={members} />
 
-          {entries && <MonthChart entries={entries} ledger="household" />}
-          {entries && (
-            <CategoryChart
-              entries={entries}
-              selectedMonth={selectedMonth}
-              onMonthChange={setSelectedMonth}
-              availableMonths={availableMonths}
-              ledger="household"
-              budgets={budgets}
-            />
-          )}
+          <View className="flex-row flex-wrap" style={{ gap: 24 }}>
+            {entries && (
+              <View className="w-full lg:w-[calc(50%-12px)]">
+                <MonthChart entries={entries} ledger="household" />
+              </View>
+            )}
+            {entries && (
+              <View className="w-full lg:w-[calc(50%-12px)]">
+                <CategoryChart
+                  entries={entries}
+                  selectedMonth={selectedMonth}
+                  onMonthChange={setSelectedMonth}
+                  availableMonths={availableMonths}
+                  ledger="household"
+                  budgets={budgets}
+                />
+              </View>
+            )}
+          </View>
         </View>
 
         <EntryList
@@ -96,6 +104,7 @@ export default function Household() {
           members={members}
           pendingDeletes={pendingDeletes}
           onDelete={handleDelete}
+          excludePaymentEntries
         />
       </ScrollView>
 
