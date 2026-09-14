@@ -1,12 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
 import { Tabs } from 'expo-router';
-import { Text } from 'react-native';
+import { View, Text } from 'react-native';
 import { subscribeToPinConfig } from '../../lib/firebase';
 import { useLock } from '../../lib/LockContext';
 import PinLockScreen from '../../components/PinLockScreen';
+import AskQuestion from '../../components/AskQuestion';
 
-function TabIcon({ emoji }) {
-  return <Text style={{ fontSize: 20 }}>{emoji}</Text>;
+// A plain color-change on the emoji (the old behavior) is subtle enough
+// that it wasn't reading as "this is the selected tab" - a filled pill
+// behind the icon makes the active tab unambiguous at a glance, matching
+// the kind of selected-state affordance modern tab bars use.
+function TabIcon({ emoji, focused }) {
+  return (
+    <View
+      style={{
+        width: 44,
+        height: 28,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: focused ? 'rgba(61,112,104,0.15)' : 'transparent',
+      }}
+    >
+      <Text style={{ fontSize: 18 }}>{emoji}</Text>
+    </View>
+  );
 }
 
 // Gates the tabs (i.e. everything past sign-in) behind PinLockScreen when a
@@ -42,32 +60,35 @@ function PinGate({ children }) {
 export default function TabsLayout() {
   return (
     <PinGate>
-      <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarActiveTintColor: '#3D7068',
-        tabBarInactiveTintColor: '#5C6478',
-        tabBarStyle: { backgroundColor: '#F2ECDD', borderTopColor: 'rgba(36,48,74,0.1)' },
-        tabBarLabelStyle: { fontFamily: 'Inter_500Medium', fontSize: 11 },
-      }}
-    >
-      <Tabs.Screen
-        name="payments"
-        options={{ title: 'Payments', tabBarIcon: () => <TabIcon emoji="💰" /> }}
-      />
-      <Tabs.Screen
-        name="household"
-        options={{ title: 'Household', tabBarIcon: () => <TabIcon emoji="🏠" /> }}
-      />
-      <Tabs.Screen
-        name="travel"
-        options={{ title: 'Travel', tabBarIcon: () => <TabIcon emoji="✈️" /> }}
-      />
-      <Tabs.Screen
-        name="cards"
-        options={{ title: 'Cards', tabBarIcon: () => <TabIcon emoji="💳" /> }}
-      />
-      </Tabs>
+      <View style={{ flex: 1 }}>
+        <Tabs
+          screenOptions={{
+            headerShown: false,
+            tabBarActiveTintColor: '#3D7068',
+            tabBarInactiveTintColor: '#5C6478',
+            tabBarStyle: { backgroundColor: '#F2ECDD', borderTopColor: 'rgba(36,48,74,0.1)' },
+            tabBarLabelStyle: { fontFamily: 'Inter_500Medium', fontSize: 11 },
+          }}
+        >
+          <Tabs.Screen
+            name="payments"
+            options={{ title: 'Payments', tabBarIcon: ({ focused }) => <TabIcon emoji="💰" focused={focused} /> }}
+          />
+          <Tabs.Screen
+            name="household"
+            options={{ title: 'Household', tabBarIcon: ({ focused }) => <TabIcon emoji="🏠" focused={focused} /> }}
+          />
+          <Tabs.Screen
+            name="travel"
+            options={{ title: 'Travel', tabBarIcon: ({ focused }) => <TabIcon emoji="✈️" focused={focused} /> }}
+          />
+          <Tabs.Screen
+            name="cards"
+            options={{ title: 'Cards', tabBarIcon: ({ focused }) => <TabIcon emoji="💳" focused={focused} /> }}
+          />
+        </Tabs>
+        <AskQuestion />
+      </View>
     </PinGate>
   );
 }

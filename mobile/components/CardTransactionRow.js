@@ -5,7 +5,7 @@ import { updateCardTransaction } from '../lib/firebase';
 import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward } from '../lib/utils';
 
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
-const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper';
+const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper';
 
 function formatReward(amount, unit) {
   return unit === 'points' ? `${Math.round(amount).toLocaleString('en-IN')} pts` : formatCurrency(amount);
@@ -88,31 +88,53 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
   if (editing) {
     return (
       <View className={`py-3 ${rowBorder}`}>
-        <Text className={label}>Amount (₹)</Text>
-        <TextInput value={draftAmount} onChangeText={setDraftAmount} keyboardType="decimal-pad" className={`${input} font-bold`} />
-        <Text className={label}>Date</Text>
-        <TextInput value={draftDate} onChangeText={setDraftDate} className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs" />
-        <Text className={label}>Description (optional)</Text>
-        <TextInput value={draftDescription} onChangeText={setDraftDescription} className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs" />
-
-        <CardStrategyFields card={card} draft={draft} onChange={updateDraft} />
-
-        <Text className={label}>Calculated Reward</Text>
-        <View className="rounded-xl px-3 py-2.5 mb-3 bg-paper border border-ink/15 shadow-2xs">
-          <Text className="font-mono text-base text-muted-text">
-            {editCalculatedReward != null ? formatReward(editCalculatedReward, editRewardUnit) : '-'}
-          </Text>
+        <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+          <View className="w-full sm:w-[calc(50%-6px)]">
+            <Text className={label}>Amount (₹)</Text>
+            <TextInput
+              value={draftAmount}
+              onChangeText={setDraftAmount}
+              keyboardType="decimal-pad"
+              className="font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper"
+            />
+          </View>
+          <View className="w-full sm:w-[calc(50%-6px)]">
+            <Text className={label}>Date</Text>
+            <TextInput value={draftDate} onChangeText={setDraftDate} className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
+          </View>
         </View>
-        <Text className={label}>Override (optional)</Text>
-        <TextInput
-          value={draftRewardOverride}
-          onChangeText={setDraftRewardOverride}
-          keyboardType="decimal-pad"
-          placeholder={editCalculatedReward != null ? String(editCalculatedReward) : 'auto'}
-          className={input}
-        />
 
-        <View className="flex-row gap-2">
+        <View className="mt-3.5">
+          <Text className={label}>Description (optional)</Text>
+          <TextInput value={draftDescription} onChangeText={setDraftDescription} className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
+        </View>
+
+        <View className="flex-row flex-wrap mt-3.5" style={{ gap: 12 }}>
+          <CardStrategyFields card={card} draft={draft} onChange={updateDraft} gap={12} />
+        </View>
+
+        <View className="flex-row flex-wrap mt-3.5" style={{ gap: 12 }}>
+          <View className="w-full sm:w-[calc(50%-6px)]">
+            <Text className={label}>Calculated Reward</Text>
+            <View className="rounded-xl px-3 py-2.5 bg-paper border border-ink/15 shadow-2xs">
+              <Text className="font-mono-bold text-base text-muted-text">
+                {editCalculatedReward != null ? formatReward(editCalculatedReward, editRewardUnit) : '-'}
+              </Text>
+            </View>
+          </View>
+          <View className="w-full sm:w-[calc(50%-6px)]">
+            <Text className={label}>Override (optional)</Text>
+            <TextInput
+              value={draftRewardOverride}
+              onChangeText={setDraftRewardOverride}
+              keyboardType="decimal-pad"
+              placeholder={editCalculatedReward != null ? String(editCalculatedReward) : 'auto'}
+              className={input}
+            />
+          </View>
+        </View>
+
+        <View className="flex-row gap-2 mt-3.5">
           <Pressable onPress={handleSave} disabled={saving} className="px-3 py-2 rounded-lg bg-ledger-green disabled:opacity-50">
             {saving ? <ActivityIndicator color="white" size="small" /> : <Text className="font-body-semibold text-xs text-white">Save</Text>}
           </Pressable>
@@ -133,22 +155,22 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
           <View className="flex-row items-baseline flex-wrap gap-1.5 flex-1">
             <Text className="font-mono-bold text-base text-ink">{formatCurrency(txn.amount)}</Text>
             {perTxn && perTxn.overridden && (
-              <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
+              <Text className="font-mono-bold text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
                 💳 {formatReward(perTxn.earned, cycleReward.unit)} (edited)
               </Text>
             )}
             {perTxn && !perTxn.overridden && !isAggregate && (
-              <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
+              <Text className="font-mono-bold text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
                 💳 +{formatReward(perTxn.earned, cycleReward.unit)}
               </Text>
             )}
             {perTxn && !perTxn.overridden && isAggregate && perTxn.estimated > 0 && (
-              <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-ledger-green/10 text-ledger-green/80">
+              <Text className="font-mono-bold text-xs px-1.5 py-0.5 rounded bg-ledger-green/10 text-ledger-green/80">
                 💳 ~{formatReward(perTxn.estimated, 'inr')}
               </Text>
             )}
             {txn.pointsRedeemed > 0 && (
-              <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-mustard/20 text-mustard">
+              <Text className="font-mono-bold text-xs px-1.5 py-0.5 rounded bg-mustard/20 text-mustard">
                 🎟 -{txn.pointsRedeemed.toLocaleString('en-IN')} pts
               </Text>
             )}

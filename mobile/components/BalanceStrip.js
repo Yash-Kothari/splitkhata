@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, Alert } from 'react-native';
 import PickerField from './PickerField';
 import Card from './Card';
-import { addExpense, updateExpense, deleteExpense, updateTripInDb } from '../lib/firebase';
+import { addExpense, updateExpense, deleteExpense, updateTripInDb, generateDigest } from '../lib/firebase';
 import {
   formatCurrency,
   computeBalance,
@@ -13,12 +13,13 @@ import {
   getTripLastDate,
   todayISO,
   PERSON_COLORS,
+  groupByCategory,
+  buildTripDigestPrompt,
 } from '../lib/utils';
 
 // RN port of web's BalanceStrip.jsx - household net balance, or (ledger=
 // 'travel') a trip summary: guest settlements, reward points, total spend,
-// and a rollup-to-household action. AI Digest is intentionally omitted
-// (needs Firebase App Check on RN, not set up yet).
+// and a rollup-to-household action.
 export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName = '', tripId = '', tripRollup = null, onSaveError }) {
   const isTravel = ledger === 'travel';
   const balanceEntries = useMemo(() => (isTravel ? excludeCashSpend(entries) : entries), [entries, isTravel]);
@@ -53,6 +54,27 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
   );
   const totalSpend = useMemo(() => (isTravel ? computeTripTotalSpend(entries) : null), [entries, isTravel]);
   const displayCurrency = 'INR';
+  const categoryBreakdown = useMemo(() => (isTravel ? groupByCategory(entries, null, 'travel') : null), [entries, isTravel]);
+  const digestPrompt = useMemo(() => {
+    if (!isTravel) return null;
+    const settlementLines = hasGuests
+      ? (settlements || []).map((s) => `${s.debtor} owes ${s.creditor} ${formatCurrency(s.amount, displayCurrency)}`)
+      : balance.status !== 'settled'
+        ? [`${balance.debtor} owes ${balance.creditor} ${formatCurrency(balance.amount, displayCurrency)}`]
+        : [];
+    return buildTripDigestPrompt({ tripName, currency: displayCurrency, totalSpend, memberTotals, categoryBreakdown, settlementLines });
+  }, [isTravel, hasGuests, settlements, balance, tripName, displayCurrency, totalSpend, memberTotals, categoryBreakdown]);
+  const [digest, setDigest] = useState({ status: 'idle', text: '', error: '' });
+
+  async function handleGenerateDigest() {
+    setDigest({ status: 'loading', text: '', error: '' });
+    try {
+      const text = await generateDigest(digestPrompt);
+      setDigest({ status: 'done', text, error: '' });
+    } catch (err) {
+      setDigest({ status: 'error', text: '', error: err?.message || 'Could not generate digest.' });
+    }
+  }
 
   const rollupStale = Boolean(
     tripRollup &&
@@ -172,6 +194,8 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
 
   return (
     <Card className="px-5 py-4 mb-4">
+      <View className="flex-col sm:flex-row sm:items-start sm:justify-between" style={{ gap: 16 }}>
+      <View className="sm:flex-1">
       <Text className="font-display text-lg text-ink mb-1">
         {isTravel ? 'Trip Summary' : 'Household Net Balance'}
       </Text>
@@ -271,35 +295,61 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
         </View>
       )}
 
-      <Text className="font-body text-2xs text-muted-text mt-3">Calculated across {ledgerLabel.toLowerCase()} entries</Text>
+      {isTravel && totalSpend > 0 && (
+        <View className="mt-3 pt-3 border-t border-ink/10">
+          {digest.status === 'idle' || digest.status === 'error' ? (
+            <Pressable
+              onPress={handleGenerateDigest}
+              className="min-h-8 px-3 rounded-lg border border-ledger-green/30 bg-ledger-green/10 items-center justify-center self-start"
+            >
+              <Text className="font-body-semibold text-xs text-ledger-green">✨ AI Digest</Text>
+            </Pressable>
+          ) : digest.status === 'loading' ? (
+            <Text className="font-body text-xs text-muted-text">✨ Writing digest...</Text>
+          ) : (
+            <View className="rounded-lg border border-ledger-green/20 bg-ledger-green/5 px-3 py-2.5">
+              <Text className="font-body text-sm text-ink leading-relaxed">{digest.text}</Text>
+              <Pressable onPress={() => setDigest({ status: 'idle', text: '', error: '' })} className="mt-2 self-start">
+                <Text className="font-body text-xs text-muted-text underline">Dismiss</Text>
+              </Pressable>
+            </View>
+          )}
+          {digest.status === 'error' && <Text className="font-body text-xs text-stamp-red mt-1.5">{digest.error}</Text>}
+        </View>
+      )}
+      </View>
 
+      <View className="flex-col sm:flex-row sm:items-center w-full sm:w-auto mt-3 sm:mt-0" style={{ gap: 8 }}>
       {isTravel ? (
         hasGuests ? (
-          <Text className="font-body text-2xs text-muted-text mt-3">Settle with guests separately - can't roll into household.</Text>
+          <Text className="font-body text-2xs text-muted-text">Settle with guests separately - can't roll into household.</Text>
         ) : confirmingRollup ? null : rollupNowSettled ? (
-          <Pressable onPress={() => setConfirmingRollup(true)} className="mt-3 min-h-9 px-3.5 rounded-lg bg-mustard/90 items-center justify-center self-start">
+          <Pressable onPress={() => setConfirmingRollup(true)} className="w-full sm:w-auto min-h-9 px-3.5 rounded-lg bg-mustard/90 items-center justify-center">
             <Text className="font-body-semibold text-xs text-white">Remove from Main Ledger</Text>
           </Pressable>
         ) : rollupStale ? (
-          <Pressable onPress={() => setConfirmingRollup(true)} className="mt-3 min-h-9 px-3.5 rounded-lg bg-mustard/90 items-center justify-center self-start">
+          <Pressable onPress={() => setConfirmingRollup(true)} className="w-full sm:w-auto min-h-9 px-3.5 rounded-lg bg-mustard/90 items-center justify-center">
             <Text className="font-body-semibold text-xs text-white">Update Main Ledger</Text>
           </Pressable>
         ) : tripRollup ? (
-          <Text className="font-body-medium text-xs text-ledger-green mt-3">✓ Added to main ledger</Text>
+          <Text className="font-body-medium text-xs text-ledger-green">✓ Added to main ledger</Text>
         ) : (
           balance.status !== 'settled' && (
-            <Pressable onPress={() => setConfirmingRollup(true)} className="mt-3 min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center self-start">
+            <Pressable onPress={() => setConfirmingRollup(true)} className="w-full sm:w-auto min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center">
               <Text className="font-body-semibold text-xs text-white">Add to Main Ledger</Text>
             </Pressable>
           )
         )
       ) : (
         !settling && (
-          <Pressable onPress={startSettling} className="mt-3 min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center self-start">
+          <Pressable onPress={startSettling} className="w-full sm:w-auto min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center">
             <Text className="font-body-semibold text-xs text-white">Record Payment</Text>
           </Pressable>
         )
       )}
+      <Text className="font-body text-2xs text-muted-text">Calculated across {ledgerLabel.toLowerCase()} entries</Text>
+      </View>
+      </View>
 
       {isTravel && !hasGuests && confirmingRollup && (
         <View className="mt-4 pt-4 border-t border-ink/10">
@@ -342,54 +392,64 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
             money that actually changed hands.
           </Text>
 
-          <View className="mb-3">
-            <PickerField label="Paid by" value={settlePayer} options={dbMembers} onChange={setSettlePayer} />
-          </View>
-          <View className="mb-3">
-            <PickerField label="Paid to" value={settleOwedBy} options={dbMembers} onChange={setSettleOwedBy} />
+          <View className="flex-row flex-wrap mb-3" style={{ gap: 12 }}>
+            <View className="w-full sm:w-[calc(50%-6px)]">
+              <PickerField label="Paid by" value={settlePayer} options={dbMembers} onChange={setSettlePayer} />
+            </View>
+            <View className="w-full sm:w-[calc(50%-6px)]">
+              <PickerField label="Paid to" value={settleOwedBy} options={dbMembers} onChange={setSettleOwedBy} />
+            </View>
           </View>
           {settlePayer && settleOwedBy && settlePayer === settleOwedBy && (
             <Text className="font-body text-xs text-stamp-red mb-3">"Paid by" and "Paid to" can't be the same person.</Text>
           )}
 
-          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Amount (₹)</Text>
-          <TextInput
-            value={amount}
-            onChangeText={setAmount}
-            keyboardType="decimal-pad"
-            className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-          />
+          <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+            <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Amount (₹)</Text>
+              <TextInput
+                value={amount}
+                onChangeText={setAmount}
+                keyboardType="decimal-pad"
+                className="font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+              />
+            </View>
 
-          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
-          <TextInput
-            value={date}
-            onChangeText={setDate}
-            className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-          />
+            <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
+              <TextInput
+                value={date}
+                onChangeText={setDate}
+                className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+              />
+            </View>
 
-          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
-          <TextInput
-            value={note}
-            onChangeText={setNote}
-            placeholder="e.g. Paid via UPI"
-            className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-          />
+            <View className="w-full sm:w-[calc(33.333%-8px)]">
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
+              <TextInput
+                value={note}
+                onChangeText={setNote}
+                placeholder="e.g. Paid via UPI"
+                className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+              />
+            </View>
+          </View>
 
           {parsedAmount > 0 && previewBalance && (
-            <Text className="font-body text-xs text-muted-text mb-3">
+            <Text className="font-body text-xs text-muted-text mt-3 mb-3">
               {previewBalance.status === 'settled' ? (
                 <Text className="font-body-semibold text-ledger-green">This fully settles the balance.</Text>
               ) : (
                 <>
                   After this, <Text className="font-body-semibold text-ink">{previewBalance.debtor}</Text> will owe{' '}
                   <Text className="font-body-semibold text-ink">{previewBalance.creditor}</Text>{' '}
-                  <Text className="font-mono text-ink">{formatCurrency(previewBalance.amount, displayCurrency)}</Text>.
+                  <Text className="font-mono-bold text-ink">{formatCurrency(previewBalance.amount, displayCurrency)}</Text>.
                 </>
               )}
             </Text>
           )}
 
-          <View className="flex-row gap-2">
+          <View className="flex-row gap-2 mt-3">
             <Pressable
               onPress={handleConfirm}
               disabled={saving || !amount || !settlePayer || !settleOwedBy || settlePayer === settleOwedBy}

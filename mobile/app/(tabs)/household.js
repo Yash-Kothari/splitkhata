@@ -6,10 +6,12 @@ import {
   subscribeToMembers,
   subscribeToHouseholdBudgets,
   subscribeToPaymentReminderConfig,
+  deleteExpense,
 } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
 import { useJump } from '../../lib/JumpContext';
-import { DEFAULT_PERSONS, DEFAULT_CATEGORIES, todayISO, getMonthKey, getAvailableMonths } from '../../lib/utils';
+import { useUndoDelete } from '../../lib/useUndoDelete';
+import { DEFAULT_PERSONS, DEFAULT_CATEGORIES, todayISO, getMonthKey, getAvailableMonths, formatCurrency } from '../../lib/utils';
 import AddEntryForm from '../../components/AddEntryForm';
 import EntryList from '../../components/EntryList';
 import BudgetAlerts from '../../components/BudgetAlerts';
@@ -17,6 +19,7 @@ import PaymentReminderBanner from '../../components/PaymentReminderBanner';
 import AppHeader from '../../components/AppHeader';
 import MonthChart from '../../components/MonthChart';
 import CategoryChart from '../../components/CategoryChart';
+import UndoToast from '../../components/UndoToast';
 
 export default function Household() {
   const { user } = useAuth();
@@ -27,6 +30,7 @@ export default function Household() {
   const [budgets, setBudgets] = useState({});
   const [reminderConfig, setReminderConfig] = useState({ enabled: true, amountThreshold: 2000 });
   const [selectedMonth, setSelectedMonth] = useState(() => getMonthKey(todayISO()));
+  const { pendingDeletes, handleDelete, handleUndo, pendingDeleteList } = useUndoDelete(deleteExpense, (err) => console.warn(err));
 
   useEffect(() => subscribeToExpenses('household', setEntries, (err) => console.warn(err)), []);
   useEffect(
@@ -90,8 +94,16 @@ export default function Household() {
           ledger="household"
           categories={categories}
           members={members}
+          pendingDeletes={pendingDeletes}
+          onDelete={handleDelete}
         />
       </ScrollView>
+
+      <UndoToast
+        pendingDeleteList={pendingDeleteList}
+        getLabel={(entry) => `Deleted ${entry.note ? `"${entry.note}"` : entry.category} - ${formatCurrency(entry.amount)}`}
+        onUndo={handleUndo}
+      />
     </View>
   );
 }

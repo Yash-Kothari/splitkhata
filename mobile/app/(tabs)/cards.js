@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView } from 'react-native';
 import {
   subscribeToCreditCards,
@@ -19,13 +19,13 @@ import {
   applyRewardOverrides,
   getQuarterBounds,
 } from '../../lib/utils';
+import { useUndoDelete } from '../../lib/useUndoDelete';
 import Card from '../../components/Card';
 import CardTransactionForm from '../../components/CardTransactionForm';
 import CardTransactionRow from '../../components/CardTransactionRow';
 import CardBillingHistory from '../../components/CardBillingHistory';
 import AppHeader from '../../components/AppHeader';
-
-const UNDO_WINDOW_MS = 6000;
+import UndoToast from '../../components/UndoToast';
 
 function formatReward(amount, unit) {
   return unit === 'points' ? `${Math.round(amount).toLocaleString('en-IN')} pts` : formatCurrency(amount);
@@ -50,22 +50,15 @@ export default function Cards() {
   const [cardTransactions, setCardTransactions] = useState([]);
   const [cardBillingCycles, setCardBillingCycles] = useState([]);
   const [selectedCardId, setSelectedCardId] = useState(null);
-  const [pendingDeletes, setPendingDeletes] = useState({});
   const [txnSearch, setTxnSearch] = useState('');
   const [showMilestones, setShowMilestones] = useState(true);
   const [showCaps, setShowCaps] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
-  const isMountedRef = useRef(true);
+  const { pendingDeletes, handleDelete, handleUndo, pendingDeleteList } = useUndoDelete(deleteCardTransaction, (err) => console.warn(err));
 
   useEffect(() => subscribeToCreditCards(setCreditCards, (err) => console.warn(err)), []);
   useEffect(() => subscribeToCardTransactions(setCardTransactions, (err) => console.warn(err)), []);
   useEffect(() => subscribeToCardBillingCycles(setCardBillingCycles, (err) => console.warn(err)), []);
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
 
   const selectedCard = creditCards.find((c) => c.id === selectedCardId) || creditCards[0] || null;
   const cardNameCounts = creditCards.reduce((acc, c) => ({ ...acc, [c.name]: (acc[c.name] || 0) + 1 }), {});
@@ -116,38 +109,6 @@ export default function Cards() {
       .filter((t) => !term || t.description?.toLowerCase().includes(term) || String(t.amount).includes(term))
       .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
   }, [cardTxns, txnSearch, pendingDeletes]);
-
-  function handleDelete(txn) {
-    const timeoutId = setTimeout(async () => {
-      try {
-        await deleteCardTransaction(txn.id);
-      } catch (err) {
-        console.warn(err);
-      } finally {
-        if (isMountedRef.current) {
-          setPendingDeletes((prev) => {
-            const next = { ...prev };
-            delete next[txn.id];
-            return next;
-          });
-        }
-      }
-    }, UNDO_WINDOW_MS);
-    setPendingDeletes((prev) => ({ ...prev, [txn.id]: { txn, timeoutId } }));
-  }
-
-  function handleUndo(id) {
-    setPendingDeletes((prev) => {
-      const pending = prev[id];
-      if (!pending) return prev;
-      clearTimeout(pending.timeoutId);
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
-  }
-
-  const pendingDeleteList = Object.values(pendingDeletes);
 
   if (creditCards.length === 0) {
     return (
@@ -283,7 +244,7 @@ export default function Cards() {
                           <View key={cap.key}>
                             <View className="flex-row items-center justify-between mb-1">
                               <Text className="font-body-medium text-xs text-ink">{cap.label}</Text>
-                              <Text className={`font-mono text-xs ${remainingColor}`}>
+                              <Text className={`font-mono-bold text-xs ${remainingColor}`}>
                                 {formatReward(cap.remaining, cap.unit)} left
                               </Text>
                             </View>
@@ -340,20 +301,11 @@ export default function Cards() {
         </View>
       </ScrollView>
 
-      {pendingDeleteList.length > 0 && (
-        <View className="absolute left-4 right-4 bottom-24" style={{ gap: 8 }}>
-          {pendingDeleteList.map(({ txn }) => (
-            <View key={txn.id} className="flex-row items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3">
-              <Text className="flex-1 font-body text-sm text-paper" numberOfLines={1}>
-                Deleted {txn.description ? `"${txn.description}"` : formatCurrency(txn.amount)}
-              </Text>
-              <Pressable onPress={() => handleUndo(txn.id)} hitSlop={8}>
-                <Text className="font-body-semibold text-sm text-ledger-green underline">Undo</Text>
-              </Pressable>
-            </View>
-          ))}
-        </View>
-      )}
+      <UndoToast
+        pendingDeleteList={pendingDeleteList}
+        getLabel={(txn) => `Deleted ${txn.description ? `"${txn.description}"` : formatCurrency(txn.amount)}`}
+        onUndo={handleUndo}
+      />
     </View>
   );
 }

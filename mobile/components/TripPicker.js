@@ -86,41 +86,51 @@ export default function TripPicker({
 
   const addTripForm = (
     <View className={trips.length === 0 ? '' : 'mt-3 pt-3 border-t border-ink/10'}>
-      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Trip Name</Text>
-      <TextInput
-        value={name}
-        onChangeText={setName}
-        placeholder="e.g. Japan 2026"
-        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-      />
-      <View className="mb-3">
-        <PickerField label="Currency" value={currency} options={currencies} onChange={setCurrency} />
+      <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+        <View className="w-full sm:w-[calc(25%-9px)]">
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Trip Name</Text>
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            placeholder="e.g. Japan 2026"
+            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+          />
+        </View>
+        <View className="w-full sm:w-[calc(25%-9px)]">
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Year</Text>
+          <TextInput
+            value={year}
+            onChangeText={setYear}
+            keyboardType="number-pad"
+            className="font-mono text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+          />
+        </View>
+        <View className="w-full sm:w-[calc(25%-9px)]">
+          <PickerField label="Currency" value={currency} options={currencies} onChange={setCurrency} />
+        </View>
+        <View className="w-full sm:w-[calc(25%-9px)]">
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Start Date (optional)</Text>
+          <TextInput
+            value={startDate}
+            onChangeText={setStartDate}
+            placeholder="2026-08-24"
+            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+          />
+        </View>
+        <View className="w-full sm:w-[calc(25%-9px)]">
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">End Date (optional)</Text>
+          <TextInput
+            value={endDate}
+            onChangeText={setEndDate}
+            placeholder="2026-09-02"
+            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+          />
+        </View>
       </View>
-      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Year</Text>
-      <TextInput
-        value={year}
-        onChangeText={setYear}
-        keyboardType="number-pad"
-        className="font-mono text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-      />
-      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Start Date (optional)</Text>
-      <TextInput
-        value={startDate}
-        onChangeText={setStartDate}
-        placeholder="2026-08-24"
-        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-      />
-      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">End Date (optional)</Text>
-      <TextInput
-        value={endDate}
-        onChangeText={setEndDate}
-        placeholder="2026-09-02"
-        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-      />
       <Pressable
         onPress={handleCreate}
         disabled={saving || !name.trim()}
-        className="min-h-11 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+        className="mt-3 min-h-11 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
       >
         <Text className="font-body-semibold text-white">{saving ? 'Creating...' : 'Create Trip'}</Text>
       </Pressable>
@@ -172,7 +182,7 @@ export default function TripPicker({
         value={searchTerm}
         onChangeText={setSearchTerm}
         placeholder="Search trips..."
-        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mt-3 mb-1 bg-paper shadow-2xs"
+        className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mt-3 mb-1 bg-paper shadow-2xs"
       />
 
       <View className="mt-2">

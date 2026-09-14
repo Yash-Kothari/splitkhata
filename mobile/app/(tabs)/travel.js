@@ -8,10 +8,12 @@ import {
   subscribeToMembers,
   subscribeToPaymentMethods,
   subscribeToCurrencies,
+  deleteExpense,
 } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
 import { useJump } from '../../lib/JumpContext';
-import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger } from '../../lib/utils';
+import { useUndoDelete } from '../../lib/useUndoDelete';
+import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger, formatCurrency } from '../../lib/utils';
 import AppHeader from '../../components/AppHeader';
 import TripPicker from '../../components/TripPicker';
 import TripSettings from '../../components/TripSettings';
@@ -20,6 +22,7 @@ import BudgetAlerts from '../../components/BudgetAlerts';
 import AddEntryForm from '../../components/AddEntryForm';
 import EntryList from '../../components/EntryList';
 import CategoryChart from '../../components/CategoryChart';
+import UndoToast from '../../components/UndoToast';
 
 export default function Travel() {
   const { user } = useAuth();
@@ -37,6 +40,7 @@ export default function Travel() {
   const [selectedTrip, setSelectedTrip] = useState('');
   const [currentCurrency, setCurrentCurrency] = useState('INR');
   const [showSettings, setShowSettings] = useState(false);
+  const { pendingDeletes, handleDelete, handleUndo, pendingDeleteList } = useUndoDelete(deleteExpense, (err) => console.warn(err));
 
   useEffect(() => subscribeToExpenses('travel', setAllTravelEntries, (err) => console.warn(err)), []);
   useEffect(() => subscribeToTrips(setTrips, (err) => console.warn(err)), []);
@@ -158,9 +162,17 @@ export default function Travel() {
             members={activeMembersList}
             dbPaymentMethods={paymentMethods}
             currentCurrency={selectedTripObj.currency}
+            pendingDeletes={pendingDeletes}
+            onDelete={handleDelete}
           />
         )}
       </ScrollView>
+
+      <UndoToast
+        pendingDeleteList={pendingDeleteList}
+        getLabel={(entry) => `Deleted ${entry.note ? `"${entry.note}"` : entry.category} - ${formatCurrency(entry.amount)}`}
+        onUndo={handleUndo}
+      />
 
       <TripSettings
         visible={showSettings}

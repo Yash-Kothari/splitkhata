@@ -1,3 +1,14 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Expo's web output doesn't otherwise force the DOM chain up to #root to
+   fill the real browser viewport, so on a wide window the app renders at
+   its natural (narrow, phone-shaped) size floating in an unstyled black
+   canvas instead of a paper-colored page - html/body need explicit height
+   for percentage heights to resolve at all, and #root needs it too since
+   Expo's web renderer mounts into it rather than body directly. */
+html, body, #root {
+  height: 100%;
+  background-color: #F2ECDD;
+}

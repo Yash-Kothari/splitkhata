@@ -126,10 +126,10 @@ const TABS = [
   { key: 'security', label: '🔒 Security PIN' },
 ];
 
-function Tag({ label, onRemove, removable = true }) {
+function Tag({ label, onRemove, removable = true, labelWeight = 'font-body-medium' }) {
   return (
     <View className="flex-row items-center gap-1.5 rounded-xl border border-ink/15 bg-paper px-3 py-1.5 mr-1.5 mb-1.5 shadow-2xs">
-      <Text className="font-body-medium text-xs text-ink">{label}</Text>
+      <Text className={`${labelWeight} text-xs text-ink`}>{label}</Text>
       {removable && (
         <Pressable onPress={onRemove} hitSlop={6}>
           <Text className="font-body-semibold text-xs text-muted-text">✕</Text>
@@ -206,6 +206,7 @@ export default function SettingsModal({ visible, onClose }) {
   const [newBudgetCategory, setNewBudgetCategory] = useState('');
   const [newBudgetAmount, setNewBudgetAmount] = useState('');
   const [budgetMessage, setBudgetMessage] = useState('');
+  const [savingBudgetCat, setSavingBudgetCat] = useState(null);
 
   useEffect(() => {
     if (visible) setBudgetDrafts({ ...householdBudgets });
@@ -232,9 +233,14 @@ export default function SettingsModal({ visible, onClose }) {
   async function handleAddBudget() {
     const amount = Number(newBudgetAmount);
     if (!newBudgetCategory || !amount || amount <= 0) return;
-    await persistBudgets({ ...budgetDrafts, [newBudgetCategory]: amount });
-    setNewBudgetCategory('');
-    setNewBudgetAmount('');
+    setSavingBudgetCat(newBudgetCategory);
+    try {
+      await persistBudgets({ ...budgetDrafts, [newBudgetCategory]: amount });
+      setNewBudgetCategory('');
+      setNewBudgetAmount('');
+    } finally {
+      setSavingBudgetCat(null);
+    }
   }
   async function handleRemoveBudget(category) {
     const next = { ...budgetDrafts };
@@ -577,7 +583,13 @@ export default function SettingsModal({ visible, onClose }) {
           </Pressable>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} className="border-b border-ink/10 bg-paper/30" contentContainerStyle={{ paddingHorizontal: 12 }}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          className="border-b border-ink/10 bg-paper/30"
+          contentContainerStyle={{ paddingHorizontal: 12, alignItems: 'center' }}
+          style={{ flexGrow: 0, flexShrink: 0, height: 44 }}
+        >
           {TABS.map((t) => (
             <Pressable
               key={t.key}
@@ -637,7 +649,7 @@ export default function SettingsModal({ visible, onClose }) {
             <View>
               <Text className="font-body-semibold text-sm text-ink mb-0.5">Household Category Budgets</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
-                Pick a category and set a monthly limit - it applies every month, not just this one. Warns at 80% of the limit, alerts once it's exceeded.
+                Pick a category and set a monthly limit - it applies every month, not just this one. Nothing is flagged until you set one. Warns at 80% of the limit, alerts once it's exceeded.
               </Text>
               {budgetMessage ? <Text className="font-body text-xs text-stamp-red mb-3">{budgetMessage}</Text> : null}
 
@@ -654,7 +666,11 @@ export default function SettingsModal({ visible, onClose }) {
                       placeholder="Limit (₹)"
                       className={`${input} flex-1 mb-0`}
                     />
-                    <Pressable onPress={handleAddBudget} disabled={!newBudgetCategory || !newBudgetAmount} className="px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                    <Pressable
+                      onPress={handleAddBudget}
+                      disabled={!newBudgetCategory || !newBudgetAmount || savingBudgetCat === newBudgetCategory}
+                      className="px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+                    >
                       <Text className="font-body-semibold text-white text-sm">Add</Text>
                     </Pressable>
                   </View>
@@ -710,34 +726,46 @@ export default function SettingsModal({ visible, onClose }) {
             <View>
               <Text className="font-body-semibold text-sm text-ink mb-0.5">Recurring Household Expenses</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
-                Rent, subscriptions, utilities - bills that repeat every month. Each rule auto-creates this month's entry the next time the app is opened.
+                Rent, subscriptions, utilities - bills that repeat every month. Each rule auto-creates this month's entry the next time the app is opened; nothing is added before you save the rule.
               </Text>
 
-              <View className="mb-3">
-                <PickerField label="Category" value={newRuleCategory || 'Select a category...'} options={categories.household} onChange={setNewRuleCategory} />
-              </View>
-              <View className="mb-3">
-                <PickerField label="Who pays" value={newRulePayer} options={dbMembers} onChange={setNewRulePayer} />
-              </View>
-              <Text className={label}>Amount (₹)</Text>
-              <TextInput value={newRuleAmount} onChangeText={setNewRuleAmount} keyboardType="decimal-pad" placeholder="0.00" className={input} />
-              <Text className={label}>Day of month</Text>
-              <TextInput value={newRuleDay} onChangeText={setNewRuleDay} keyboardType="number-pad" className={input} />
-              <View className="mb-3">
-                <PickerField label="Split type" value={newRuleSplitType} options={RULE_SPLIT_TYPE_OPTIONS} onChange={setNewRuleSplitType} />
-              </View>
-              {newRuleSplitType === 'owed' && (
-                <View className="mb-3">
-                  <PickerField label="Owed by" value={newRuleOwedBy || 'Owed by...'} options={dbMembers.filter((m) => m !== newRulePayer)} onChange={setNewRuleOwedBy} />
+              <View className="rounded-xl border border-ink/10 bg-paper/60 p-3.5 mb-3">
+                <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+                  <View className="w-full sm:w-[calc(50%-6px)]">
+                    <PickerField label="Category" value={newRuleCategory || 'Select a category...'} options={categories.household} onChange={setNewRuleCategory} />
+                  </View>
+                  <View className="w-full sm:w-[calc(50%-6px)]">
+                    <PickerField label="Who pays" value={newRulePayer} options={dbMembers} onChange={setNewRulePayer} />
+                  </View>
                 </View>
-              )}
-              <Text className={label}>Note (optional)</Text>
-              <TextInput value={newRuleNote} onChangeText={setNewRuleNote} placeholder="e.g. Rent" className={input} />
+                <View className="flex-row flex-wrap mt-3" style={{ gap: 12 }}>
+                  <View className="w-full sm:w-[calc(50%-6px)]">
+                    <Text className={label}>Amount (₹)</Text>
+                    <TextInput value={newRuleAmount} onChangeText={setNewRuleAmount} keyboardType="decimal-pad" placeholder="0.00" className={input} />
+                  </View>
+                  <View className="w-full sm:w-[calc(50%-6px)]">
+                    <Text className={label}>Day of month</Text>
+                    <TextInput value={newRuleDay} onChangeText={setNewRuleDay} keyboardType="number-pad" className={input} />
+                  </View>
+                </View>
+                <View className="mt-3">
+                  <PickerField label="Split type" value={newRuleSplitType} options={RULE_SPLIT_TYPE_OPTIONS} onChange={setNewRuleSplitType} />
+                </View>
+                {newRuleSplitType === 'owed' && (
+                  <View className="mt-3">
+                    <PickerField label="Owed by" value={newRuleOwedBy || 'Owed by...'} options={dbMembers.filter((m) => m !== newRulePayer)} onChange={setNewRuleOwedBy} />
+                  </View>
+                )}
+                <View className="mt-3">
+                  <Text className={label}>Note (optional)</Text>
+                  <TextInput value={newRuleNote} onChangeText={setNewRuleNote} placeholder="e.g. Rent" className={input} />
+                </View>
 
-              <Pressable onPress={handleAddRule} disabled={addingRule || !newRuleCategory || !newRuleAmount} className="min-h-10 rounded-xl bg-ledger-green items-center justify-center mb-2 disabled:opacity-50">
-                <Text className="font-body-semibold text-white text-sm">{addingRule ? 'Saving...' : 'Add Recurring Rule'}</Text>
-              </Pressable>
-              {ruleMessage ? <Text className="font-body text-xs text-muted-text mb-3">{ruleMessage}</Text> : null}
+                <Pressable onPress={handleAddRule} disabled={addingRule || !newRuleCategory || !newRuleAmount} className="mt-3 min-h-10 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                  <Text className="font-body-semibold text-white text-sm">{addingRule ? 'Saving...' : 'Add Recurring Rule'}</Text>
+                </Pressable>
+                {ruleMessage ? <Text className="font-body text-xs text-muted-text mt-3">{ruleMessage}</Text> : null}
+              </View>
 
               {recurringRules.length === 0 ? (
                 <Text className="font-body text-xs text-muted-text">No recurring rules yet.</Text>
@@ -763,7 +791,7 @@ export default function SettingsModal({ visible, onClose }) {
             <View>
               <Text className="font-body-semibold text-sm text-ink mb-0.5">Payment Reminders</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
-                A nudge when the household balance owed crosses an amount you set.
+                A nudge when the household balance owed crosses an amount you set - in-app only, there's no push notification without a backend.
               </Text>
 
               <View className="flex-row items-center justify-between rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3 mb-3">
@@ -779,6 +807,7 @@ export default function SettingsModal({ visible, onClose }) {
                   onBlur={handleReminderThresholdBlur}
                   editable={reminderDraft.enabled}
                   keyboardType="decimal-pad"
+                  placeholder="₹"
                   className={`w-24 min-h-10 font-body text-sm text-ink border border-ink/15 rounded-xl px-3 bg-paper text-center ${!reminderDraft.enabled ? 'opacity-50' : ''}`}
                 />
               </View>
@@ -804,52 +833,68 @@ export default function SettingsModal({ visible, onClose }) {
                     <Text className={sectionLabel}>Card details</Text>
                     <Text className={label}>Card name</Text>
                     <TextInput value={newCardName} onChangeText={setNewCardName} placeholder="e.g. HDFC Diners Club Black Metal" className={input} />
-                    <View className="mb-3">
-                      <PickerField label="Owner" value={newCardOwner} options={dbMembers} onChange={setNewCardOwner} />
-                    </View>
-                    <View className="mb-3">
-                      <PickerField
-                        label="Reward strategy"
-                        value={newCardStrategy}
-                        options={CARD_REWARD_STRATEGIES.map((s) => ({ value: s.key, label: s.label }))}
-                        onChange={handleNewCardStrategyChange}
-                      />
-                    </View>
-
-                    <Text className={sectionLabel}>Billing cycle</Text>
-                    <Text className={label}>Billing cycle day</Text>
-                    <TextInput value={newCardBillingDay} onChangeText={setNewCardBillingDay} keyboardType="number-pad" className={input} />
-                    <Text className={label}>Due date offset (days)</Text>
-                    <TextInput value={newCardDueOffset} onChangeText={setNewCardDueOffset} keyboardType="number-pad" className={input} />
-
-                    <Text className={sectionLabel}>Milestone tracking</Text>
-                    <Text className="font-body text-2xs text-muted-text mb-2">
-                      The annual milestone runs on the card's own 12-month cycle from the month below, not the calendar year.
-                    </Text>
-                    <View className="mb-3">
-                      <PickerField label="Annual milestone starts from" value={newCardAnnualAnchorMonth} options={MONTH_OPTIONS} onChange={setNewCardAnnualAnchorMonth} />
-                    </View>
-                    <Text className={label}>Spend already counted this period (₹)</Text>
-                    <TextInput value={newCardAnnualStartingSpend} onChangeText={setNewCardAnnualStartingSpend} keyboardType="decimal-pad" placeholder="0" className={input} />
-                    {CARD_REWARD_STRATEGIES.find((s) => s.key === newCardStrategy)?.unit === 'points' && (
-                      <>
-                        <Text className={label}>Starting reward points balance</Text>
-                        <TextInput value={newCardStartingPoints} onChangeText={setNewCardStartingPoints} keyboardType="decimal-pad" placeholder="0" className={input} />
-                      </>
-                    )}
-
-                    <Text className={sectionLabel}>Reward rules</Text>
-                    {(CARD_PARAM_FIELDS[newCardStrategy] || []).map((field) => (
-                      <View key={field.key}>
-                        <Text className={label}>{field.label}</Text>
-                        <TextInput
-                          value={String(newCardParams[field.key] ?? '')}
-                          onChangeText={(v) => setNewCardParams((prev) => ({ ...prev, [field.key]: v }))}
-                          keyboardType={field.isText ? 'default' : 'decimal-pad'}
-                          className={input}
+                    <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+                      <View className="w-full sm:w-[calc(50%-6px)]">
+                        <PickerField label="Owner" value={newCardOwner} options={dbMembers} onChange={setNewCardOwner} />
+                      </View>
+                      <View className="w-full sm:w-[calc(50%-6px)]">
+                        <PickerField
+                          label="Reward strategy"
+                          value={newCardStrategy}
+                          options={CARD_REWARD_STRATEGIES.map((s) => ({ value: s.key, label: s.label }))}
+                          onChange={handleNewCardStrategyChange}
                         />
                       </View>
-                    ))}
+                    </View>
+
+                    <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Billing cycle</Text>
+                    <View className="flex-row flex-wrap mt-2" style={{ gap: 12 }}>
+                      <View className="w-full sm:w-[calc(50%-6px)]">
+                        <Text className={label}>Billing cycle day</Text>
+                        <TextInput value={newCardBillingDay} onChangeText={setNewCardBillingDay} keyboardType="number-pad" className={input} />
+                      </View>
+                      <View className="w-full sm:w-[calc(50%-6px)]">
+                        <Text className={label}>Due date offset (days)</Text>
+                        <TextInput value={newCardDueOffset} onChangeText={setNewCardDueOffset} keyboardType="number-pad" className={input} />
+                      </View>
+                    </View>
+
+                    <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Milestone tracking</Text>
+                    <Text className="font-body text-2xs text-muted-text mb-2">
+                      The annual milestone (fee waiver / bonus) runs on the card's own 12-month cycle from the month below, not
+                      the calendar year. Adding this card partway through that period? Use the spend/points fields to carry over
+                      what already happened before you started tracking here.
+                    </Text>
+                    <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+                      <View className="w-full sm:w-[calc(50%-6px)]">
+                        <PickerField label="Annual milestone starts from" value={newCardAnnualAnchorMonth} options={MONTH_OPTIONS} onChange={setNewCardAnnualAnchorMonth} />
+                      </View>
+                      <View className="w-full sm:w-[calc(50%-6px)]">
+                        <Text className={label}>Spend already counted this period (₹)</Text>
+                        <TextInput value={newCardAnnualStartingSpend} onChangeText={setNewCardAnnualStartingSpend} keyboardType="decimal-pad" placeholder="0" className={input} />
+                      </View>
+                      {CARD_REWARD_STRATEGIES.find((s) => s.key === newCardStrategy)?.unit === 'points' && (
+                        <View className="w-full sm:w-[calc(50%-6px)]">
+                          <Text className={label}>Starting reward points balance</Text>
+                          <TextInput value={newCardStartingPoints} onChangeText={setNewCardStartingPoints} keyboardType="decimal-pad" placeholder="0" className={input} />
+                        </View>
+                      )}
+                    </View>
+
+                    <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Reward rules</Text>
+                    <View className="flex-row flex-wrap mt-2" style={{ gap: 12 }}>
+                      {(CARD_PARAM_FIELDS[newCardStrategy] || []).map((field) => (
+                        <View key={field.key} className="w-full sm:w-[calc(50%-6px)]">
+                          <Text className={label}>{field.label}</Text>
+                          <TextInput
+                            value={String(newCardParams[field.key] ?? '')}
+                            onChangeText={(v) => setNewCardParams((prev) => ({ ...prev, [field.key]: v }))}
+                            keyboardType={field.isText ? 'default' : 'decimal-pad'}
+                            className={input}
+                          />
+                        </View>
+                      ))}
+                    </View>
                     {newCardStrategy === 'hdfc_diners_slab_milestone' && (
                       <View className="flex-row flex-wrap mb-2">
                         {(newCardParams.categories || []).map((c) => (
@@ -884,25 +929,35 @@ export default function SettingsModal({ visible, onClose }) {
                         <View>
                           <Text className={label}>Card name</Text>
                           <TextInput value={editCardDrafts.name} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, name: v }))} className={input} />
-                          <View className="mb-3">
-                            <PickerField label="Owner" value={editCardDrafts.owner} options={dbMembers} onChange={(v) => setEditCardDrafts((p) => ({ ...p, owner: v }))} />
+                          <View className="flex-row flex-wrap" style={{ gap: 8 }}>
+                            <View className="w-full sm:w-[calc(33.333%-5.333px)]">
+                              <PickerField label="Owner" value={editCardDrafts.owner} options={dbMembers} onChange={(v) => setEditCardDrafts((p) => ({ ...p, owner: v }))} />
+                            </View>
+                            <View className="w-full sm:w-[calc(33.333%-5.333px)]">
+                              <Text className={label}>Billing day</Text>
+                              <TextInput value={editCardDrafts.billingCycleDay} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, billingCycleDay: v }))} keyboardType="number-pad" className={input} />
+                            </View>
+                            <View className="w-full sm:w-[calc(33.333%-5.333px)]">
+                              <Text className={label}>Due offset (days)</Text>
+                              <TextInput value={editCardDrafts.dueDateOffsetDays} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, dueDateOffsetDays: v }))} keyboardType="number-pad" className={input} />
+                            </View>
                           </View>
-                          <Text className={label}>Billing day</Text>
-                          <TextInput value={editCardDrafts.billingCycleDay} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, billingCycleDay: v }))} keyboardType="number-pad" className={input} />
-                          <Text className={label}>Due offset (days)</Text>
-                          <TextInput value={editCardDrafts.dueDateOffsetDays} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, dueDateOffsetDays: v }))} keyboardType="number-pad" className={input} />
-                          <View className="mb-3">
-                            <PickerField label="Annual milestone from" value={editCardDrafts.annualMilestoneAnchorMonth} options={MONTH_OPTIONS} onChange={(v) => setEditCardDrafts((p) => ({ ...p, annualMilestoneAnchorMonth: v }))} />
+                          <View className="flex-row flex-wrap mt-3" style={{ gap: 8 }}>
+                            <View className="w-full sm:w-[calc(33.333%-5.333px)]">
+                              <PickerField label="Annual milestone from" value={editCardDrafts.annualMilestoneAnchorMonth} options={MONTH_OPTIONS} onChange={(v) => setEditCardDrafts((p) => ({ ...p, annualMilestoneAnchorMonth: v }))} />
+                            </View>
+                            <View className="w-full sm:w-[calc(33.333%-5.333px)]">
+                              <Text className={label}>Spend counted so far (₹)</Text>
+                              <TextInput value={editCardDrafts.annualMilestoneStartingSpend} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, annualMilestoneStartingSpend: v }))} keyboardType="decimal-pad" className={input} />
+                            </View>
+                            {strategyMeta?.unit === 'points' && (
+                              <View className="w-full sm:w-[calc(33.333%-5.333px)]">
+                                <Text className={label}>Starting points balance</Text>
+                                <TextInput value={editCardDrafts.startingRewardPoints} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, startingRewardPoints: v }))} keyboardType="decimal-pad" className={input} />
+                              </View>
+                            )}
                           </View>
-                          <Text className={label}>Spend counted so far (₹)</Text>
-                          <TextInput value={editCardDrafts.annualMilestoneStartingSpend} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, annualMilestoneStartingSpend: v }))} keyboardType="decimal-pad" className={input} />
-                          {strategyMeta?.unit === 'points' && (
-                            <>
-                              <Text className={label}>Starting points balance</Text>
-                              <TextInput value={editCardDrafts.startingRewardPoints} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, startingRewardPoints: v }))} keyboardType="decimal-pad" className={input} />
-                            </>
-                          )}
-                          <View className="flex-row gap-2">
+                          <View className="flex-row gap-2 mt-3">
                             <Pressable onPress={() => saveEditCard(card.id)} className="px-3 py-2 rounded-lg bg-ledger-green">
                               <Text className="font-body-semibold text-xs text-white">Save</Text>
                             </Pressable>
@@ -955,23 +1010,26 @@ export default function SettingsModal({ visible, onClose }) {
                           <Text className={`${sectionLabel} mt-2`}>Add a new rule version</Text>
                           <Text className={label}>Effective from</Text>
                           <TextInput value={newVersionEffectiveFrom} onChangeText={setNewVersionEffectiveFrom} placeholder="2026-08-24" className={input} />
-                          {(CARD_PARAM_FIELDS[card.rewardStrategy] || []).map((field) => (
-                            <View key={field.key}>
-                              <Text className={label}>{field.label}</Text>
-                              <TextInput
-                                value={String(newVersionParams[field.key] ?? '')}
-                                onChangeText={(v) => setNewVersionParams((prev) => ({ ...prev, [field.key]: v }))}
-                                keyboardType={field.isText ? 'default' : 'decimal-pad'}
-                                className={input}
-                              />
-                            </View>
-                          ))}
+                          <View className="flex-row flex-wrap" style={{ gap: 8 }}>
+                            {(CARD_PARAM_FIELDS[card.rewardStrategy] || []).map((field) => (
+                              <View key={field.key} className="w-full sm:w-[calc(50%-4px)]">
+                                <Text className={label}>{field.label}</Text>
+                                <TextInput
+                                  value={String(newVersionParams[field.key] ?? '')}
+                                  onChangeText={(v) => setNewVersionParams((prev) => ({ ...prev, [field.key]: v }))}
+                                  keyboardType={field.isText ? 'default' : 'decimal-pad'}
+                                  className={input}
+                                />
+                              </View>
+                            ))}
+                          </View>
 
                           {card.rewardStrategy === 'hdfc_diners_slab_milestone' && (
                             <View className="pt-2 border-t border-ink/10 mb-3">
                               <Text className={sectionLabel}>Categories</Text>
                               <Text className="font-body text-2xs text-muted-text mb-2">
-                                Renaming a category is safe. Removing one that past transactions still use falls back to the base 1× rate for them.
+                                Renaming a category is safe - it doesn't touch past transactions. Removing one that past
+                                transactions still use falls back to the base 1x rate for them, same as an unrecognized category.
                               </Text>
                               {(newVersionParams.categories || []).map((cat, i) => (
                                 <View key={i} className="rounded-lg border border-ink/10 bg-paper-card px-2.5 py-2.5 mb-2">
@@ -986,23 +1044,29 @@ export default function SettingsModal({ visible, onClose }) {
                                       <Text className="text-base text-stamp-red/70">✕</Text>
                                     </Pressable>
                                   </View>
-                                  <Text className={label}>Multiplier</Text>
-                                  <TextInput
-                                    value={String(cat.multiplier ?? '')}
-                                    onChangeText={(v) => updateCategoryField(i, 'multiplier', v === '' ? '' : Number(v))}
-                                    keyboardType="decimal-pad"
-                                    className={input}
-                                  />
-                                  <Text className={label}>Cap amount</Text>
-                                  <TextInput
-                                    value={cat.capAmount == null ? '' : String(cat.capAmount)}
-                                    onChangeText={(v) => updateCategoryField(i, 'capAmount', v === '' ? null : Number(v))}
-                                    keyboardType="decimal-pad"
-                                    placeholder="None"
-                                    className={input}
-                                  />
-                                  <View className="mb-1">
-                                    <PickerField label="Cap period" value={cat.capPeriod ?? ''} options={CAP_PERIOD_OPTIONS} onChange={(v) => updateCategoryField(i, 'capPeriod', v === '' ? null : v)} />
+                                  <View className="flex-row flex-wrap" style={{ gap: 8 }}>
+                                    <View className="w-[calc(33.333%-5.333px)]">
+                                      <Text className={label}>Multiplier</Text>
+                                      <TextInput
+                                        value={String(cat.multiplier ?? '')}
+                                        onChangeText={(v) => updateCategoryField(i, 'multiplier', v === '' ? '' : Number(v))}
+                                        keyboardType="decimal-pad"
+                                        className={input}
+                                      />
+                                    </View>
+                                    <View className="w-[calc(33.333%-5.333px)]">
+                                      <Text className={label}>Cap amount</Text>
+                                      <TextInput
+                                        value={cat.capAmount == null ? '' : String(cat.capAmount)}
+                                        onChangeText={(v) => updateCategoryField(i, 'capAmount', v === '' ? null : Number(v))}
+                                        keyboardType="decimal-pad"
+                                        placeholder="None"
+                                        className={input}
+                                      />
+                                    </View>
+                                    <View className="w-[calc(33.333%-5.333px)]">
+                                      <PickerField label="Cap period" value={cat.capPeriod ?? ''} options={CAP_PERIOD_OPTIONS} onChange={(v) => updateCategoryField(i, 'capPeriod', v === '' ? null : v)} />
+                                    </View>
                                   </View>
                                 </View>
                               ))}
@@ -1034,17 +1098,24 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'currencies' && (
             <View>
-              <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Currencies</Text>
-              <Text className="font-body text-xs text-muted-text mb-3">Currencies stored here are synchronized in real-time across devices.</Text>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Currencies Database</Text>
+              <Text className="font-body text-xs text-muted-text mb-3">Currencies stored in the database are selectable for entries and trips.</Text>
               <View className="flex-row gap-2 mb-3">
-                <TextInput value={newCurrencyName} onChangeText={setNewCurrencyName} placeholder="e.g. USD" className={`${input} flex-1 mb-0`} autoCapitalize="characters" />
+                <TextInput
+                  value={newCurrencyName}
+                  onChangeText={(v) => setNewCurrencyName(v.toUpperCase())}
+                  placeholder="New Currency Code (e.g. CAD, AUD, CHF)..."
+                  className={`${input} flex-1 mb-0`}
+                  autoCapitalize="characters"
+                />
                 <Pressable onPress={handleAddCurrency} disabled={addingCurr || !newCurrencyName.trim()} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
-                  <Text className="font-body-semibold text-white text-sm">{addingCurr ? 'Saving...' : 'Add'}</Text>
+                  <Text className="font-body-semibold text-white text-sm">{addingCurr ? 'Saving...' : 'Add Currency'}</Text>
                 </Pressable>
               </View>
+              <Text className={label}>Active Database Currencies ({currencies.currencies.length})</Text>
               <View className="flex-row flex-wrap">
                 {currencies.currencies.map((c) => (
-                  <Tag key={c} label={c} onRemove={() => handleDeleteCurrency(c)} />
+                  <Tag key={c} label={c} onRemove={() => handleDeleteCurrency(c)} labelWeight="font-body-semibold" />
                 ))}
               </View>
             </View>
@@ -1052,17 +1123,18 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'members' && (
             <View>
-              <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Members</Text>
-              <Text className="font-body text-xs text-muted-text mb-3">Members stored here are synchronized in real-time across devices.</Text>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Members Database</Text>
+              <Text className="font-body text-xs text-muted-text mb-3">Persons/Partners in your household ledger. Stored dynamically in database.</Text>
               <View className="flex-row gap-2 mb-3">
-                <TextInput value={newMemberName} onChangeText={setNewMemberName} placeholder="e.g. Priya" className={`${input} flex-1 mb-0`} />
+                <TextInput value={newMemberName} onChangeText={setNewMemberName} placeholder="New Member Name..." className={`${input} flex-1 mb-0`} />
                 <Pressable onPress={handleAddMember} disabled={addingMember || !newMemberName.trim()} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
-                  <Text className="font-body-semibold text-white text-sm">{addingMember ? 'Saving...' : 'Add'}</Text>
+                  <Text className="font-body-semibold text-white text-sm">{addingMember ? 'Saving...' : 'Add Member'}</Text>
                 </Pressable>
               </View>
+              <Text className={label}>Active Database Members ({dbMembers.length})</Text>
               <View className="flex-row flex-wrap">
                 {dbMembers.map((m) => (
-                  <Tag key={m} label={m} onRemove={() => handleDeleteMember(m)} />
+                  <Tag key={m} label={m} onRemove={() => handleDeleteMember(m)} labelWeight="font-body-semibold" />
                 ))}
               </View>
             </View>

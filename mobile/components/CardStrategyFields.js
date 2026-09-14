@@ -3,21 +3,25 @@ import PickerField from './PickerField';
 import { todayISO, resolveStrategyParamsForDate } from '../lib/utils';
 
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
-const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper';
+const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper';
 
 // Every reward strategy needs a different shape of "which category/channel
 // does this transaction count as" - exact port of web's StrategyFields in
 // CardsManager.jsx. Shared between the Add Transaction form and inline
-// transaction editing.
-export default function CardStrategyFields({ card, draft, onChange }) {
+// transaction editing, which wrap this in a flex-row flex-wrap grid using
+// two different gap values (14px vs 12px) - `gap` picks which matching
+// half-width class to use so this component's own fields still line up
+// with the rest of whichever parent grid it's rendered inside.
+export default function CardStrategyFields({ card, draft, onChange, gap = 14 }) {
   const strategy = card.rewardStrategy;
+  const halfWidth = gap === 14 ? 'w-full sm:w-[calc(50%-7px)]' : 'w-full sm:w-[calc(50%-6px)]';
 
   if (strategy === 'hdfc_diners_slab_milestone') {
     const dinersCategories = resolveStrategyParamsForDate(card.strategyParamsHistory, todayISO()).categories || [];
     const smartbuyCategory = dinersCategories.find((c) => c.key === 'smartbuy_hotel');
     return (
       <>
-        <View className="mb-3">
+        <View className={halfWidth}>
           <PickerField
             label="Category"
             value={draft.category || 'regular'}
@@ -27,22 +31,26 @@ export default function CardStrategyFields({ card, draft, onChange }) {
         </View>
         {draft.category === 'smartbuy_hotel' && (
           <>
-            <Text className={label}>Multiplier</Text>
-            <TextInput
-              value={String(draft.travelMultiplier ?? '')}
-              onChangeText={(v) => onChange({ travelMultiplier: v })}
-              keyboardType="decimal-pad"
-              placeholder={String(smartbuyCategory?.multiplier ?? 10)}
-              className={input}
-            />
-            <Text className={label}>Points Redeemed (Optional)</Text>
-            <TextInput
-              value={String(draft.pointsRedeemed ?? '')}
-              onChangeText={(v) => onChange({ pointsRedeemed: v })}
-              keyboardType="decimal-pad"
-              placeholder="0"
-              className={input}
-            />
+            <View className={halfWidth}>
+              <Text className={label}>Multiplier</Text>
+              <TextInput
+                value={String(draft.travelMultiplier ?? '')}
+                onChangeText={(v) => onChange({ travelMultiplier: v })}
+                keyboardType="decimal-pad"
+                placeholder={String(smartbuyCategory?.multiplier ?? 10)}
+                className={input}
+              />
+            </View>
+            <View className={halfWidth}>
+              <Text className={label}>Points Redeemed (Optional)</Text>
+              <TextInput
+                value={String(draft.pointsRedeemed ?? '')}
+                onChangeText={(v) => onChange({ pointsRedeemed: v })}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                className={input}
+              />
+            </View>
           </>
         )}
       </>
@@ -51,7 +59,7 @@ export default function CardStrategyFields({ card, draft, onChange }) {
 
   if (strategy === 'sbi_two_channel_cashback') {
     return (
-      <View className="mb-3">
+      <View className={halfWidth}>
         <PickerField
           label="Category"
           value={draft.channel || 'online'}
@@ -69,7 +77,7 @@ export default function CardStrategyFields({ card, draft, onChange }) {
   if (strategy === 'hsbc_tiered_cashback_aggregate') {
     const value = draft.channel === 'excluded' ? 'excluded' : draft.isBonusEligible ? 'eligible' : 'base';
     return (
-      <View className="mb-3">
+      <View className={halfWidth}>
         <PickerField
           label="Category"
           value={value}
@@ -90,7 +98,7 @@ export default function CardStrategyFields({ card, draft, onChange }) {
 
   if (strategy === 'axis_supermoney_dual_pool') {
     return (
-      <View className="mb-3">
+      <View className={halfWidth}>
         <PickerField
           label="Category"
           value={draft.isBonusEligible ? 'supermoney' : 'other'}
@@ -107,7 +115,7 @@ export default function CardStrategyFields({ card, draft, onChange }) {
   if (strategy === 'hsbc_premier_flat_capped') {
     return (
       <>
-        <View className="mb-3">
+        <View className={halfWidth}>
           <PickerField
             label="Category"
             value={draft.category || 'regular'}
@@ -122,22 +130,26 @@ export default function CardStrategyFields({ card, draft, onChange }) {
         </View>
         {draft.category === 'travel_bonus' && (
           <>
-            <Text className={label}>Multiplier (6-36% per the booking)</Text>
-            <TextInput
-              value={String(draft.travelMultiplier ?? '')}
-              onChangeText={(v) => onChange({ travelMultiplier: v })}
-              keyboardType="decimal-pad"
-              placeholder="e.g. 6"
-              className={input}
-            />
-            <Text className={label}>Points Redeemed (Optional)</Text>
-            <TextInput
-              value={String(draft.pointsRedeemed ?? '')}
-              onChangeText={(v) => onChange({ pointsRedeemed: v })}
-              keyboardType="decimal-pad"
-              placeholder="0"
-              className={input}
-            />
+            <View className={halfWidth}>
+              <Text className={label}>Multiplier (6-36% per the booking)</Text>
+              <TextInput
+                value={String(draft.travelMultiplier ?? '')}
+                onChangeText={(v) => onChange({ travelMultiplier: v })}
+                keyboardType="decimal-pad"
+                placeholder="e.g. 6"
+                className={input}
+              />
+            </View>
+            <View className={halfWidth}>
+              <Text className={label}>Points Redeemed (Optional)</Text>
+              <TextInput
+                value={String(draft.pointsRedeemed ?? '')}
+                onChangeText={(v) => onChange({ pointsRedeemed: v })}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                className={input}
+              />
+            </View>
           </>
         )}
       </>

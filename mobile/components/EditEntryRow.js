@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TextInput, Pressable, Alert } from 'react-native';
 import PickerField from './PickerField';
 import { cardShadow } from './Card';
 import { updateExpense } from '../lib/firebase';
@@ -56,6 +56,7 @@ export default function EditEntryRow({
   const [date, setDate] = useState(entry.date);
   const [note, setNote] = useState(entry.note || '');
   const [saving, setSaving] = useState(false);
+  const [slowSave, setSlowSave] = useState(false);
 
   const tripWithdrawals = useMemo(() => tripEntries.filter((e) => e.isWithdrawal), [tripEntries]);
   const otherCashEntries = useMemo(
@@ -97,6 +98,7 @@ export default function EditEntryRow({
     const parsed = parseFloat(amount);
     if (!parsed || parsed <= 0) return;
     setSaving(true);
+    const slowTimer = setTimeout(() => setSlowSave(true), 2500);
     try {
       if (isSettlement) {
         await updateExpense(entry.id, { amount: parsed, note: note.trim(), date });
@@ -124,7 +126,9 @@ export default function EditEntryRow({
       onSaveError?.(err);
       Alert.alert('Could not save', err?.message || String(err));
     } finally {
+      clearTimeout(slowTimer);
       setSaving(false);
+      setSlowSave(false);
     }
   }
 
@@ -137,29 +141,39 @@ export default function EditEntryRow({
           <Text className="font-body-semibold text-ledger-green">{entry.owedBy}</Text>
         </Text>
 
-        <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Amount</Text>
-        <TextInput
-          value={amount}
-          onChangeText={setAmount}
-          keyboardType="decimal-pad"
-          className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-        />
+        <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
+              Amount ({isTravel ? currentCurrency : '₹'})
+            </Text>
+            <TextInput
+              value={amount}
+              onChangeText={setAmount}
+              keyboardType="decimal-pad"
+              className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+            />
+          </View>
 
-        <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
-        <TextInput
-          value={date}
-          onChangeText={setDate}
-          className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-        />
+          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
+            <TextInput
+              value={date}
+              onChangeText={setDate}
+              className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+            />
+          </View>
 
-        <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
-        <TextInput
-          value={note}
-          onChangeText={setNote}
-          className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-        />
+          <View className="w-full sm:w-[calc(33.333%-8px)]">
+            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
+            <TextInput
+              value={note}
+              onChangeText={setNote}
+              className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+            />
+          </View>
+        </View>
 
-        <View className="flex-row gap-2">
+        <View className="flex-row gap-2 mt-3">
           <Pressable onPress={onCancel} className="flex-1 min-h-11 rounded-xl border border-ink/15 items-center justify-center">
             <Text className="font-body-semibold text-sm text-ink">Cancel</Text>
           </Pressable>
@@ -168,7 +182,11 @@ export default function EditEntryRow({
             disabled={saving || !amount}
             className="flex-1 min-h-11 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
           >
-            {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-sm text-white">Save</Text>}
+            {saving ? (
+              <Text className="font-body-semibold text-sm text-white">{slowSave ? 'Still saving…' : 'Saving...'}</Text>
+            ) : (
+              <Text className="font-body-semibold text-sm text-white">Save</Text>
+            )}
           </Pressable>
         </View>
       </View>
@@ -177,114 +195,132 @@ export default function EditEntryRow({
 
   return (
     <View style={cardShadow} className="mx-4 mb-4 p-4 rounded-2xl bg-paper-card border border-ledger-green/40">
-      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-        Amount (₹){isTravel ? ' - real cost' : ''}
-      </Text>
-      <TextInput
-        value={amount}
-        onChangeText={setAmount}
-        keyboardType="decimal-pad"
-        editable={!amountLocked}
-        className={`font-mono text-base border border-ink/15 rounded-xl px-3 py-2.5 mb-3 ${
-          amountLocked ? 'bg-paper/60 text-muted-text' : 'bg-paper text-ink'
-        }`}
-      />
-      {amountLocked && fifoBreakdownText ? (
-        <Text className="font-body text-2xs text-muted-text -mt-2 mb-3">{fifoBreakdownText}</Text>
-      ) : null}
-
-      {isTravel && (
-        <>
+      <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-            Local Amount ({currentCurrency})
+            Amount (₹){isTravel ? ' - real cost' : ''}
           </Text>
           <TextInput
-            value={localAmount}
-            onChangeText={setLocalAmount}
+            value={amount}
+            onChangeText={setAmount}
             keyboardType="decimal-pad"
-            className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-          />
-
-          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Reward Points</Text>
-          <TextInput
-            value={rewardPoints}
-            onChangeText={setRewardPoints}
-            keyboardType="numbers-and-punctuation"
-            className="font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-          />
-        </>
-      )}
-
-      <View className="mb-3">
-        <PickerField label="Split Type" value={splitType} options={SPLIT_TYPE_OPTIONS} onChange={setSplitType} />
-      </View>
-
-      <View className="mb-3">
-        <PickerField label="Who Paid" value={payer} options={members} onChange={setPayer} />
-      </View>
-
-      {splitType === 'owed' && (
-        <View className="mb-3">
-          <PickerField
-            label="Who Owes the Full Amount"
-            value={owedBy}
-            options={members.filter((m) => m !== payer)}
-            onChange={setOwedBy}
-          />
-        </View>
-      )}
-
-      <View className="mb-3">
-        <PickerField label="Category" value={category} options={categories} onChange={setCategory} />
-      </View>
-
-      {isTravel && (
-        <View className="mb-3">
-          <PickerField label="Payment Method" value={paymentMethod} options={paymentMethodsList} onChange={setPaymentMethod} />
-        </View>
-      )}
-
-      {splitType === 'shared' && members.length > 2 && (
-        <View className="mb-3">
-          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Split Among</Text>
-          <View className="flex-row flex-wrap">
-            {members.map((m) => (
-              <Chip key={m} label={m} selected={splitAmong.includes(m)} onPress={() => toggleSplitAmong(m)} />
-            ))}
-          </View>
-        </View>
-      )}
-
-      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date (YYYY-MM-DD)</Text>
-      <TextInput
-        value={date}
-        onChangeText={setDate}
-        placeholder="2026-08-24"
-        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-      />
-
-      {isTravel && (
-        <Pressable onPress={() => setIsWithdrawal((v) => !v)} className="flex-row items-center gap-2.5 mb-3">
-          <View
-            className={`w-5 h-5 rounded border items-center justify-center ${
-              isWithdrawal ? 'bg-ledger-green border-ledger-green' : 'border-ink/30 bg-paper'
+            editable={!amountLocked}
+            className={`font-mono-bold text-sm border border-ink/15 rounded-xl px-3 py-2.5 ${
+              amountLocked ? 'bg-paper/60 text-muted-text' : 'bg-paper text-ink'
             }`}
-          >
-            {isWithdrawal && <Text className="text-white text-xs">✓</Text>}
+          />
+          {amountLocked && fifoBreakdownText ? (
+            <Text className="font-body text-2xs text-muted-text mt-1">{fifoBreakdownText}</Text>
+          ) : null}
+        </View>
+
+        {isTravel && (
+          <>
+            <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
+                Local Amount ({currentCurrency})
+              </Text>
+              <TextInput
+                value={localAmount}
+                onChangeText={setLocalAmount}
+                keyboardType="decimal-pad"
+                placeholder="Optional"
+                className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+              />
+            </View>
+
+            <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
+                Reward Points (+ spent / − earned)
+              </Text>
+              <TextInput
+                value={rewardPoints}
+                onChangeText={setRewardPoints}
+                keyboardType="numbers-and-punctuation"
+                placeholder="Optional"
+                className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+              />
+            </View>
+          </>
+        )}
+
+        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+          <PickerField label="Split Type" value={splitType} options={SPLIT_TYPE_OPTIONS} onChange={setSplitType} />
+        </View>
+
+        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+          <PickerField label="Who Paid" value={payer} options={members} onChange={setPayer} />
+        </View>
+
+        {splitType === 'owed' && (
+          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+            <PickerField
+              label="Who Owes the Full Amount"
+              value={owedBy}
+              options={members.filter((m) => m !== payer)}
+              onChange={setOwedBy}
+            />
           </View>
-          <Text className="font-body-semibold text-sm text-ink flex-1">Cash withdrawal (exclude from spend totals)</Text>
-        </Pressable>
-      )}
+        )}
 
-      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
-      <TextInput
-        value={note}
-        onChangeText={setNote}
-        placeholder="What was this for?"
-        className="font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-      />
+        {splitType === 'shared' && members.length > 2 && (
+          <View className="w-full">
+            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Split Among</Text>
+            <View className="flex-row flex-wrap">
+              {members.map((m) => (
+                <Chip key={m} label={m} selected={splitAmong.includes(m)} onPress={() => toggleSplitAmong(m)} />
+              ))}
+            </View>
+          </View>
+        )}
 
-      <View className="flex-row gap-2">
+        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+          <PickerField label="Category" value={category} options={categories} onChange={setCategory} />
+        </View>
+
+        {isTravel && (
+          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+            <PickerField label="Payment Method" value={paymentMethod} options={paymentMethodsList} onChange={setPaymentMethod} />
+          </View>
+        )}
+
+        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date (YYYY-MM-DD)</Text>
+          <TextInput
+            value={date}
+            onChangeText={setDate}
+            placeholder="2026-08-24"
+            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+          />
+        </View>
+
+        {isTravel && (
+          <View className="w-full">
+            <Pressable onPress={() => setIsWithdrawal((v) => !v)} className="flex-row items-center gap-2.5">
+              <View
+                className={`w-4 h-4 rounded border items-center justify-center ${
+                  isWithdrawal ? 'bg-ledger-green border-ledger-green' : 'border-ink/30 bg-paper'
+                }`}
+              >
+                {isWithdrawal && <Text className="text-white text-xs">✓</Text>}
+              </View>
+              <Text className="font-body-semibold text-sm text-ink flex-1">Cash withdrawal (exclude from spend totals)</Text>
+            </Pressable>
+          </View>
+        )}
+
+        <View className="w-full">
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
+          <TextInput
+            value={note}
+            onChangeText={setNote}
+            placeholder="What was this for?"
+            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+          />
+        </View>
+      </View>
+
+      <View className="flex-row gap-2 mt-3">
         <Pressable onPress={onCancel} className="flex-1 min-h-11 rounded-xl border border-ink/15 items-center justify-center">
           <Text className="font-body-semibold text-sm text-ink">Cancel</Text>
         </Pressable>
@@ -293,7 +329,11 @@ export default function EditEntryRow({
           disabled={saving || !amount}
           className="flex-1 min-h-11 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
         >
-          {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-sm text-white">Save</Text>}
+          {saving ? (
+            <Text className="font-body-semibold text-sm text-white">{slowSave ? 'Still saving…' : 'Saving...'}</Text>
+          ) : (
+            <Text className="font-body-semibold text-sm text-white">Save</Text>
+          )}
         </Pressable>
       </View>
     </View>

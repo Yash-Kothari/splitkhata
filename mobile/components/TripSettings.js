@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, Modal, ScrollView, Alert } from 'react-native';
+import { View, Text, TextInput, Pressable, Modal, ScrollView, Alert, useWindowDimensions } from 'react-native';
 import PickerField from './PickerField';
 import {
   updateTripInDb,
@@ -42,6 +42,11 @@ export default function TripSettings({
   onSaveError,
   onTripDeleted,
 }) {
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  // Native always fills the physical screen, so a real full-screen slide-up
+  // panel is right there - only a wide browser window needs this capped to
+  // a centered dialog instead of stretching a settings form edge to edge.
+  const isWide = windowWidth >= 768;
   const [datesStart, setDatesStart] = useState('');
   const [datesEnd, setDatesEnd] = useState('');
   const [openingCash, setOpeningCash] = useState('');
@@ -195,9 +200,13 @@ export default function TripSettings({
   if (!trip) return null;
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View className="flex-1 bg-paper">
-        <View className="flex-row items-center justify-between px-4 pt-14 pb-3 border-b border-ink/10 bg-paper-card">
+    <Modal visible={visible} animationType="slide" transparent={isWide} onRequestClose={onClose}>
+      <View className={isWide ? 'flex-1 bg-black/40 items-center justify-center' : 'flex-1'}>
+        <View
+          className={isWide ? 'w-full rounded-2xl bg-paper overflow-hidden' : 'flex-1 bg-paper'}
+          style={isWide ? { maxWidth: 560, maxHeight: Math.round(windowHeight * 0.85) } : undefined}
+        >
+        <View className={`flex-row items-center justify-between px-4 pb-3 border-b border-ink/10 bg-paper-card ${isWide ? 'pt-4' : 'pt-14'}`}>
           <Text className="font-display text-lg text-ink flex-1" numberOfLines={1}>
             {trip.name} Settings
           </Text>
@@ -208,73 +217,101 @@ export default function TripSettings({
 
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
           <Text className="font-body-semibold text-xs text-ink mb-2">Trip Dates</Text>
-          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Start Date</Text>
-          <TextInput
-            value={datesStart}
-            onChangeText={setDatesStart}
-            placeholder="2026-08-24"
-            className="font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-          />
-          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">End Date</Text>
-          <TextInput
-            value={datesEnd}
-            onChangeText={setDatesEnd}
-            placeholder="2026-09-02"
-            className="font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-          />
-          <Pressable onPress={handleSaveDates} className="min-h-10 rounded-lg border border-ink/15 items-center justify-center mb-5">
-            <Text className="font-body-semibold text-sm text-ink">Save Dates</Text>
-          </Pressable>
+          <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+            <View className="w-full sm:w-[calc(33.333%-8px)]">
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Start Date</Text>
+              <TextInput
+                value={datesStart}
+                onChangeText={setDatesStart}
+                placeholder="2026-08-24"
+                className="font-body-medium text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
+              />
+            </View>
+            <View className="w-full sm:w-[calc(33.333%-8px)]">
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">End Date</Text>
+              <TextInput
+                value={datesEnd}
+                onChangeText={setDatesEnd}
+                placeholder="2026-09-02"
+                className="font-body-medium text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
+              />
+            </View>
+            <View className="w-full sm:w-[calc(33.333%-8px)] sm:justify-end">
+              <Pressable onPress={handleSaveDates} className="min-h-10 rounded-lg border border-ink/15 items-center justify-center">
+                <Text className="font-body-semibold text-sm text-ink">Save Dates</Text>
+              </Pressable>
+            </View>
+            <Text className="w-full font-body text-2xs text-muted-text">
+              Sets when {trip.name} counts as your active trip, so it surfaces automatically without searching.
+            </Text>
+          </View>
 
-          <View className="border-t border-ink/10 pt-4 mb-5">
+          <View className="border-t border-ink/10 pt-4 mt-5 mb-5">
             <Text className="font-body-semibold text-xs text-ink mb-2">Starting Cash</Text>
-            <TextInput
-              value={openingCash}
-              onChangeText={setOpeningCash}
-              keyboardType="decimal-pad"
-              placeholder="0"
-              className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-            />
-            <Pressable onPress={handleSaveCash} className="min-h-10 rounded-lg bg-ledger-green items-center justify-center">
-              <Text className="font-body-semibold text-sm text-white">Save Starting Cash</Text>
-            </Pressable>
+            <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+              <View className="w-full sm:w-[calc(50%-6px)]">
+                <TextInput
+                  value={openingCash}
+                  onChangeText={setOpeningCash}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
+                />
+              </View>
+              <View className="w-full sm:w-[calc(50%-6px)] sm:justify-end">
+                <Pressable onPress={handleSaveCash} className="min-h-10 rounded-lg bg-ledger-green items-center justify-center">
+                  <Text className="font-body-semibold text-sm text-white">Save Starting Cash</Text>
+                </Pressable>
+              </View>
+            </View>
           </View>
 
           <View className="border-t border-ink/10 pt-4 mb-5">
             <Text className="font-body-semibold text-xs text-ink mb-1">ATM Cash Withdrawal ({currentCurrency || 'Local'})</Text>
-            <TextInput
-              value={withdrawalAmount}
-              onChangeText={setWithdrawalAmount}
-              keyboardType="decimal-pad"
-              placeholder="0"
-              className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-            />
-            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">INR Cost (required)</Text>
-            <TextInput
-              value={withdrawalInr}
-              onChangeText={setWithdrawalInr}
-              keyboardType="decimal-pad"
-              placeholder="From card/forex statement"
-              className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-            />
-            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
-            <TextInput
-              value={withdrawalDate}
-              onChangeText={setWithdrawalDate}
-              className="font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 mb-3 bg-paper shadow-2xs"
-            />
-            <View className="mb-3">
-              <PickerField label="Withdrawn By" value={withdrawalPayer} options={dbMembers} onChange={setWithdrawalPayer} />
+            <View className="flex-row flex-wrap mt-2" style={{ gap: 12 }}>
+              <View className="w-full sm:w-[calc(50%-6px)]">
+                <TextInput
+                  value={withdrawalAmount}
+                  onChangeText={setWithdrawalAmount}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
+                />
+              </View>
+              <View className="w-full sm:w-[calc(50%-6px)]">
+                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">INR Cost (required)</Text>
+                <TextInput
+                  value={withdrawalInr}
+                  onChangeText={setWithdrawalInr}
+                  keyboardType="decimal-pad"
+                  placeholder="From card/forex statement"
+                  className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
+                />
+              </View>
+              <View className="w-full sm:w-[calc(50%-6px)]">
+                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
+                <TextInput
+                  value={withdrawalDate}
+                  onChangeText={setWithdrawalDate}
+                  className="font-body-medium text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
+                />
+              </View>
+              <View className="w-full sm:w-[calc(50%-6px)]">
+                <PickerField label="Withdrawn By" value={withdrawalPayer} options={dbMembers} onChange={setWithdrawalPayer} />
+              </View>
+              <View className="w-full sm:w-[calc(50%-6px)]">
+                <PickerField label="Card Used" value={withdrawalPaymentMethod} options={dbPaymentMethods} onChange={setWithdrawalPaymentMethod} />
+              </View>
+              <View className="w-full">
+                <Text className="font-body text-2xs text-muted-text mb-2">
+                  This is the only place to record an ATM withdrawal. The INR cost is required - it's what registers the joint
+                  debt above and gives every "Cash" purchase you add afterward its rate, so nothing needs pricing by hand.
+                </Text>
+                <Pressable onPress={handleAddWithdrawal} className="min-h-10 rounded-lg border border-ink/15 items-center justify-center">
+                  <Text className="font-body-semibold text-sm text-ink">Record Withdrawal</Text>
+                </Pressable>
+              </View>
             </View>
-            <View className="mb-3">
-              <PickerField label="Card Used" value={withdrawalPaymentMethod} options={dbPaymentMethods} onChange={setWithdrawalPaymentMethod} />
-            </View>
-            <Text className="font-body text-2xs text-muted-text mb-2">
-              The INR cost is what registers the joint debt and gives every "Cash" purchase you add afterward its rate.
-            </Text>
-            <Pressable onPress={handleAddWithdrawal} className="min-h-10 rounded-lg border border-ink/15 items-center justify-center">
-              <Text className="font-body-semibold text-sm text-ink">Record Withdrawal</Text>
-            </Pressable>
           </View>
 
           <View className="border-t border-ink/10 pt-4 mb-5">
@@ -435,6 +472,7 @@ export default function TripSettings({
           <Pressable onPress={onClose} className="min-h-11 rounded-xl bg-ledger-green items-center justify-center">
             <Text className="font-body-semibold text-white">Done</Text>
           </Pressable>
+        </View>
         </View>
       </View>
     </Modal>

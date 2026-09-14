@@ -85,9 +85,9 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, onSaveError }
       <View className="flex-row gap-3">
         <View className="flex-1">
           <Text className="font-body text-xs text-muted-text">Bill</Text>
-          <Text className="font-mono text-xs text-ink">Expected {formatCurrency(expectedBill)}</Text>
+          <Text className="font-mono-bold text-xs text-ink">Expected {formatCurrency(expectedBill)}</Text>
           {billConfirmed ? (
-            <Text className={`font-mono text-xs mt-0.5 ${amountMismatch !== 0 ? 'text-stamp-red font-bold' : 'text-ledger-green'}`}>
+            <Text className={`font-mono-bold text-xs mt-0.5 ${amountMismatch !== 0 ? 'text-stamp-red' : 'text-ledger-green'}`}>
               Actual {formatCurrency(cycleRecord.actualBillAmount)}
               {amountMismatch !== 0 ? ` (${amountMismatch > 0 ? '+' : ''}${formatCurrency(amountMismatch)})` : ''}
             </Text>
@@ -108,9 +108,9 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, onSaveError }
         </View>
         <View className="flex-1">
           <Text className="font-body text-xs text-muted-text">Reward</Text>
-          <Text className="font-mono text-xs text-ink">Expected {formatReward(expectedReward, rewardUnit)}</Text>
+          <Text className="font-mono-bold text-xs text-ink">Expected {formatReward(expectedReward, rewardUnit)}</Text>
           {pointsConfirmed ? (
-            <Text className={`font-mono text-xs mt-0.5 ${rewardMismatch !== 0 ? 'text-stamp-red font-bold' : 'text-ledger-green'}`}>
+            <Text className={`font-mono-bold text-xs mt-0.5 ${rewardMismatch !== 0 ? 'text-stamp-red' : 'text-ledger-green'}`}>
               Actual {formatReward(cycleRecord.actualRewardCredited, rewardUnit)}
               {rewardMismatch !== 0 ? ` (${rewardMismatch > 0 ? '+' : ''}${Math.round(rewardMismatch)})` : ''}
             </Text>

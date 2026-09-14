@@ -98,6 +98,73 @@ export function isFirebaseConfigured() {
   return true;
 }
 
+// Web gates AI Logic behind App Check (reCAPTCHA v3) on top of the base
+// config - React Native can't use reCAPTCHA (it's a browser challenge), and
+// the native equivalents (App Attest/Play Integrity) need their own Apple/
+// Google developer enrollment, so mobile skips App Check entirely for now.
+// AI Logic still works without it (App Check only blocks requests once you
+// turn on Enforce mode for the API in Firebase Console, which isn't on) -
+// this is a deliberate, temporary tradeoff, not a bug.
+export function isAiConfigured() {
+  return isFirebaseConfigured();
+}
+
+let aiInitPromise = null;
+function ensureAi() {
+  if (!isAiConfigured()) return Promise.resolve(null);
+  if (!aiInitPromise) {
+    aiInitPromise = import('firebase/ai').then(({ getAI, GoogleAIBackend, getGenerativeModel }) => {
+      const ai = getAI(app, { backend: new GoogleAIBackend() });
+      const model = getGenerativeModel(ai, { model: 'gemini-flash-latest' });
+      return { ai, model, getGenerativeModel };
+    });
+  }
+  return aiInitPromise;
+}
+
+// Narrates an already-computed summary (see buildTripDigestPrompt in
+// utils.js) into plain English - the app does the math, Gemini just writes
+// it up, so there's no risk of the AI inventing numbers that don't match
+// the ledger.
+export async function generateDigest(prompt) {
+  const ctx = await ensureAi();
+  if (!ctx) throw new Error('AI Logic is not configured.');
+  const result = await ctx.model.generateContent(prompt);
+  return result.response.text();
+}
+
+// Constrains Gemini to return JSON matching the given schema (see
+// buildQuickAddSchema / buildCategorySuggestionSchema in utils.js) - a
+// fresh model is built per call since the schema differs every time
+// (categories/members vary by ledger/trip).
+export async function generateStructured(prompt, schema) {
+  const ctx = await ensureAi();
+  if (!ctx) throw new Error('AI Logic is not configured.');
+  const jsonModel = ctx.getGenerativeModel(ctx.ai, {
+    model: 'gemini-flash-latest',
+    generationConfig: { responseMimeType: 'application/json', responseSchema: schema },
+  });
+  const result = await jsonModel.generateContent(prompt);
+  return JSON.parse(result.response.text());
+}
+
+// Same schema-constrained approach as generateStructured, but with an image
+// part alongside the text prompt (see buildReceiptExtractionSchema/Prompt in
+// utils.js).
+export async function extractReceiptFromImage(base64Data, mimeType, prompt, schema) {
+  const ctx = await ensureAi();
+  if (!ctx) throw new Error('AI Logic is not configured.');
+  const jsonModel = ctx.getGenerativeModel(ctx.ai, {
+    model: 'gemini-flash-latest',
+    generationConfig: { responseMimeType: 'application/json', responseSchema: schema },
+  });
+  const result = await jsonModel.generateContent([
+    { text: prompt },
+    { inlineData: { data: base64Data, mimeType } },
+  ]);
+  return JSON.parse(result.response.text());
+}
+
 export function isAllowedUser(user) {
   return Boolean(user?.email && user.emailVerified && ALLOWED_EMAILS.has(user.email.toLowerCase()));
 }
