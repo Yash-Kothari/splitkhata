@@ -40,13 +40,13 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
     // z-index, since that only wins stacking fights within its own local
     // context, not against unrelated siblings elsewhere in the tree.
     <SafeAreaView className="bg-paper z-50" edges={['top']} style={{ zIndex: 50 }}>
-      <View className="flex-row items-center gap-1.5 px-4 pt-2 pb-3 border-b border-ink/10">
+      <View className="flex-row items-center gap-1.5 px-3 sm:px-4 pt-4 sm:pt-6 pb-4 border-b border-ink/10">
         <View className="flex-row items-center gap-1.5 flex-shrink" style={{ flexShrink: 1 }}>
-          <Text className="font-display text-xl text-ink tracking-tight" numberOfLines={1}>
+          <Text className="font-display text-xl sm:text-2xl text-ink tracking-tight" numberOfLines={1}>
             Splitkhata
           </Text>
-          <View className="px-2.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 flex-shrink" style={{ flexShrink: 1 }}>
-            <Text className="font-body-semibold text-[11px] tracking-wide text-ledger-green" numberOfLines={1}>
+          <View className="px-2.5 sm:px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 flex-shrink" style={{ flexShrink: 1 }}>
+            <Text className="font-body-semibold text-[11px] sm:text-xs tracking-wide text-ledger-green" numberOfLines={1}>
               {badge}
             </Text>
           </View>

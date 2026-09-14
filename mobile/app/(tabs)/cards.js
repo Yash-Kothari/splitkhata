@@ -114,8 +114,8 @@ export default function Cards() {
     return (
       <View className="flex-1 bg-paper">
         <AppHeader badge="💳 Cards" showSettings={showSettings} onShowSettingsChange={setShowSettings} />
-        <View className="flex-1 items-center justify-center px-6">
-          <Card className="items-center px-6 py-8 w-full max-w-sm">
+        <View className="px-4" style={{ paddingTop: 16 }}>
+          <Card className="items-center px-6 py-8">
             <Text className="font-display text-lg text-ink mb-2">No cards yet</Text>
             <Text className="font-body text-sm text-muted-text text-center mb-4">
               Add your first credit card in Settings to start tracking transactions, reward points, and billing cycles.

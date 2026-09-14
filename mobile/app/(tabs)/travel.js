@@ -154,8 +154,6 @@ export default function Travel() {
 
         {selectedTripObj && allTravelEntries && (
           <EntryList
-            title="Trip Passbook"
-            emptyMessage="No entries recorded yet. Add your first expense above!"
             entries={tripEntries}
             ledger="travel"
             categories={categories}
