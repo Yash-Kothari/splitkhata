@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
-import { signInWithGoogleIdToken } from '../lib/firebase';
+import { signInWithGoogleIdToken, signInDevTestUser, IS_DEV_EMULATOR } from '../lib/firebase';
 
 // Matches web's shadow-xl on this specific card (GoogleSignIn in App.jsx) -
 // a taller, softer shadow than .panel-card's own box-shadow, which is what
@@ -28,6 +28,15 @@ const WEB_CLIENT_ID = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '';
 export default function SignInScreen() {
   const [signingIn, setSigningIn] = useState(false);
   const [error, setError] = useState('');
+
+  // Dev-only: skip the real Google OAuth flow entirely and sign straight
+  // into the Auth emulator as a test user, so local testing against
+  // EXPO_PUBLIC_USE_FIRESTORE_EMULATOR never needs a Google account. Never
+  // runs against the real Auth service - IS_DEV_EMULATOR is __DEV__-gated.
+  useEffect(() => {
+    if (!IS_DEV_EMULATOR) return;
+    signInDevTestUser().catch((err) => setError(err?.message || 'Dev sign-in failed.'));
+  }, []);
 
   // useIdTokenAuthRequest (not the plain useAuthRequest) - the plain hook
   // defaults to responseType 'token' (an access token, no id_token at all)
@@ -70,7 +79,12 @@ export default function SignInScreen() {
           Sign in with an approved Google account to access the shared ledger.
         </Text>
 
-        {configMissing ? (
+        {IS_DEV_EMULATOR ? (
+          <View className="flex-row items-center gap-2">
+            <ActivityIndicator color="#3D7068" />
+            <Text className="font-body text-xs text-muted-text">Signing in as a dev test user (emulator)…</Text>
+          </View>
+        ) : configMissing ? (
           <Text className="font-body text-xs text-stamp-red text-center">
             Google sign-in isn't configured yet - set EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID and
             EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID in mobile/.env.

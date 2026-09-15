@@ -12,13 +12,15 @@ import {
   getAuth,
   initializeAuth,
   getReactNativePersistence,
+  connectAuthEmulator,
   GoogleAuthProvider,
   onAuthStateChanged,
   signInWithCredential,
   signOut,
 } from '@firebase/auth';
 import {
-  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
   connectFirestoreEmulator,
   collection,
   addDoc,
@@ -67,16 +69,26 @@ const auth =
   Platform.OS === 'web'
     ? getAuth(app)
     : initializeAuth(app, { persistence: getReactNativePersistence(AsyncStorage) });
-const dbInstance = getFirestore(app);
+// persistentLocalCache gives every platform (web export and native) an
+// on-disk cache of the last-synced data - IndexedDB on web, a SQLite-backed
+// store on native - so a reload/relaunch renders instantly from cache
+// instead of waiting on a fresh network round trip, matching web's
+// enableIndexedDbPersistence behavior (src/firebase.js).
+const dbInstance = initializeFirestore(app, { localCache: persistentLocalCache() });
 
 // Opt-in only (EXPO_PUBLIC_USE_FIRESTORE_EMULATOR=true in mobile/.env) - lets
-// development point at a disposable local Firestore (`firebase emulators:start
-// --only firestore` from the repo root) instead of the real household's data,
-// while still using the real Google Sign-In/Firebase Auth project. Default
-// stays off so a plain `npx expo run:ios` always talks to prod, matching the
-// web app's behavior.
-if (__DEV__ && process.env.EXPO_PUBLIC_USE_FIRESTORE_EMULATOR === 'true') {
+// development point at a disposable local Firestore + Auth (`firebase
+// emulators:start --only firestore,auth` from the repo root) instead of the
+// real household's data and a real Google account. Default stays off so a
+// plain `npx expo run:ios` always talks to prod, matching the web app's
+// behavior.
+export const IS_DEV_EMULATOR = __DEV__ && process.env.EXPO_PUBLIC_USE_FIRESTORE_EMULATOR === 'true';
+
+if (IS_DEV_EMULATOR) {
   connectFirestoreEmulator(dbInstance, 'localhost', 8080);
+  // disableWarnings: the emulator's own "do not use in production" banner is
+  // noise here since IS_DEV_EMULATOR already guarantees __DEV__.
+  connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
 }
 
 const expensesRef = collection(dbInstance, 'expenses');
@@ -179,6 +191,26 @@ export function subscribeToAuth(callback) {
 // the web app gets, checked against the same firestore.rules allowlist.
 export async function signInWithGoogleIdToken(idToken) {
   const credential = GoogleAuthProvider.credential(idToken);
+  return signInWithCredential(auth, credential);
+}
+
+// Dev-only shortcut so local testing (IS_DEV_EMULATOR) never has to click
+// through a real Google OAuth popup. The Auth emulator's documented "fake
+// IdP" format - a JSON blob passed as the id_token - creates/signs in a user
+// with these claims without contacting Google, so sign_in_provider and
+// email_verified still satisfy firestore.rules' isAllowedUser() check
+// against the emulator's own copy of the rules. Throws if pointed at the
+// real Auth service, since GoogleAuthProvider.credential(<this JSON blob>)
+// isn't a real Google ID token.
+export async function signInDevTestUser(email = 'yash.sk.kothari@gmail.com') {
+  if (!IS_DEV_EMULATOR) throw new Error('signInDevTestUser only works against the Auth emulator (IS_DEV_EMULATOR).');
+  const fakeIdToken = JSON.stringify({
+    sub: `dev-${email}`,
+    email,
+    email_verified: true,
+    name: email.split('@')[0].split('.')[0].replace(/^./, (c) => c.toUpperCase()),
+  });
+  const credential = GoogleAuthProvider.credential(fakeIdToken);
   return signInWithCredential(auth, credential);
 }
 
