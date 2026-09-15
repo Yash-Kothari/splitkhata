@@ -30,7 +30,7 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
 
   useEffect(() => subscribeToPinConfig(setPinConfig), []);
 
-  const deviceName = user?.displayName || user?.email || 'Account';
+  const deviceName = user?.displayName?.split(' ')[0] || user?.email || 'Account';
 
   return (
     // z-50: without an explicit z-index here, this SafeAreaView and its
