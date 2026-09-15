@@ -218,7 +218,7 @@ export default function TripPicker({
         <View className="mt-3 pt-3 border-t border-ink/10">
           <View className="flex-row gap-2 mb-3">
             <View className="flex-1 rounded-lg bg-paper-card border border-ink/10 px-3.5 py-2.5">
-              <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-muted-text">Trip</Text>
+              <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-muted-text">Active Trip</Text>
               <Text className="font-body-semibold text-sm text-ink mt-0.5" numberOfLines={1}>
                 {selectedTripObj.name}
               </Text>
@@ -228,7 +228,7 @@ export default function TripPicker({
               <Text className="font-body-semibold text-sm text-ink mt-0.5">{selectedTripObj.currency}</Text>
             </View>
             <View className="flex-1 rounded-lg bg-paper-card border border-ink/10 px-3.5 py-2.5">
-              <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-muted-text">Cash in Hand</Text>
+              <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-muted-text">Cash Balance</Text>
               <Text className="font-mono-bold text-sm text-ink mt-0.5">
                 {cashStats.balance.toFixed(2)} {selectedTripObj.currency}
               </Text>

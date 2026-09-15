@@ -713,9 +713,16 @@ export default function SettingsModal({ visible, onClose }) {
                     {formatCurrency(s.spent)} of {formatCurrency(s.limit)} this month ({Math.round(s.pctUsed * 100)}%)
                   </Text>
                   {s.previous && (
-                    <Text className="font-body text-2xs text-muted-text mt-0.5">
-                      Last month: {formatCurrency(s.previous.spent)} ({Math.round(s.previous.pctUsed * 100)}%{s.previous.pctUsed >= 1 ? ' - over' : ''})
-                    </Text>
+                    <View className="flex-row items-center gap-1 mt-0.5">
+                      <View
+                        className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                          s.previous.pctUsed >= 1 ? 'bg-stamp-red' : s.previous.pctUsed >= 0.8 ? 'bg-mustard' : 'bg-ledger-green'
+                        }`}
+                      />
+                      <Text className="font-body text-2xs text-muted-text">
+                        Last month: {formatCurrency(s.previous.spent)} ({Math.round(s.previous.pctUsed * 100)}%{s.previous.pctUsed >= 1 ? ' - over' : ''})
+                      </Text>
+                    </View>
                   )}
                 </View>
               ))}
@@ -1105,7 +1112,7 @@ export default function SettingsModal({ visible, onClose }) {
                   value={newCurrencyName}
                   onChangeText={(v) => setNewCurrencyName(v.toUpperCase())}
                   placeholder="New Currency Code (e.g. CAD, AUD, CHF)..."
-                  className={`${input} flex-1 mb-0`}
+                  className={`${input} flex-1 mb-0 uppercase`}
                   autoCapitalize="characters"
                 />
                 <Pressable onPress={handleAddCurrency} disabled={addingCurr || !newCurrencyName.trim()} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">

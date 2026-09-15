@@ -324,7 +324,7 @@ export default function TripSettings({
                 className="flex-1 font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2 bg-paper shadow-2xs"
               />
               <Pressable onPress={handleAddCategory} className="px-3.5 rounded-lg border border-ink/15 items-center justify-center">
-                <Text className="font-body-semibold text-xs text-ink">Add</Text>
+                <Text className="font-body-semibold text-xs text-ink">Add Category</Text>
               </Pressable>
             </View>
             <View className="flex-row flex-wrap">
@@ -393,7 +393,10 @@ export default function TripSettings({
           </View>
 
           <View className="border-t border-ink/10 pt-4 mb-5">
-            <Text className="font-body-semibold text-xs text-ink mb-2">Payment Methods</Text>
+            <Text className="font-body-semibold text-xs text-ink mb-1">Payment Methods</Text>
+            <Text className="font-body text-2xs text-muted-text mb-2">
+              Which card or "Cash" paid for each expense - used to reconcile cash spend against the balance above.
+            </Text>
             <View className="flex-row gap-2 mb-2">
               <TextInput
                 value={paymentMethodDraft}
