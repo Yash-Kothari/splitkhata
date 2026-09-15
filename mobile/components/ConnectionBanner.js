@@ -18,6 +18,7 @@ export default function ConnectionBanner() {
 
   useEffect(() => {
     return NetInfo.addEventListener((state) => {
+      console.log('[ConnectionBanner debug]', JSON.stringify(state));
       setOffline(state.isConnected === false || state.isInternetReachable === false);
     });
   }, []);
