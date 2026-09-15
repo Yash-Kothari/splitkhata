@@ -10,6 +10,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider } from '../lib/AuthContext';
 import { LockProvider } from '../lib/LockContext';
 import { JumpProvider } from '../lib/JumpContext';
+import ConnectionBanner from '../components/ConnectionBanner';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -54,6 +55,7 @@ export default function RootLayout() {
                 AddEntryForm.js etc.) so this width actually gets used
                 instead of leaving an empty gutter. */}
             <View className="flex-1 bg-paper md:items-center">
+              <ConnectionBanner />
               <View className="flex-1 w-full md:max-w-5xl">
                 <Stack screenOptions={{ headerShown: false }} />
               </View>
