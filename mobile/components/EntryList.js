@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
+import Svg, { Line } from 'react-native-svg';
 import EditEntryRow from './EditEntryRow';
 import PickerField from './PickerField';
 import { cardShadow } from './Card';
@@ -154,10 +155,17 @@ export default function EntryList({
           return (
             <Fragment key={item.id}>
               {divider}
-              <View
-                className="relative pl-5 pr-2 py-3.5"
-                style={{ borderLeftWidth: 2, borderLeftColor: 'rgba(36,48,74,0.25)', borderStyle: 'dashed' }}
-              >
+              <View className="relative pl-5 pr-2 py-3.5">
+                {/* RN's borderStyle:'dashed' logs "Unsupported dashed / dotted
+                    border style" and silently renders solid on iOS when only
+                    one side has width (confirmed via a real device/simulator
+                    run, not just the web preview) - drawn as an SVG line
+                    instead, which dashes reliably on every platform. */}
+                <View className="absolute" style={{ left: 0, top: 0, bottom: 0, width: 2 }}>
+                  <Svg width="100%" height="100%">
+                    <Line x1="1" y1="0" x2="1" y2="100%" stroke="rgba(36,48,74,0.25)" strokeWidth={2} strokeDasharray="4,3" />
+                  </Svg>
+                </View>
                 <View
                   className="absolute rounded-full"
                   style={{ left: -5, top: '50%', marginTop: -4, width: 8, height: 8, backgroundColor: PERSON_COLORS[item.payer] || '#3D7068' }}
