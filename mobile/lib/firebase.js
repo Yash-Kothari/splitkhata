@@ -21,6 +21,7 @@ import {
 import {
   initializeFirestore,
   persistentLocalCache,
+  memoryLocalCache,
   connectFirestoreEmulator,
   collection,
   addDoc,
@@ -69,12 +70,20 @@ const auth =
   Platform.OS === 'web'
     ? getAuth(app)
     : initializeAuth(app, { persistence: getReactNativePersistence(AsyncStorage) });
-// persistentLocalCache gives every platform (web export and native) an
-// on-disk cache of the last-synced data - IndexedDB on web, a SQLite-backed
-// store on native - so a reload/relaunch renders instantly from cache
-// instead of waiting on a fresh network round trip, matching web's
+// persistentLocalCache is backed by IndexedDB, which only exists in a real
+// browser - on true React Native (Hermes, no DOM globals) the SDK detects
+// its absence, logs a fallback warning, and downgrades to a memory cache
+// anyway, so ask for that directly there instead of taking the noisy detour.
+// This does mean native doesn't get a cache that survives a full app
+// restart while offline the way the web build does (verified against a real
+// iOS Simulator build, not just the type definitions) - the plain firebase
+// JS SDK's persistent cache is a web-only feature; true native persistence
+// would need @react-native-firebase/firestore instead, a larger swap not
+// worth it just for this. Web still gets the real persistent cache matching
 // enableIndexedDbPersistence behavior (src/firebase.js).
-const dbInstance = initializeFirestore(app, { localCache: persistentLocalCache() });
+const dbInstance = initializeFirestore(app, {
+  localCache: Platform.OS === 'web' ? persistentLocalCache() : memoryLocalCache(),
+});
 
 // Opt-in only (EXPO_PUBLIC_USE_FIRESTORE_EMULATOR=true in mobile/.env) - lets
 // development point at a disposable local Firestore + Auth (`firebase
