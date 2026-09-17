@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { View, Text, Pressable, Modal, ScrollView, Dimensions } from 'react-native';
+import Svg, { Polyline } from 'react-native-svg';
 
 // Matches iOS Safari's actual <select> rendering on modern iOS: a compact
 // menu popover anchored right at the tapped control (checkmark next to the
@@ -56,7 +57,12 @@ export default function PickerField({ label, value, options, onChange, labelExtr
         className="flex-row items-center justify-between border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
       >
         <Text className="font-body-medium text-sm text-ink">{selected ? selected.label : value}</Text>
-        <Text className="text-muted-text text-xs">▾</Text>
+        {/* Matches the exact chevron every web <select> gets (dropdownArrowClass's
+            polyline SVG) - a plain "▾" glyph renders at a different weight/size
+            per platform font and in muted-text gray instead of web's ink color. */}
+        <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
+          <Polyline points="6 9 12 15 18 9" stroke="#24304A" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        </Svg>
       </Pressable>
 
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>

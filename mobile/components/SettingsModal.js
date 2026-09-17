@@ -141,6 +141,10 @@ function Tag({ label, onRemove, removable = true, labelWeight = 'font-body-mediu
 
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
 const sectionLabel = 'font-body-semibold text-2xs uppercase tracking-wider text-ledger-green mb-1';
+// Web sizes these "Active Database X (count)" captions at 11px (text-[11px]),
+// one notch up from an ordinary field label (text-2xs/10px) - reusing `label`
+// made this caption visually indistinguishable from a plain field label.
+const activeListCaption = 'font-body-semibold text-[11px] uppercase tracking-wider text-muted-text mb-1';
 const input = 'font-body text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 mb-3 bg-paper';
 
 // RN full-screen Modal port of SettingsModal.jsx - self-contained (unlike
@@ -636,7 +640,7 @@ export default function SettingsModal({ visible, onClose }) {
                 </Pressable>
               </View>
 
-              <Text className={label}>Active Database Categories ({categoriesList.length})</Text>
+              <Text className={activeListCaption}>Active Database Categories ({categoriesList.length})</Text>
               <View className="flex-row flex-wrap mt-1">
                 {categoriesList.map((cat) => (
                   <Tag key={cat} label={cat} onRemove={() => handleDeleteCategory(cat)} />
@@ -782,7 +786,7 @@ export default function SettingsModal({ visible, onClose }) {
                     <View className="flex-row items-start justify-between gap-2">
                       <Text className="font-body-medium text-sm text-ink flex-1">{rule.category} - {formatCurrency(rule.amount)}</Text>
                       <Pressable onPress={() => handleRemoveRule(rule.id)}>
-                        <Text className="font-body-semibold text-xs text-stamp-red/70">✕</Text>
+                        <Text className="font-body-semibold text-xs text-muted-text">✕</Text>
                       </Pressable>
                     </View>
                     <Text className="font-body text-2xs text-muted-text mt-0.5">
@@ -801,10 +805,22 @@ export default function SettingsModal({ visible, onClose }) {
                 A nudge when the household balance owed crosses an amount you set - in-app only, there's no push notification without a backend.
               </Text>
 
-              <View className="flex-row items-center justify-between rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3 mb-3">
+              <Pressable
+                onPress={() => handleReminderToggle(!reminderDraft.enabled)}
+                className="flex-row items-center justify-between rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3 mb-3"
+              >
                 <Text className="font-body-medium text-sm text-ink flex-1 mr-2">Remind us about unsettled balances</Text>
-                <Switch value={reminderDraft.enabled} onValueChange={handleReminderToggle} trackColor={{ true: '#3D7068' }} />
-              </View>
+                {/* Web uses a plain OS checkbox here, not a pill toggle - the
+                    pill Switch look is reserved for Security PIN below, which
+                    web also renders as a hand-rolled pill. */}
+                <View
+                  className={`w-5 h-5 rounded border items-center justify-center ${
+                    reminderDraft.enabled ? 'bg-ledger-green border-ledger-green' : 'border-ink/30 bg-paper'
+                  }`}
+                >
+                  {reminderDraft.enabled && <Text className="text-white text-xs">✓</Text>}
+                </View>
+              </Pressable>
 
               <View className="flex-row items-center gap-2.5">
                 <Text className="font-body text-sm text-ink">Remind when balance exceeds</Text>
@@ -986,15 +1002,15 @@ export default function SettingsModal({ visible, onClose }) {
                           <View className="flex-row items-center gap-1 shrink-0">
                             <Pressable
                               onPress={() => (editingRulesCardId === card.id ? setEditingRulesCardId(null) : startEditRules(card))}
-                              className={`px-2.5 py-1.5 rounded-full ${editingRulesCardId === card.id ? 'bg-ledger-green' : 'bg-ledger-green/10'}`}
+                              className={`px-2.5 py-1 rounded-full ${editingRulesCardId === card.id ? 'bg-ledger-green' : 'bg-ledger-green/10'}`}
                             >
                               <Text className={`font-body-semibold text-2xs ${editingRulesCardId === card.id ? 'text-white' : 'text-ledger-green'}`}>🗓 Rules</Text>
                             </Pressable>
                             <Pressable onPress={() => startEditCard(card)} hitSlop={6} className="min-w-8 min-h-8 items-center justify-center">
-                              <Text className="text-base text-muted-text">✎</Text>
+                              <Text className="text-xs text-muted-text">✎</Text>
                             </Pressable>
                             <Pressable onPress={() => handleDeleteCard(card)} hitSlop={6} className="min-w-8 min-h-8 items-center justify-center">
-                              <Text className="text-base text-stamp-red/70">✕</Text>
+                              <Text className="text-xs text-stamp-red/70">✕</Text>
                             </Pressable>
                           </View>
                         </View>
@@ -1048,7 +1064,7 @@ export default function SettingsModal({ visible, onClose }) {
                                       className={`${input} flex-1 mb-0 font-body-semibold`}
                                     />
                                     <Pressable onPress={() => removeCategoryRow(i)} hitSlop={6}>
-                                      <Text className="text-base text-stamp-red/70">✕</Text>
+                                      <Text className="text-xs text-stamp-red/70">✕</Text>
                                     </Pressable>
                                   </View>
                                   <View className="flex-row flex-wrap" style={{ gap: 8 }}>
@@ -1119,7 +1135,7 @@ export default function SettingsModal({ visible, onClose }) {
                   <Text className="font-body-semibold text-white text-sm">{addingCurr ? 'Saving...' : 'Add Currency'}</Text>
                 </Pressable>
               </View>
-              <Text className={label}>Active Database Currencies ({currencies.currencies.length})</Text>
+              <Text className={activeListCaption}>Active Database Currencies ({currencies.currencies.length})</Text>
               <View className="flex-row flex-wrap">
                 {currencies.currencies.map((c) => (
                   <Tag key={c} label={c} onRemove={() => handleDeleteCurrency(c)} labelWeight="font-body-semibold" />
@@ -1138,7 +1154,7 @@ export default function SettingsModal({ visible, onClose }) {
                   <Text className="font-body-semibold text-white text-sm">{addingMember ? 'Saving...' : 'Add Member'}</Text>
                 </Pressable>
               </View>
-              <Text className={label}>Active Database Members ({dbMembers.length})</Text>
+              <Text className={activeListCaption}>Active Database Members ({dbMembers.length})</Text>
               <View className="flex-row flex-wrap">
                 {dbMembers.map((m) => (
                   <Tag key={m} label={m} onRemove={() => handleDeleteMember(m)} labelWeight="font-body-semibold" />
@@ -1153,7 +1169,7 @@ export default function SettingsModal({ visible, onClose }) {
                 <View className="flex-row items-center justify-between gap-2 mb-2">
                   <Text className="font-body-semibold text-sm text-ink">Database Engine Status</Text>
                   <View className={`px-2.5 py-0.5 rounded-full border ${hasFirebase ? 'bg-ledger-green/15 border-ledger-green/30' : 'bg-mustard/20 border-mustard/40'}`}>
-                    <Text className={`font-body-semibold text-2xs ${hasFirebase ? 'text-ledger-green' : 'text-mustard'}`}>
+                    <Text className={`font-body-semibold text-xs ${hasFirebase ? 'text-ledger-green' : 'text-mustard'}`}>
                       {hasFirebase ? 'Cloud Firestore Active' : 'Persistent Local DB Mode'}
                     </Text>
                   </View>
