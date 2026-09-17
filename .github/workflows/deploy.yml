@@ -28,6 +28,9 @@ jobs:
 
       - run: npm test
 
+      # The old Vite app - kept at /legacy for reference/rollback, no longer
+      # the production app. VITE_BASE_PATH now points one level deeper so its
+      # own asset/service-worker paths resolve correctly from that subpath.
       - run: npm run build
         env:
           VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
@@ -37,31 +40,44 @@ jobs:
           VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
           VITE_RECAPTCHA_SITE_KEY: ${{ secrets.VITE_RECAPTCHA_SITE_KEY }}
-          VITE_BASE_PATH: /splitkhata/
+          VITE_BASE_PATH: /splitkhata/legacy/
 
       - name: Install mobile dependencies
         run: npm ci
         working-directory: mobile
 
-      # Unified-codebase (React Native Web) spike, served at a staging
-      # subpath alongside the current production app - does not touch or
-      # replace anything the existing Vite build above produces. See the
-      # architecture-unification plan for why this exists.
-      - name: Export mobile app for web (staging)
+      - name: Test mobile app
+        run: npm test -- --watchAll=false
+        working-directory: mobile
+
+      # The React Native Web build is now the production app, replacing the
+      # Vite app above at the site root - promoted here after verifying UI
+      # parity across web, React Native Web and the iOS Simulator.
+      - name: Export mobile app for web
         run: npx expo export --platform web
         working-directory: mobile
         env:
           EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID }}
           EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID }}
 
-      - name: Merge staging export into the Pages artifact
+      - name: Assemble Pages artifact - native app at root, old UI at /legacy
         run: |
-          mkdir -p dist/staging
-          cp -r mobile/dist/. dist/staging/
+          mkdir -p pages-dist
+          cp -r mobile/dist/. pages-dist/
+          mkdir -p pages-dist/legacy
+          cp -r dist/. pages-dist/legacy/
+          # expo-router uses real client-side routes (/travel, /cards, ...),
+          # but GitHub Pages has no server-side rewrites - a hard refresh or
+          # direct link to any of them 404s without this. The standard GH
+          # Pages SPA fallback: serve the app shell for any unmatched path
+          # (as a 404 response, harmless) and let the client router take it
+          # from there. The old app at /legacy needs no equivalent - it has
+          # no path-based routes of its own.
+          cp pages-dist/index.html pages-dist/404.html
 
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: dist
+          path: pages-dist
 
   deploy:
     needs: build
