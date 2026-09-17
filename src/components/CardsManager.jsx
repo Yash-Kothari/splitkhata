@@ -176,11 +176,16 @@ function StrategyFields({ card, draft, onChange }) {
   }
 
   if (strategy === 'axis_supermoney_dual_pool') {
+    // 3% (Super.Money app UPI) is the default channel for a fresh
+    // transaction - most spend on this card goes through the app, so
+    // defaulting to the 1% "other" bucket meant re-selecting the right
+    // option on nearly every add. `?? true` only fills in the unset
+    // case; an explicit false (user picked "other") still sticks.
     return (
       <div>
         <label className={labelClass}>Category</label>
         <select
-          value={draft.isBonusEligible ? 'supermoney' : 'other'}
+          value={(draft.isBonusEligible ?? true) ? 'supermoney' : 'other'}
           onChange={(e) => onChange({ isBonusEligible: e.target.value === 'supermoney' })}
           className={selectClass}
         >
@@ -255,13 +260,19 @@ function AddCardTransactionForm({ card, cardTxns, onSaveError }) {
     setDraft((prev) => ({ ...prev, ...patch }));
   }
 
+  // Matches the axis_supermoney_dual_pool default in StrategyFields above -
+  // an untouched draft should preview/save the same channel the dropdown is
+  // showing.
+  const bonusEligibleDefault = card.rewardStrategy === 'axis_supermoney_dual_pool';
+  const isBonusEligible = draft.isBonusEligible ?? bonusEligibleDefault;
+
   const parsedAmount = parseFloat(amount);
   const preview = previewTransactionReward(card, cardTxns, {
     date,
     amount: parsedAmount,
     category: draft.category ?? null,
     channel: draft.channel ?? null,
-    isBonusEligible: Boolean(draft.isBonusEligible),
+    isBonusEligible,
     travelMultiplier: draft.travelMultiplier ? Number(draft.travelMultiplier) : null,
   });
   const calculatedReward = preview ? (preview.earned ?? preview.estimated ?? 0) : null;
@@ -280,7 +291,7 @@ function AddCardTransactionForm({ card, cardTxns, onSaveError }) {
         date,
         category: draft.category ?? null,
         channel: draft.channel ?? null,
-        isBonusEligible: Boolean(draft.isBonusEligible),
+        isBonusEligible,
         travelMultiplier: draft.travelMultiplier ? Number(draft.travelMultiplier) : null,
         pointsRedeemed: draft.pointsRedeemed ? Number(draft.pointsRedeemed) : null,
         rewardOverride: rewardOverride === '' ? null : parseFloat(rewardOverride),

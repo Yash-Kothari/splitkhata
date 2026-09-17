@@ -97,11 +97,15 @@ export default function CardStrategyFields({ card, draft, onChange, gap = 14 }) 
   }
 
   if (strategy === 'axis_supermoney_dual_pool') {
+    // 3% (Super.Money app UPI) is the default channel for a fresh
+    // transaction - most spend on this card goes through the app. `?? true`
+    // only fills in the unset case; an explicit false (user picked "other")
+    // still sticks.
     return (
       <View className={halfWidth}>
         <PickerField
           label="Category"
-          value={draft.isBonusEligible ? 'supermoney' : 'other'}
+          value={(draft.isBonusEligible ?? true) ? 'supermoney' : 'other'}
           options={[
             { value: 'supermoney', label: 'Super.Money App UPI (3%)' },
             { value: 'other', label: 'Other UPI / Card Spend (1%)' },

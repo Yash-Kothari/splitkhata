@@ -26,13 +26,19 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
     setDraft((prev) => ({ ...prev, ...patch }));
   }
 
+  // Matches the axis_supermoney_dual_pool default in CardStrategyFields -
+  // an untouched draft should preview/save the same channel the picker is
+  // showing.
+  const bonusEligibleDefault = card.rewardStrategy === 'axis_supermoney_dual_pool';
+  const isBonusEligible = draft.isBonusEligible ?? bonusEligibleDefault;
+
   const parsedAmount = parseFloat(amount);
   const preview = previewTransactionReward(card, cardTxns, {
     date,
     amount: parsedAmount,
     category: draft.category ?? null,
     channel: draft.channel ?? null,
-    isBonusEligible: Boolean(draft.isBonusEligible),
+    isBonusEligible,
     travelMultiplier: draft.travelMultiplier ? Number(draft.travelMultiplier) : null,
   });
   const calculatedReward = preview ? (preview.earned ?? preview.estimated ?? 0) : null;
@@ -50,7 +56,7 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
         date,
         category: draft.category ?? null,
         channel: draft.channel ?? null,
-        isBonusEligible: Boolean(draft.isBonusEligible),
+        isBonusEligible,
         travelMultiplier: draft.travelMultiplier ? Number(draft.travelMultiplier) : null,
         pointsRedeemed: draft.pointsRedeemed ? Number(draft.pointsRedeemed) : null,
         rewardOverride: rewardOverride === '' ? null : parseFloat(rewardOverride),
