@@ -60,8 +60,8 @@ export default function PickerField({ label, value, options, onChange, labelExtr
         {/* Matches the exact chevron every web <select> gets (dropdownArrowClass's
             polyline SVG) - a plain "▾" glyph renders at a different weight/size
             per platform font and in muted-text gray instead of web's ink color. */}
-        <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
-          <Polyline points="6 9 12 15 18 9" stroke="#24304A" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+          <Polyline points="6 9 12 15 18 9" stroke="#24304A" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
         </Svg>
       </Pressable>
 
