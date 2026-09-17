@@ -1482,7 +1482,7 @@ export const CARD_REWARD_STRATEGIES = [
   { key: 'hdfc_diners_slab_milestone', label: 'HDFC Diners Club Black Metal', unit: 'points' },
   { key: 'sbi_two_channel_cashback', label: 'SBI Cashback', unit: 'inr' },
   { key: 'hsbc_tiered_cashback_aggregate', label: 'HSBC Live+', unit: 'inr' },
-  { key: 'axis_supermoney_dual_pool', label: 'Axis SuperMoney RuPay', unit: 'inr' },
+  { key: 'axis_supermoney_dual_pool', label: 'Axis Supermoney', unit: 'inr' },
   { key: 'hsbc_premier_flat_capped', label: 'HSBC Premier', unit: 'points' },
 ];
 
