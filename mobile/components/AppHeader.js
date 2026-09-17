@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { View, Text, Pressable, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { signOutUser, subscribeToPinConfig } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
@@ -26,11 +26,20 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
   const setShowSettings = onShowSettingsChange || setUncontrolledShowSettings;
   const [showSearch, setShowSearch] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [accountMenuAnchor, setAccountMenuAnchor] = useState(null);
+  const accountButtonRef = useRef(null);
   const [pinConfig, setPinConfig] = useState({ pin: '', enabled: false });
 
   useEffect(() => subscribeToPinConfig(setPinConfig), []);
 
   const deviceName = user?.displayName?.split(' ')[0] || user?.email || 'Account';
+
+  function handleOpenAccountMenu() {
+    accountButtonRef.current?.measureInWindow((x, y, width, height) => {
+      setAccountMenuAnchor({ x, y, width, height });
+      setShowAccountMenu(true);
+    });
+  }
 
   return (
     // z-50: without an explicit z-index here, this SafeAreaView and its
@@ -67,20 +76,42 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
           <Text className="font-body-semibold text-xs text-ink">⚙️</Text>
           <Text className="hidden sm:flex font-body-semibold text-xs text-ink">Settings</Text>
         </Pressable>
-        <View>
-          <Pressable
-            onPress={() => setShowAccountMenu((v) => !v)}
-            hitSlop={8}
-            className="min-w-9 min-h-9 max-w-24 sm:max-w-none flex-row items-center justify-center px-2 sm:px-3 py-1.5 rounded-xl border border-ink/10 bg-paper-card shrink-0"
-          >
-            <Text className="hidden sm:flex font-body-medium text-xs text-muted-text">User: </Text>
-            <Text className="font-body-semibold text-xs text-ink" numberOfLines={1}>{deviceName}</Text>
-          </Pressable>
+        <Pressable
+          ref={accountButtonRef}
+          onPress={handleOpenAccountMenu}
+          hitSlop={8}
+          className="min-w-9 min-h-9 max-w-24 sm:max-w-none flex-row items-center justify-center px-2 sm:px-3 py-1.5 rounded-xl border border-ink/10 bg-paper-card shrink-0"
+        >
+          <Text className="hidden sm:flex font-body-medium text-xs text-muted-text">User: </Text>
+          <Text className="font-body-semibold text-xs text-ink" numberOfLines={1}>{deviceName}</Text>
+        </Pressable>
+      </View>
 
-          {showAccountMenu && (
+      {/* A Modal, not the absolutely-positioned sibling View this used to be -
+          that shape hit an open, unresolved Fabric/react-native-screens Yoga
+          crash (facebook/react-native#52349, "assertion failed:
+          YGNodeGetOwner(childYogaNode) == &yogaNode_") reproduced
+          consistently on-device every time this menu was opened: any
+          absolutely-positioned view that changes the current screen's own
+          layout tree while it's an RNSScreen child is a live trigger.
+          PickerField's dropdown already uses this exact Modal +
+          measureInWindow shape and has never hit it, since Modal content
+          lives in its own native surface outside the screen's shadow tree. */}
+      <Modal visible={showAccountMenu} transparent animationType="fade" onRequestClose={() => setShowAccountMenu(false)}>
+        <Pressable className="flex-1" onPress={() => setShowAccountMenu(false)}>
+          {accountMenuAnchor && (
             <View
-              className="absolute right-0 rounded-xl border border-ink/15 bg-paper-card p-2"
-              style={{ top: 44, width: 176, zIndex: 30, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 16, elevation: 8 }}
+              className="absolute rounded-xl border border-ink/15 bg-paper-card p-2"
+              style={{
+                top: accountMenuAnchor.y + accountMenuAnchor.height + 6,
+                left: Math.max(8, accountMenuAnchor.x + accountMenuAnchor.width - 176),
+                width: 176,
+                shadowColor: '#000',
+                shadowOffset: { width: 0, height: 8 },
+                shadowOpacity: 0.2,
+                shadowRadius: 16,
+                elevation: 8,
+              }}
             >
               {user?.email ? (
                 <Text numberOfLines={1} className="font-body text-xs text-muted-text px-2 py-1.5">{user.email}</Text>
@@ -107,8 +138,8 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
               </Pressable>
             </View>
           )}
-        </View>
-      </View>
+        </Pressable>
+      </Modal>
 
       <SettingsModal visible={showSettings} onClose={() => setShowSettings(false)} />
       <GlobalSearch visible={showSearch} onClose={() => setShowSearch(false)} />
