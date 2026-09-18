@@ -107,6 +107,7 @@ const membersRef = collection(dbInstance, 'members');
 const tripsRef = collection(dbInstance, 'trips');
 const cashMovementsRef = collection(dbInstance, 'cashMovements');
 const paymentMethodsRef = collection(dbInstance, 'paymentMethods');
+const guestsRef = collection(dbInstance, 'guests');
 const currenciesRef = collection(dbInstance, 'currencies');
 const creditCardsRef = collection(dbInstance, 'creditCards');
 const cardTransactionsRef = collection(dbInstance, 'cardTransactions');
@@ -474,6 +475,46 @@ export async function deletePaymentMethodFromDb(name, rawDocs = []) {
   const docToDelete = rawDocs.find((d) => d.name?.trim().toLowerCase() === trimmed.toLowerCase());
   if (docToDelete?.id) {
     await deleteDoc(doc(dbInstance, 'paymentMethods', docToDelete.id));
+  }
+}
+
+// --- Guests (a reusable directory, not scoped to one trip - lets a trip
+// guest be added by picking their name back up on a later trip instead of
+// re-typing it, matching the reuse members/payment methods already get) ---
+
+export function subscribeToGuests(onData, onError) {
+  const q = query(guestsRef, orderBy('createdAt', 'asc'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const guests = [];
+      const rawDocs = [];
+      snapshot.docs.forEach((d) => {
+        const item = { id: d.id, ...d.data() };
+        rawDocs.push(item);
+        if (item.name) guests.push(item.name);
+      });
+      onData({ guests, rawDocs });
+    },
+    onError,
+  );
+}
+
+export async function addGuestToDb(name, existingRawDocs = []) {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const exists = existingRawDocs.some((d) => d.name?.trim().toLowerCase() === trimmed.toLowerCase());
+  if (!exists) {
+    await addDoc(guestsRef, { name: trimmed, createdAt: serverTimestamp() });
+  }
+}
+
+export async function deleteGuestFromDb(name, rawDocs = []) {
+  const trimmed = name.trim();
+  if (!trimmed) return;
+  const docToDelete = rawDocs.find((d) => d.name?.trim().toLowerCase() === trimmed.toLowerCase());
+  if (docToDelete?.id) {
+    await deleteDoc(doc(dbInstance, 'guests', docToDelete.id));
   }
 }
 

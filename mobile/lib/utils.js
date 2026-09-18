@@ -1102,6 +1102,21 @@ export function setDeviceName(name) {
   }
 }
 
+// Per-device, not synced via Firestore like the household's shared settings
+// (budgets, PIN, recurring rules) - which theme looks right depends on this
+// device's own screen/room lighting, not a household-wide preference the
+// same as those. Defaults to 'light' to match the app's original design and
+// app.json's userInterfaceStyle.
+export const COLOR_SCHEME_KEY = 'household-ledger-color-scheme';
+
+export function getStoredColorScheme() {
+  return getItem(COLOR_SCHEME_KEY) === 'dark' ? 'dark' : 'light';
+}
+
+export function setStoredColorScheme(scheme) {
+  setItem(COLOR_SCHEME_KEY, scheme === 'dark' ? 'dark' : 'light');
+}
+
 export function getStoredHouseholdCategories() {
   const raw = getItem(HOUSEHOLD_CATEGORIES_KEY);
   if (raw === null || raw === undefined) return DEFAULT_CATEGORIES;

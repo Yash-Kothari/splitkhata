@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Tabs } from 'expo-router';
 import { View, Text, useWindowDimensions } from 'react-native';
+import { useColorScheme } from 'nativewind';
 import { subscribeToPinConfig, subscribeToRecurringRules, saveRecurringRulesToDb, addExpensesBatch } from '../../lib/firebase';
 import { computeRecurringEntriesToGenerate, getMonthKey, todayISO } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
@@ -104,6 +105,13 @@ export default function TabsLayout() {
   // none at all on some width.
   const { width } = useWindowDimensions();
   const isWide = width >= 768;
+  // The tab bar is configured through React Navigation's own screenOptions,
+  // a separate style system from NativeWind's className - it doesn't
+  // re-theme on its own the way bg-paper/text-ink etc. do, so it needs the
+  // current scheme read explicitly. Values match global.css's light/.dark
+  // tokens for ledger-green/muted-text/paper/ink at 0.1 opacity.
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
 
   return (
     <PinGate>
@@ -113,12 +121,12 @@ export default function TabsLayout() {
         <Tabs
           screenOptions={{
             headerShown: false,
-            tabBarActiveTintColor: '#3D7068',
-            tabBarInactiveTintColor: '#5C6478',
+            tabBarActiveTintColor: isDark ? '#4FB3A0' : '#3D7068',
+            tabBarInactiveTintColor: isDark ? '#93A0B8' : '#5C6478',
             tabBarStyle: {
               display: isWide ? 'none' : 'flex',
-              backgroundColor: '#F2ECDD',
-              borderTopColor: 'rgba(36,48,74,0.1)',
+              backgroundColor: isDark ? '#1A2130' : '#F2ECDD',
+              borderTopColor: isDark ? 'rgba(237,230,211,0.1)' : 'rgba(36,48,74,0.1)',
             },
             tabBarLabelStyle: { fontFamily: 'Inter_500Medium', fontSize: 11 },
           }}

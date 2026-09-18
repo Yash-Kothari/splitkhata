@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, Modal, ScrollView, Alert, Switch, useWindowDimensions, Platform } from 'react-native';
+import { useColorScheme } from 'nativewind';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import {
@@ -51,6 +52,8 @@ import {
   DEFAULT_PERSONS,
   toCsv,
   buildFullBackupJson,
+  getStoredColorScheme,
+  setStoredColorScheme,
   LEDGER_CSV_COLUMNS,
   CARD_TRANSACTION_CSV_COLUMNS,
 } from '../lib/utils';
@@ -138,6 +141,7 @@ const TABS = [
   { key: 'members', label: 'Members' },
   { key: 'database', label: 'Cloud Status' },
   { key: 'export', label: 'Export' },
+  { key: 'appearance', label: 'Appearance' },
   { key: 'security', label: '🔒 Security PIN' },
 ];
 
@@ -170,6 +174,12 @@ const input = 'font-body text-sm text-ink border border-ink/15 rounded-xl px-3 p
 export default function SettingsModal({ visible, onClose }) {
   const { height: windowHeight } = useWindowDimensions();
   const [activeTab, setActiveTab] = useState('categories');
+  const { colorScheme, setColorScheme } = useColorScheme();
+
+  function handleSetColorScheme(scheme) {
+    setColorScheme(scheme);
+    setStoredColorScheme(scheme);
+  }
 
   const [householdEntries, setHouseholdEntries] = useState([]);
   const [categories, setCategories] = useState({ household: DEFAULT_CATEGORIES, travel: DEFAULT_TRAVEL_CATEGORIES, rawDocs: [] });
@@ -1375,6 +1385,30 @@ export default function SettingsModal({ visible, onClose }) {
             </View>
           )}
 
+          {activeTab === 'appearance' && (
+            <View>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Appearance</Text>
+              <Text className="font-body text-xs text-muted-text mb-3">
+                A per-device preference, not synced to the other person's phone - pick whichever suits this
+                screen's lighting.
+              </Text>
+              <View className="flex-row gap-2">
+                <Pressable
+                  onPress={() => handleSetColorScheme('light')}
+                  className={`flex-1 min-h-9 rounded-lg items-center justify-center border ${colorScheme === 'light' ? 'bg-ledger-green border-ledger-green' : 'border-ink/15 bg-paper'}`}
+                >
+                  <Text className={`font-body-semibold text-xs ${colorScheme === 'light' ? 'text-white' : 'text-ink'}`}>☀️ Light</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => handleSetColorScheme('dark')}
+                  className={`flex-1 min-h-9 rounded-lg items-center justify-center border ${colorScheme === 'dark' ? 'bg-ledger-green border-ledger-green' : 'border-ink/15 bg-paper'}`}
+                >
+                  <Text className={`font-body-semibold text-xs ${colorScheme === 'dark' ? 'text-white' : 'text-ink'}`}>🌙 Dark</Text>
+                </Pressable>
+              </View>
+            </View>
+          )}
+
           {activeTab === 'security' && (
             <View>
               <Text className="font-body-semibold text-sm text-ink mb-0.5">App Passcode & Security PIN</Text>
@@ -1393,7 +1427,11 @@ export default function SettingsModal({ visible, onClose }) {
                     <Text className="font-body-semibold text-sm text-ink">Require PIN Protection</Text>
                     <Text className="font-body text-xs text-muted-text">Prompt for 4-digit PIN upon entering Splitkhata</Text>
                   </View>
-                  <Switch value={pinConfig.enabled} onValueChange={(v) => handleSavePinConfig(v)} trackColor={{ true: '#3D7068' }} />
+                  <Switch
+                    value={pinConfig.enabled}
+                    onValueChange={(v) => handleSavePinConfig(v)}
+                    trackColor={{ true: colorScheme === 'dark' ? '#4FB3A0' : '#3D7068' }}
+                  />
                 </View>
 
                 <View className="pt-3 border-t border-ink/10">

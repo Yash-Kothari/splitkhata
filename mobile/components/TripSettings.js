@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, Modal, ScrollView, Alert, useWindowDimensions } from 'react-native';
 import PickerField from './PickerField';
 import DateField from './DateField';
-import { updateTripInDb, deleteTripFromDb, addCashMovementToDb, addExpense } from '../lib/firebase';
+import { updateTripInDb, deleteTripFromDb, addCashMovementToDb, addExpense, addGuestToDb, deleteGuestFromDb } from '../lib/firebase';
 import { computeBudgetStatus, formatCurrency, groupByCategory, normalizeLedger, todayISO } from '../lib/utils';
 
 function Tag({ label, onRemove, removable = true }) {
@@ -28,6 +28,8 @@ export default function TripSettings({
   dbCategories,
   dbPaymentMethods,
   dbMembers,
+  dbGuests = [],
+  guestRawDocs = [],
   currentCurrency,
   onSaveError,
   onTripDeleted,
@@ -147,10 +149,27 @@ export default function TripSettings({
     try {
       await updateTripInDb(trip.id, { guests: [...tripGuests, trimmed] });
       setGuestDraft('');
+      await addGuestToDb(trimmed, guestRawDocs);
     } catch (err) {
       onSaveError?.(err);
     }
   }
+
+  // Adding a name already in the directory skips straight to the trip -
+  // no need to re-type it or re-check the taken-name guard, since it was
+  // already checked once when this name first entered the directory.
+  async function handleAddKnownGuest(name) {
+    if (!trip) return;
+    try {
+      await updateTripInDb(trip.id, { guests: [...tripGuests, name] });
+    } catch (err) {
+      onSaveError?.(err);
+    }
+  }
+
+  const knownGuestSuggestions = dbGuests.filter(
+    (g) => !tripGuests.some((tg) => tg.toLowerCase() === g.toLowerCase()) && !dbMembers.some((m) => m.toLowerCase() === g.toLowerCase()),
+  );
 
   async function handleDeleteTrip() {
     try {
@@ -356,6 +375,23 @@ export default function TripSettings({
                 <Text className="font-body-semibold text-xs text-ink">Add Guest</Text>
               </Pressable>
             </View>
+            {knownGuestSuggestions.length > 0 && (
+              <View className="mb-2">
+                <Text className="font-body text-2xs text-muted-text mb-1">From past trips - tap to add here, ✕ to forget them</Text>
+                <View className="flex-row flex-wrap">
+                  {knownGuestSuggestions.map((g) => (
+                    <View key={g} className="flex-row items-center gap-1.5 rounded-md border border-dashed border-ink/20 px-2.5 py-1.5 mr-1.5 mb-1.5">
+                      <Pressable onPress={() => handleAddKnownGuest(g)}>
+                        <Text className="font-body-medium text-xs text-muted-text">+ {g}</Text>
+                      </Pressable>
+                      <Pressable onPress={() => deleteGuestFromDb(g, guestRawDocs).catch((err) => onSaveError?.(err))} hitSlop={6}>
+                        <Text className="font-body-semibold text-xs text-muted-text">✕</Text>
+                      </Pressable>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )}
             <View className="flex-row flex-wrap">
               {tripGuests.map((g) => (
                 <Tag key={g} label={g} onRemove={() => updateTripInDb(trip.id, { guests: tripGuests.filter((x) => x !== g) }).catch((err) => onSaveError?.(err))} />

@@ -2,6 +2,37 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme tokens as CSS variables (R G B triplets, so tailwind.config.js can
+   apply Tailwind's alpha-value modifiers via rgb(var(--x) / <alpha-value>))
+   - every existing `bg-paper`/`text-ink`/`bg-ledger-green` etc. usage across
+   the whole app resolves through these, so switching the `dark` class (via
+   NativeWind's colorScheme.set(), see lib/utils.js) re-themes
+   everything without touching a single component's className. The .dark
+   values keep the same paper-ledger metaphor - a passbook read by lamplight
+   rather than daylight - not a generic color inversion: warmer, less
+   saturated than a flat black/white swap so the accent colors (green/red/
+   mustard) still read as the same identity, just brightened enough to stay
+   legible on a dark ground. */
+:root {
+  --color-ink: 36 48 74;
+  --color-paper: 242 236 221;
+  --color-paper-card: 237 228 206;
+  --color-stamp-red: 166 61 64;
+  --color-ledger-green: 61 112 104;
+  --color-mustard: 201 138 44;
+  --color-muted-text: 92 100 120;
+}
+
+.dark {
+  --color-ink: 237 230 211;
+  --color-paper: 26 33 48;
+  --color-paper-card: 35 44 64;
+  --color-stamp-red: 226 102 106;
+  --color-ledger-green: 79 179 160;
+  --color-mustard: 227 169 74;
+  --color-muted-text: 147 160 184;
+}
+
 /* Expo's web output doesn't otherwise force the DOM chain up to #root to
    fill the real browser viewport, so on a wide window the app renders at
    its natural (narrow, phone-shaped) size floating in an unstyled black
@@ -10,5 +41,5 @@
    Expo's web renderer mounts into it rather than body directly. */
 html, body, #root {
   height: 100%;
-  background-color: #F2ECDD;
+  background-color: rgb(var(--color-paper));
 }

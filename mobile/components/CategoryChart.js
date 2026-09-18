@@ -263,8 +263,8 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
                             </Text>
                           </View>
                         ) : entry.isNew ? (
-                          <View className="px-1.5 py-0.5 rounded" style={{ backgroundColor: '#E0E7FF' }}>
-                            <Text className="font-body-semibold text-2xs" style={{ color: '#4338CA' }}>New</Text>
+                          <View className="px-1.5 py-0.5 rounded bg-mustard/15">
+                            <Text className="font-body-semibold text-2xs text-mustard">New</Text>
                           </View>
                         ) : (
                           <Text className="font-mono text-2xs text-muted-text">-</Text>

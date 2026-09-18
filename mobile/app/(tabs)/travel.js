@@ -7,6 +7,7 @@ import {
   subscribeToCategories,
   subscribeToMembers,
   subscribeToPaymentMethods,
+  subscribeToGuests,
   subscribeToCurrencies,
   subscribeToCreditCards,
   subscribeToCardTransactions,
@@ -37,6 +38,8 @@ export default function Travel() {
   const [categories, setCategories] = useState(DEFAULT_TRAVEL_CATEGORIES);
   const [members, setMembers] = useState(DEFAULT_PERSONS);
   const [paymentMethods, setPaymentMethods] = useState(['Cash']);
+  const [guests, setGuests] = useState([]);
+  const [guestRawDocs, setGuestRawDocs] = useState([]);
   const [currencies, setCurrencies] = useState([]);
   const [creditCards, setCreditCards] = useState([]);
   const [cardTransactions, setCardTransactions] = useState([]);
@@ -86,6 +89,14 @@ export default function Travel() {
       subscribeToPaymentMethods((data) => {
         if (data.methods?.length) setPaymentMethods(data.methods);
       }, (err) => reportError(err, 'Could not load payment methods')),
+    [],
+  );
+  useEffect(
+    () =>
+      subscribeToGuests((data) => {
+        setGuests(data.guests || []);
+        setGuestRawDocs(data.rawDocs || []);
+      }, (err) => reportError(err, 'Could not load guests')),
     [],
   );
   useEffect(() => subscribeToCurrencies((data) => setCurrencies(data.currencies), (err) => reportError(err, 'Could not load currencies')), []);
@@ -222,6 +233,8 @@ export default function Travel() {
         dbCategories={categories}
         dbPaymentMethods={paymentMethods}
         dbMembers={members}
+        dbGuests={guests}
+        guestRawDocs={guestRawDocs}
         currentCurrency={selectedTripObj?.currency}
         onTripDeleted={() => setSelectedTrip('')}
         onSaveError={(err) => reportError(err, 'Could not save')}

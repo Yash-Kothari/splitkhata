@@ -3,6 +3,8 @@ import { useEffect } from 'react';
 import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
+import { useColorScheme } from 'nativewind';
+import { StatusBar } from 'expo-status-bar';
 import { useFonts, Fraunces_500Medium, Fraunces_700Bold } from '@expo-google-fonts/fraunces';
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold } from '@expo-google-fonts/inter';
 import { IBMPlexMono_500Medium, IBMPlexMono_600SemiBold, IBMPlexMono_700Bold } from '@expo-google-fonts/ibm-plex-mono';
@@ -11,6 +13,7 @@ import { AuthProvider } from '../lib/AuthContext';
 import { LockProvider } from '../lib/LockContext';
 import { JumpProvider } from '../lib/JumpContext';
 import ConnectionBanner from '../components/ConnectionBanner';
+import { getStoredColorScheme } from '../lib/utils';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -25,6 +28,16 @@ export default function RootLayout() {
     IBMPlexMono_600SemiBold,
     IBMPlexMono_700Bold,
   });
+
+  const { colorScheme, setColorScheme } = useColorScheme();
+
+  // NativeWind's own color scheme starts out following the OS, not this
+  // app's per-device preference (see getStoredColorScheme) - applied once
+  // up front, above sign-in, so even the sign-in screen and lock screen
+  // pick up the right theme instead of only screens past auth.
+  useEffect(() => {
+    setColorScheme(getStoredColorScheme());
+  }, [setColorScheme]);
 
   useEffect(() => {
     if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
@@ -41,6 +54,7 @@ export default function RootLayout() {
     // the native module's initial-frame fallback, which is why only the
     // bottom was visibly broken.
     <SafeAreaProvider>
+      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       <AuthProvider>
         <LockProvider>
           <JumpProvider>
