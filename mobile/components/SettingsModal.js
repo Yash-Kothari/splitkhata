@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, Modal, ScrollView, Alert, Switch, useWindowDimensions } from 'react-native';
+import { View, Text, TextInput, Pressable, Modal, ScrollView, Alert, Switch, useWindowDimensions, Platform } from 'react-native';
 import PickerField from './PickerField';
+import DateField from './DateField';
 import {
   subscribeToExpenses,
   subscribeToCategories,
@@ -25,6 +26,13 @@ import {
   updateCreditCardInDb,
   deleteCreditCardFromDb,
   isFirebaseConfigured,
+  subscribeToTrips,
+  subscribeToCashMovements,
+  subscribeToCardTransactions,
+  subscribeToCardBillingCycles,
+  subscribeToPaymentMethods,
+  addPaymentMethodToDb,
+  deletePaymentMethodFromDb,
 } from '../lib/firebase';
 import {
   formatCurrency,
@@ -41,7 +49,12 @@ import {
   DEFAULT_TRAVEL_CATEGORIES,
   DEFAULT_CURRENCIES,
   DEFAULT_PERSONS,
+  toCsv,
+  buildFullBackupJson,
+  LEDGER_CSV_COLUMNS,
+  CARD_TRANSACTION_CSV_COLUMNS,
 } from '../lib/utils';
+import { reportError } from '../lib/errorReporting';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_OPTIONS = MONTH_NAMES.map((name, i) => ({ value: String(i + 1), label: name }));
@@ -53,7 +66,7 @@ const CARD_PARAM_FIELDS = {
   hdfc_diners_slab_milestone: [
     { key: 'pointsPerUnit', label: 'Points per unit' },
     { key: 'unitAmount', label: 'Unit amount (₹)' },
-    { key: 'cycleCap', label: 'Overall points cap / cycle' },
+    { key: 'cycleCap', label: 'Max points earned per cycle' },
     { key: 'quarterlyMilestoneTarget', label: 'Quarterly milestone spend (₹)' },
     { key: 'quarterlyMilestoneBonus', label: 'Quarterly milestone bonus points' },
     { key: 'annualMilestoneTarget', label: 'Annual milestone spend (₹)' },
@@ -62,15 +75,15 @@ const CARD_PARAM_FIELDS = {
   sbi_two_channel_cashback: [
     { key: 'onlineRate', label: 'Online rate (%)' },
     { key: 'offlineRate', label: 'Offline rate (%)' },
-    { key: 'onlineCycleCap', label: 'Online cap / cycle (₹)' },
-    { key: 'offlineCycleCap', label: 'Offline cap / cycle (₹)' },
+    { key: 'onlineCycleCap', label: 'Max online cashback per cycle (₹)' },
+    { key: 'offlineCycleCap', label: 'Max offline cashback per cycle (₹)' },
     { key: 'minTransaction', label: 'Minimum transaction to earn (₹)' },
     { key: 'annualMilestoneTarget', label: 'Annual fee-waiver spend (₹)' },
     { key: 'annualMilestoneLabel', label: 'Annual milestone reward', isText: true },
   ],
   hsbc_tiered_cashback_aggregate: [
     { key: 'bonusRate', label: 'Bonus category rate (%)' },
-    { key: 'bonusMonthlyCap', label: 'Bonus cap / month (₹)' },
+    { key: 'bonusMonthlyCap', label: 'Max bonus cashback per month (₹)' },
     { key: 'baseRate', label: 'Base rate (%)' },
     { key: 'annualMilestoneTarget', label: 'Annual fee-waiver spend (₹)' },
     { key: 'annualMilestoneLabel', label: 'Annual milestone reward', isText: true },
@@ -79,12 +92,12 @@ const CARD_PARAM_FIELDS = {
     { key: 'baseRate', label: 'Base rate (%)' },
     { key: 'bonusRate', label: 'Super.money rate (%)' },
     { key: 'minTransaction', label: 'Minimum transaction to earn (₹)' },
-    { key: 'bonusFloor', label: 'Bonus pool floor (₹)' },
+    { key: 'bonusFloor', label: 'Minimum bonus cashback, even if capped (₹)' },
   ],
   hsbc_premier_flat_capped: [
     { key: 'baseRate', label: 'Base rate (%)' },
-    { key: 'categoryMonthlyCap', label: 'Capped-category spend / month (₹)' },
-    { key: 'travelBonusMonthlyCap', label: 'Travel with Points cap / month (pts)' },
+    { key: 'categoryMonthlyCap', label: 'Max capped-category spend per month (₹)' },
+    { key: 'travelBonusMonthlyCap', label: 'Max Travel with Points bonus per month (pts)' },
   ],
 };
 
@@ -121,8 +134,10 @@ const TABS = [
   { key: 'reminders', label: 'Reminders' },
   { key: 'cards', label: 'Cards' },
   { key: 'currencies', label: 'Currencies' },
+  { key: 'paymentMethods', label: 'Payment Methods' },
   { key: 'members', label: 'Members' },
   { key: 'database', label: 'Cloud Status' },
+  { key: 'export', label: 'Export' },
   { key: 'security', label: '🔒 Security PIN' },
 ];
 
@@ -165,18 +180,85 @@ export default function SettingsModal({ visible, onClose }) {
   const [recurringRules, setRecurringRules] = useState([]);
   const [pinConfig, setPinConfigState] = useState({ pin: '', enabled: false });
   const [creditCards, setCreditCards] = useState([]);
+  const [travelEntries, setTravelEntries] = useState([]);
+  const [dbTrips, setDbTrips] = useState([]);
+  const [cashMovements, setCashMovements] = useState([]);
+  const [cardTransactions, setCardTransactions] = useState([]);
+  const [cardBillingCycles, setCardBillingCycles] = useState([]);
+  const [paymentMethodsData, setPaymentMethodsData] = useState({ methods: ['Cash'], rawDocs: [] });
 
   const dbMembers = membersData.members;
+  const dbPaymentMethods = paymentMethodsData.methods;
 
-  useEffect(() => subscribeToExpenses('household', (data) => setHouseholdEntries(data), (err) => console.warn(err)), []);
-  useEffect(() => subscribeToCategories((data) => setCategories(data), (err) => console.warn(err)), []);
-  useEffect(() => subscribeToCurrencies((data) => setCurrencies(data), (err) => console.warn(err)), []);
-  useEffect(() => subscribeToMembers((data) => setMembersData(data), (err) => console.warn(err)), []);
+  useEffect(() => subscribeToExpenses('household', (data) => setHouseholdEntries(data), (err) => reportError(err, 'Could not load household entries')), []);
+  useEffect(() => subscribeToExpenses('travel', (data) => setTravelEntries(data), (err) => reportError(err, 'Could not load travel entries')), []);
+  useEffect(() => subscribeToCategories((data) => setCategories(data), (err) => reportError(err, 'Could not load categories')), []);
+  useEffect(() => subscribeToCurrencies((data) => setCurrencies(data), (err) => reportError(err, 'Could not load currencies')), []);
+  useEffect(() => subscribeToMembers((data) => setMembersData(data), (err) => reportError(err, 'Could not load members')), []);
   useEffect(() => subscribeToHouseholdBudgets(setHouseholdBudgetsState), []);
   useEffect(() => subscribeToPaymentReminderConfig(setReminderConfigState), []);
   useEffect(() => subscribeToRecurringRules(setRecurringRules), []);
   useEffect(() => subscribeToPinConfig(setPinConfigState), []);
-  useEffect(() => subscribeToCreditCards(setCreditCards, (err) => console.warn(err)), []);
+  useEffect(() => subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')), []);
+  useEffect(() => subscribeToTrips((data) => setDbTrips(data), (err) => reportError(err, 'Could not load trips')), []);
+  useEffect(() => subscribeToCashMovements((data) => setCashMovements(data), (err) => reportError(err, 'Could not load cash movements')), []);
+  useEffect(() => subscribeToCardTransactions((data) => setCardTransactions(data), (err) => reportError(err, 'Could not load card transactions')), []);
+  useEffect(() => subscribeToCardBillingCycles((data) => setCardBillingCycles(data), (err) => reportError(err, 'Could not load billing cycles')), []);
+  useEffect(() => subscribeToPaymentMethods((data) => setPaymentMethodsData(data), (err) => reportError(err, 'Could not load payment methods')), []);
+
+  const cardNameById = useMemo(() => Object.fromEntries(creditCards.map((c) => [c.id, c.name || c.id])), [creditCards]);
+
+  // Native has no file-save/share flow wired up yet (would need expo-sharing,
+  // not currently a dependency) - deliberately scoped to web for now, same
+  // as the rest of this app's website-first rollout. `document`/`Blob`/`URL`
+  // are real browser globals once react-native-web compiles this for the
+  // website, exactly like the native-only branches elsewhere in this
+  // codebase go the other way (Platform.OS === 'web' checks in firebase.js).
+  function downloadTextFile(filename, content, mimeType) {
+    if (Platform.OS !== 'web') {
+      Alert.alert('Export', 'Downloading files is available on the Splitkhata website for now - open it in a browser to export your data.');
+      return;
+    }
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function handleExportHouseholdCsv() {
+    downloadTextFile('splitkhata-household.csv', toCsv(householdEntries, LEDGER_CSV_COLUMNS), 'text/csv');
+  }
+
+  function handleExportTravelCsv() {
+    downloadTextFile('splitkhata-travel.csv', toCsv(travelEntries, LEDGER_CSV_COLUMNS), 'text/csv');
+  }
+
+  function handleExportCardsCsv() {
+    const rows = cardTransactions.map((t) => ({ ...t, cardName: cardNameById[t.cardId] || t.cardId }));
+    downloadTextFile('splitkhata-card-transactions.csv', toCsv(rows, CARD_TRANSACTION_CSV_COLUMNS), 'text/csv');
+  }
+
+  function handleExportFullBackup() {
+    const json = buildFullBackupJson({
+      householdEntries,
+      travelEntries,
+      trips: dbTrips,
+      cashMovements,
+      categories,
+      currencies,
+      members: membersData,
+      householdBudgets,
+      recurringRules,
+      reminderConfig,
+      creditCards,
+      cardTransactions,
+      cardBillingCycles,
+    });
+    downloadTextFile(`splitkhata-backup-${todayISO()}.json`, json, 'application/json');
+  }
 
   // Categories tab
   const [categoryLedger, setCategoryLedger] = useState('household');
@@ -192,7 +274,7 @@ export default function SettingsModal({ visible, onClose }) {
       await addCategoryToDb(categoryLedger, trimmed, categories.rawDocs);
       setNewCatName('');
     } catch (err) {
-      console.error('Failed to add category:', err);
+      reportError(err, 'Could not add category');
     } finally {
       setAddingCat(false);
     }
@@ -201,7 +283,7 @@ export default function SettingsModal({ visible, onClose }) {
     try {
       await deleteCategoryFromDb(categoryLedger, name, categories.rawDocs);
     } catch (err) {
-      console.error('Failed to delete category:', err);
+      reportError(err, 'Could not delete category');
     }
   }
 
@@ -343,7 +425,7 @@ export default function SettingsModal({ visible, onClose }) {
       await addCurrencyToDb(trimmed, currencies.rawDocs);
       setNewCurrencyName('');
     } catch (err) {
-      console.error('Failed to add currency:', err);
+      reportError(err, 'Could not add currency');
     } finally {
       setAddingCurr(false);
     }
@@ -352,7 +434,34 @@ export default function SettingsModal({ visible, onClose }) {
     try {
       await deleteCurrencyFromDb(name, currencies.rawDocs);
     } catch (err) {
-      console.error('Failed to delete currency:', err);
+      reportError(err, 'Could not delete currency');
+    }
+  }
+
+  // Payment Methods tab - moved here from the trip settings sheet, since a
+  // payment method (a card, forex account, "Cash") is reused across every
+  // trip, not scoped to one - the same reasoning that already put
+  // currencies and members here instead of in the trip sheet.
+  const [newPaymentMethodName, setNewPaymentMethodName] = useState('');
+  const [addingPaymentMethod, setAddingPaymentMethod] = useState(false);
+  async function handleAddPaymentMethod() {
+    const trimmed = newPaymentMethodName.trim();
+    if (!trimmed) return;
+    setAddingPaymentMethod(true);
+    try {
+      await addPaymentMethodToDb(trimmed, paymentMethodsData.rawDocs);
+      setNewPaymentMethodName('');
+    } catch (err) {
+      reportError(err, 'Could not add payment method');
+    } finally {
+      setAddingPaymentMethod(false);
+    }
+  }
+  async function handleDeletePaymentMethod(name) {
+    try {
+      await deletePaymentMethodFromDb(name, paymentMethodsData.rawDocs);
+    } catch (err) {
+      reportError(err, 'Could not delete payment method');
     }
   }
 
@@ -367,7 +476,7 @@ export default function SettingsModal({ visible, onClose }) {
       await addMemberToDb(trimmed, membersData.rawDocs);
       setNewMemberName('');
     } catch (err) {
-      console.error('Failed to add member:', err);
+      reportError(err, 'Could not add member');
     } finally {
       setAddingMember(false);
     }
@@ -382,7 +491,7 @@ export default function SettingsModal({ visible, onClose }) {
       {
         text: 'Delete',
         style: 'destructive',
-        onPress: () => deleteMemberFromDb(name, membersData.rawDocs).catch((err) => console.error('Failed to delete member:', err)),
+        onPress: () => deleteMemberFromDb(name, membersData.rawDocs).catch((err) => reportError(err, 'Could not delete member')),
       },
     ]);
   }
@@ -578,8 +687,10 @@ export default function SettingsModal({ visible, onClose }) {
             <Text className="font-display text-base text-ink" numberOfLines={1}>
               Settings & Configuration
             </Text>
-            <View className="px-2 py-0.5 rounded-full bg-ledger-green/15">
-              <Text className="font-body-semibold text-[10px] text-ledger-green">Sync Active</Text>
+            <View className={`px-2 py-0.5 rounded-full ${hasFirebase ? 'bg-ledger-green/15' : 'bg-mustard/20'}`}>
+              <Text className={`font-body-semibold text-[10px] ${hasFirebase ? 'text-ledger-green' : 'text-mustard'}`}>
+                {hasFirebase ? 'Synced' : 'Not synced'}
+              </Text>
             </View>
           </View>
           <Pressable onPress={onClose} className="w-8 h-8 rounded-full border border-ink/15 bg-paper items-center justify-center">
@@ -1032,7 +1143,7 @@ export default function SettingsModal({ visible, onClose }) {
 
                           <Text className={`${sectionLabel} mt-2`}>Add a new rule version</Text>
                           <Text className={label}>Effective from</Text>
-                          <TextInput value={newVersionEffectiveFrom} onChangeText={setNewVersionEffectiveFrom} placeholder="2026-08-24" className={input} />
+                          <DateField value={newVersionEffectiveFrom} onChange={setNewVersionEffectiveFrom} className={input} />
                           <View className="flex-row flex-wrap" style={{ gap: 8 }}>
                             {(CARD_PARAM_FIELDS[card.rewardStrategy] || []).map((field) => (
                               <View key={field.key} className="w-full sm:w-[calc(50%-4px)]">
@@ -1144,6 +1255,36 @@ export default function SettingsModal({ visible, onClose }) {
             </View>
           )}
 
+          {activeTab === 'paymentMethods' && (
+            <View>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Payment Methods</Text>
+              <Text className="font-body text-xs text-muted-text mb-3">
+                Which card or account paid for an expense - shared across every trip, so it only needs adding once.
+              </Text>
+              <View className="flex-row gap-2 mb-3">
+                <TextInput
+                  value={newPaymentMethodName}
+                  onChangeText={setNewPaymentMethodName}
+                  placeholder="e.g. Yash Forex, Kruti Diners"
+                  className={`${input} flex-1 mb-0`}
+                />
+                <Pressable
+                  onPress={handleAddPaymentMethod}
+                  disabled={addingPaymentMethod || !newPaymentMethodName.trim()}
+                  className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+                >
+                  <Text className="font-body-semibold text-white text-sm">{addingPaymentMethod ? 'Saving...' : 'Add'}</Text>
+                </Pressable>
+              </View>
+              <Text className={activeListCaption}>Active Payment Methods ({dbPaymentMethods.length})</Text>
+              <View className="flex-row flex-wrap mt-1">
+                {dbPaymentMethods.map((m) => (
+                  <Tag key={m} label={m} removable={m !== 'Cash'} onRemove={() => handleDeletePaymentMethod(m)} />
+                ))}
+              </View>
+            </View>
+          )}
+
           {activeTab === 'members' && (
             <View>
               <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Members Database</Text>
@@ -1167,16 +1308,69 @@ export default function SettingsModal({ visible, onClose }) {
             <View>
               <View className="p-4 rounded-xl border border-ink/15 bg-paper">
                 <View className="flex-row items-center justify-between gap-2 mb-2">
-                  <Text className="font-body-semibold text-sm text-ink">Database Engine Status</Text>
+                  <Text className="font-body-semibold text-sm text-ink">Sync Status</Text>
                   <View className={`px-2.5 py-0.5 rounded-full border ${hasFirebase ? 'bg-ledger-green/15 border-ledger-green/30' : 'bg-mustard/20 border-mustard/40'}`}>
                     <Text className={`font-body-semibold text-xs ${hasFirebase ? 'text-ledger-green' : 'text-mustard'}`}>
-                      {hasFirebase ? 'Cloud Firestore Active' : 'Persistent Local DB Mode'}
+                      {hasFirebase ? 'Synced' : 'Not synced'}
                     </Text>
                   </View>
                 </View>
                 <Text className="font-body text-xs text-muted-text">
-                  Your expense entries, categories, currencies, and members are synchronized live across all active devices via Google Firebase Firestore.
+                  {hasFirebase
+                    ? 'Your expense entries, categories, currencies, and members are synchronized live across all active devices.'
+                    : 'Your entries, categories, currencies, and members are only saved on this device. Ask whoever set up the app to help connect it to shared cloud storage so everyone sees the same data.'}
                 </Text>
+              </View>
+            </View>
+          )}
+
+          {activeTab === 'export' && (
+            <View className="gap-3">
+              <View>
+                <Text className="font-body-semibold text-sm text-ink mb-0.5">Export & Backup</Text>
+                <Text className="font-body text-xs text-muted-text">
+                  This is the only copy of this data. Download it periodically, and definitely before making any
+                  large change - a CSV per ledger for spreadsheets, or a full JSON backup of everything.
+                </Text>
+              </View>
+              <View className="p-4 rounded-xl border border-ink/15 bg-paper gap-2.5">
+                <Text className="font-body-semibold text-sm text-ink">Ledger CSVs</Text>
+                <View className="flex-row flex-wrap gap-2">
+                  <Pressable
+                    onPress={handleExportHouseholdCsv}
+                    disabled={householdEntries.length === 0}
+                    className="min-h-10 px-3.5 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
+                  >
+                    <Text className="font-body-semibold text-xs text-white">Household CSV ({householdEntries.length})</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleExportTravelCsv}
+                    disabled={travelEntries.length === 0}
+                    className="min-h-10 px-3.5 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
+                  >
+                    <Text className="font-body-semibold text-xs text-white">Travel CSV ({travelEntries.length})</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleExportCardsCsv}
+                    disabled={cardTransactions.length === 0}
+                    className="min-h-10 px-3.5 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
+                  >
+                    <Text className="font-body-semibold text-xs text-white">Card Transactions CSV ({cardTransactions.length})</Text>
+                  </Pressable>
+                </View>
+              </View>
+              <View className="p-4 rounded-xl border border-ink/15 bg-paper gap-2.5">
+                <Text className="font-body-semibold text-sm text-ink">Full Backup</Text>
+                <Text className="font-body text-xs text-muted-text">
+                  Every entry, trip, card, transaction, category, currency, member, budget, and recurring rule as
+                  one JSON file.
+                </Text>
+                <Pressable
+                  onPress={handleExportFullBackup}
+                  className="self-start min-h-10 px-3.5 rounded-lg border border-ledger-green/40 bg-ledger-green/10 items-center justify-center"
+                >
+                  <Text className="font-body-semibold text-xs text-ledger-green">Download Full Backup (JSON)</Text>
+                </Pressable>
               </View>
             </View>
           )}

@@ -1350,6 +1350,39 @@ export function computeRecurringEntriesToGenerate(rules, currentMonthKey) {
   return { toCreate, updatedRules: anyChanged ? updatedRules : null };
 }
 
+// "Can we afford this?" is the actual question a household budget exists
+// to answer, and the app has never been able to answer it, despite already
+// storing everything needed: which recurring charges haven't been created
+// yet this month, and how each budgeted category's spend-so-far projects to
+// month-end at its current pace. A rule's entry is generated for the whole
+// month as soon as the app is opened (see computeRecurringEntriesToGenerate)
+// - eagerly, not on its actual dayOfMonth - so "hasn't hit yet" can't be
+// read off dayOfMonth vs. today (a rule due on the 28th already has its
+// entry sitting in `entries`, dated the 28th, the moment the app loads
+// this month; checking dayOfMonth against today would double-count it on
+// top of the projected burn rate below). `lastGeneratedMonth` is the
+// correct signal: a rule not yet generated for the current month is a real
+// future commitment; one that has been is already reflected in `entries`.
+export function computeMonthForecast(entries, recurringRules, budgets, today) {
+  const monthKey = getMonthKey(today);
+  const [y, m] = monthKey.split('-').map(Number);
+  const totalDays = daysInMonth(y, m);
+  const daysElapsed = Math.min(Number(today.slice(8, 10)), totalDays);
+  const daysRemaining = Math.max(totalDays - daysElapsed, 0);
+
+  const remainingCommitted = (recurringRules || [])
+    .filter((r) => r?.active && (!r.lastGeneratedMonth || r.lastGeneratedMonth < monthKey))
+    .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
+
+  const categoryTotals = groupByCategory(entries, monthKey, 'household');
+  const categories = computeBudgetStatus(categoryTotals, budgets).map((s) => {
+    const projectedSpent = daysElapsed > 0 ? (s.spent / daysElapsed) * totalDays : s.spent;
+    return { ...s, projectedSpent, projectedPctUsed: s.limit ? projectedSpent / s.limit : 0 };
+  });
+
+  return { monthKey, daysElapsed, daysRemaining, totalDays, remainingCommitted, categories };
+}
+
 export const PAYMENT_REMINDER_CONFIG_KEY = 'splitkhata_payment_reminder_config';
 
 export const DEFAULT_PAYMENT_REMINDER_THRESHOLD = 2000;
@@ -1711,26 +1744,42 @@ export function computeSbiCycleReward(params, transactions) {
 // HSBC Live+: 10% on dining/food-delivery/grocery/shopping/utility spend
 // (Amazon/Flipkart/Myntra explicitly excluded from this tier despite
 // reading as "shopping" - encode that by leaving isBonusEligible false for
-// those), capped ₹1,200/month combined; 1.5% uncapped on everything else
-// not flagged excluded. Computed on the cycle's aggregate spend per tier,
-// not per transaction - see the file-level note on why.
+// those), capped ₹1,200/calendar month combined; 1.5% uncapped on everything
+// else not flagged excluded. HSBC's own product terms state the cap is per
+// calendar month, not per billing cycle - bucket by calendar month and apply
+// the cap separately to each one, the same way computeDinersCycleReward
+// buckets its own month-scoped category caps, since a billing cycle whose
+// start day isn't the 1st spans two calendar months and would otherwise let
+// one cap cover both (or split one month's cap across two cycles).
 export function computeHsbcCycleReward(params, transactions) {
-  const eligible = transactions.filter((t) => t.channel !== 'excluded' && t.isBonusEligible);
-  const base = transactions.filter((t) => t.channel !== 'excluded' && !t.isBonusEligible);
-  const eligibleSum = eligible.reduce((s, t) => s + t.amount, 0);
-  const baseSum = base.reduce((s, t) => s + t.amount, 0);
+  const byMonth = {};
+  for (const t of transactions) {
+    if (t.channel === 'excluded') continue;
+    const monthKey = getMonthKey(t.date);
+    if (!byMonth[monthKey]) byMonth[monthKey] = { eligible: 0, base: 0 };
+    if (t.isBonusEligible) byMonth[monthKey].eligible += t.amount;
+    else byMonth[monthKey].base += t.amount;
+  }
 
-  const bonusRaw = Math.round((eligibleSum * params.bonusRate) / 100);
-  // Routed through applyCycleCap (not a bare Math.min) so a blank/cleared
-  // cap field is treated as "uncapped," not "capped at zero" - Math.min(x,
-  // null) coerces null to 0 in JS, which would silently wipe out every
-  // bonus-tier reward if someone cleared this field while adding a card.
-  const bonusEarned = applyCycleCap(bonusRaw, 0, params.bonusMonthlyCap);
-  const baseEarned = Math.round((baseSum * params.baseRate) / 100);
+  let eligibleSum = 0;
+  let baseSum = 0;
+  let bonusEarned = 0;
+  let baseEarned = 0;
+  for (const { eligible, base } of Object.values(byMonth)) {
+    eligibleSum += eligible;
+    baseSum += base;
+    const bonusRaw = Math.round((eligible * params.bonusRate) / 100);
+    // Routed through applyCycleCap (not a bare Math.min) so a blank/cleared
+    // cap field is treated as "uncapped," not "capped at zero" - Math.min(x,
+    // null) coerces null to 0 in JS, which would silently wipe out every
+    // bonus-tier reward if someone cleared this field while adding a card.
+    bonusEarned += applyCycleCap(bonusRaw, 0, params.bonusMonthlyCap);
+    baseEarned += Math.round((base * params.baseRate) / 100);
+  }
 
   const perTransaction = transactions.map((t) => ({
     id: t.id,
-    // Estimate only - HSBC settles on the cycle aggregate, not per
+    // Estimate only - HSBC settles on the monthly aggregate, not per
     // transaction, so this is illustrative, not what actually gets paid.
     estimated: t.channel === 'excluded' ? 0 : Math.round((t.amount * (t.isBonusEligible ? params.bonusRate : params.baseRate)) / 100),
   }));
@@ -1744,7 +1793,11 @@ export function computeHsbcCycleReward(params, transactions) {
 // floor (you always get at least ₹100 from the 3% pool even if the 1% pool
 // earned less). Any single transaction under ₹100 earns nothing on either
 // tier - a real rule the old sheet's ROUNDDOWN only enforced by coincidence
-// on the 1% tier and not at all on the 3% tier.
+// on the 1% tier and not at all on the 3% tier. Axis's own T&C also list a
+// full merchant-category exclusion list (rent, utilities, fuel, jewellery,
+// cash withdrawal, wallet loads, insurance, education, government,
+// financial institutions, EMI, telecom) that earns on neither pool - a
+// transaction flagged `channel: 'excluded'` for that.
 export function computeSuperMoneyCycleReward(params, transactions) {
   let baseTotal = 0;
   let bonusRawTotal = 0;
@@ -1758,7 +1811,7 @@ export function computeSuperMoneyCycleReward(params, transactions) {
   const bonusFloor = params.bonusFloor ?? 0;
 
   for (const txn of transactions) {
-    if (txn.amount < minTransaction) {
+    if (txn.channel === 'excluded' || txn.amount < minTransaction) {
       perTransaction.push({ id: txn.id, earned: 0, pool: null });
       continue;
     }
@@ -1895,6 +1948,111 @@ export function previewTransactionReward(card, existingCardTxns, draftTxn) {
   return result.perTransaction.find((p) => p.id === previewId) || null;
 }
 
+const DINERS_CATEGORY_KEYWORDS = {
+  weekend_dining: ['dining', 'eating out', 'restaurant', 'food'],
+  grocery: ['grocery', 'groceries', 'supermarket'],
+  utility: ['utility', 'utilities', 'electricity', 'water bill', 'broadband', 'internet'],
+  insurance: ['insurance'],
+  excluded: ['fuel', 'petrol', 'diesel', 'emi', 'rent', 'government', 'govt', 'cash advance', 'card fee', 'wallet'],
+};
+const SBI_EXCLUDED_KEYWORDS = ['fuel', 'gaming', 'toll', 'government', 'govt', 'wallet', 'rent', 'jewellery', 'jewelry', 'education', 'utility', 'insurance', 'gift', 'railway', 'emi'];
+const HSBC_LIVE_EXCLUDED_KEYWORDS = ['rent', 'fuel', 'insurance', 'education', 'government', 'govt', 'wallet', 'financial institution', 'money transfer', 'jewellery', 'jewelry', 'toll', 'gambling', 'hospital', 'wholesale', 'international', 'forex', 'emi'];
+const HSBC_LIVE_BONUS_KEYWORDS = ['dining', 'eating out', 'restaurant', 'food delivery', 'grocery', 'groceries', 'shopping', 'utility', 'utilities'];
+const AXIS_EXCLUDED_KEYWORDS = ['repayment', 'utility', 'utilities', 'fuel', 'jewellery', 'jewelry', 'cash withdrawal', 'wallet', 'insurance', 'education', 'government', 'govt', 'financial institution', 'rent', 'emi', 'telecom', 'mobile bill', 'phone bill'];
+const HSBC_PREMIER_FUEL_KEYWORDS = ['fuel', 'petrol', 'diesel'];
+const HSBC_PREMIER_CAPPED_KEYWORDS = ['insurance', 'utility', 'utilities', 'education', 'government', 'govt', 'wallet', 'real estate', 'jewellery', 'jewelry', 'tax', 'money transfer'];
+
+function categoryNameMatches(categoryName, keywords) {
+  const lower = (categoryName || '').toLowerCase();
+  return keywords.some((kw) => lower.includes(kw));
+}
+
+// Best-effort default for "which reward category/channel does this
+// transaction count as" from a household category name, so ranking a card
+// against a draft entry doesn't force a second round of manual tagging -
+// see the "Link Cards to the ledger" roadmap item. Household categories are
+// free text, not a fixed enum, so this is fuzzy keyword matching, not a
+// real classifier - it exists to save the common case, and the result is
+// always meant to be shown and correctable, never treated as final.
+export function inferCardRewardFields(card, householdCategory, params) {
+  const name = householdCategory;
+  switch (card?.rewardStrategy) {
+    case 'hdfc_diners_slab_milestone': {
+      const categories = params?.categories || CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone.categories;
+      const matchKey = Object.keys(DINERS_CATEGORY_KEYWORDS).find((key) => categoryNameMatches(name, DINERS_CATEGORY_KEYWORDS[key]));
+      const key = matchKey && categories.some((c) => c.key === matchKey) ? matchKey : 'regular';
+      return { category: key };
+    }
+    case 'sbi_two_channel_cashback':
+      return { channel: categoryNameMatches(name, SBI_EXCLUDED_KEYWORDS) ? 'excluded' : 'online' };
+    case 'hsbc_tiered_cashback_aggregate':
+      if (categoryNameMatches(name, HSBC_LIVE_EXCLUDED_KEYWORDS)) return { channel: 'excluded', isBonusEligible: false };
+      return { channel: null, isBonusEligible: categoryNameMatches(name, HSBC_LIVE_BONUS_KEYWORDS) };
+    case 'axis_supermoney_dual_pool':
+      if (categoryNameMatches(name, AXIS_EXCLUDED_KEYWORDS)) return { channel: 'excluded', isBonusEligible: false };
+      return { channel: null, isBonusEligible: true };
+    case 'hsbc_premier_flat_capped':
+      if (categoryNameMatches(name, HSBC_PREMIER_FUEL_KEYWORDS)) return { category: 'fuel_excluded' };
+      if (categoryNameMatches(name, HSBC_PREMIER_CAPPED_KEYWORDS)) return { category: 'capped_category' };
+      return { category: 'regular' };
+    default:
+      return {};
+  }
+}
+
+// Ranks tracked cards by what each would actually earn for a hypothetical
+// entry, worst to best - the app already models every card's real terms
+// (see computeCardCycleReward), this was just never surfaced at the moment
+// it's actually useful: while typing an entry, not buried in the Cards tab
+// afterward. Pure preview - never touches saved data, never picks a card
+// for the user. `cards`/`cardTransactions` are every tracked card and all
+// of its transactions.
+export function rankCardsForEntry(cards, cardTransactions, amount, householdCategory, date) {
+  if (!amount || !date || !cards?.length) return [];
+  return cards
+    .map((card) => {
+      const params = resolveStrategyParamsForDate(card.strategyParamsHistory, date);
+      const fields = inferCardRewardFields(card, householdCategory, params);
+      const cardTxns = cardTransactions.filter((t) => t.cardId === card.id);
+      const draft = { id: '__rank_preview__', date, amount, ...fields };
+      const preview = previewTransactionReward(card, cardTxns, draft);
+      const earned = preview?.earned ?? preview?.estimated ?? 0;
+      const unit = CARD_REWARD_STRATEGIES.find((s) => s.key === card.rewardStrategy)?.unit || 'inr';
+      const { cycleStart, cycleEnd } = getCardCycleForDate(date, card.billingCycleDay ?? 1);
+      const currentCycleTxns = getTransactionsInCycle(cardTxns, card.id, cycleStart, cycleEnd);
+      const capStatus = computeCardCapStatus(card, cardTxns, currentCycleTxns, date);
+      return { card, earned, unit, capStatus, inferredFields: fields };
+    })
+    .sort((a, b) => b.earned - a.earned);
+}
+
+// Recent combinations of category/payer/paymentMethod, ranked by how often
+// they occur among the most recent entries - lets the entry form offer a
+// single tap ("Groceries · Yash · HSBC Live+") that fills everything but
+// the amount, since real household spending repeats far more than a blank
+// form assumes. Scoped to the most recent `windowSize` entries rather than
+// the whole history, so a habit that's actually changed stops dominating
+// the suggestions once it's stopped, instead of a stale combo from months
+// ago winning forever on raw lifetime frequency.
+export function getRecentCombinations(entries, limit = 5, windowSize = 40) {
+  const recent = [...entries].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, windowSize);
+  const combos = new Map();
+  for (const e of recent) {
+    if (!e.category || !e.payer) continue;
+    const key = `${e.category}|${e.payer}|${e.paymentMethod || ''}`;
+    const existing = combos.get(key);
+    if (existing) {
+      existing.count += 1;
+      if (e.date > existing.lastDate) existing.lastDate = e.date;
+    } else {
+      combos.set(key, { category: e.category, payer: e.payer, paymentMethod: e.paymentMethod || null, count: 1, lastDate: e.date });
+    }
+  }
+  return Array.from(combos.values())
+    .sort((a, b) => b.count - a.count || (b.lastDate || '').localeCompare(a.lastDate || ''))
+    .slice(0, limit);
+}
+
 // Progress toward a spend milestone (quarterly/annual fee-waiver/bonus) -
 // same shape as computeBudgetStatus so the UI can reuse the same progress
 // bar treatment. `periodStart`/`periodEnd` are the calendar window the
@@ -1913,6 +2071,33 @@ export function computeCardMilestoneProgress(transactions, cardId, periodStart, 
     pctUsed: target ? spent / target : 0,
     remaining: target != null ? Math.max(0, target - spent) : null,
   };
+}
+
+// Diners' quarterly milestone bonus (10,000 points at ₹4L/quarter by
+// default) is a lump sum credited once a calendar quarter's spend crosses
+// the target - unlike every other reward path in this file, it isn't part
+// of any single billing cycle's earn calculation (a quarter rarely lines up
+// with one cycle), so a lifetime reward total has to sweep every quarter the
+// card has transactions in and credit each one that hit target, rather than
+// folding it into computeDinersCycleReward. Was previously rendered as text
+// next to the progress bar and never added to any total - the bank pays it,
+// the app just wasn't counting it.
+export function computeQuarterlyMilestoneBonusEarned(transactions, cardId, target, bonus, asOfDate) {
+  if (!target || !bonus) return 0;
+  const cardTxns = transactions.filter((t) => t.cardId === cardId);
+  if (cardTxns.length === 0) return 0;
+  const firstDate = cardTxns.reduce((min, t) => (t.date < min ? t.date : min), cardTxns[0].date);
+  let total = 0;
+  let cursor = firstDate;
+  let guard = 0;
+  while (cursor <= asOfDate && guard < 400) {
+    const { quarterStart, quarterEnd } = getQuarterBounds(cursor);
+    const progress = computeCardMilestoneProgress(transactions, cardId, quarterStart, quarterEnd, target);
+    if (progress.spent >= target) total += bonus;
+    cursor = quarterEnd;
+    guard += 1;
+  }
+  return total;
 }
 
 // The annual fee-waiver/bonus milestone runs on the card's own 12-month
@@ -2038,11 +2223,35 @@ export function computeCardCapStatus(card, cardTransactions, currentCycleTxns, t
 // formula's own workings for everything else. Only recomputes the total
 // when at least one override is actually present, so an untouched card's
 // totals stay the pure formula result.
-export function applyRewardOverrides(cycleReward, transactions) {
+//
+// HSBC Live+ (hsbc_tiered_cashback_aggregate) needs different handling here:
+// its perTransaction.estimated is explicitly illustrative only (the real
+// earn is a monthly-aggregate calculation with its own cap - see
+// computeHsbcCycleReward), so summing it in like every other strategy's
+// authoritative perTransaction.earned would silently swap the correct
+// capped total for a sum of estimates that ignores the cap. Instead, the
+// aggregate is recomputed on just the non-overridden transactions (so the
+// cap still applies correctly to whatever's left) and the override values
+// are added on top, since the user is supplying a known real figure for
+// those, not asking the formula to guess.
+export function applyRewardOverrides(cycleReward, transactions, card, asOfDate) {
   const overrides = new Map(
     transactions.filter((t) => t.rewardOverride != null).map((t) => [t.id, t.rewardOverride]),
   );
   if (overrides.size === 0) return cycleReward;
+
+  if (card?.rewardStrategy === 'hsbc_tiered_cashback_aggregate') {
+    const params = resolveStrategyParamsForDate(card.strategyParamsHistory, asOfDate ?? todayISO());
+    const nonOverridden = transactions.filter((t) => !overrides.has(t.id));
+    const { totalReward: recomputedTotal } = computeHsbcCycleReward(params, nonOverridden);
+    const overrideTotal = [...overrides.values()].reduce((sum, v) => sum + v, 0);
+    const perTransaction = cycleReward.perTransaction.map((p) => {
+      const override = overrides.get(p.id);
+      return override != null ? { ...p, earned: override, overridden: true } : p;
+    });
+    return { ...cycleReward, perTransaction, totalReward: recomputedTotal + overrideTotal };
+  }
+
   let totalReward = 0;
   const perTransaction = cycleReward.perTransaction.map((p) => {
     const override = overrides.get(p.id);
@@ -2108,4 +2317,68 @@ export function setCardBillingCycles(cycles) {
 
 export function getCardBillingCycleKey(cardId, cycleStart) {
   return `${cardId}|${cycleStart}`;
+}
+
+// --- Export / backup ---
+// Years of two people's financial history live only in this app's database,
+// with no way to get it back out - this is the escape hatch. A generic
+// union-of-keys serializer (rather than a hand-picked column list per entity
+// type) so a field added to an entry/transaction shape later shows up in the
+// export automatically instead of silently being left out.
+function csvCell(value) {
+  if (value == null) return '';
+  const str = Array.isArray(value) ? value.join(';') : typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+}
+
+export function toCsv(rows, preferredColumns = []) {
+  if (!rows || rows.length === 0) return '';
+  const keySet = new Set();
+  rows.forEach((row) => Object.keys(row).forEach((key) => keySet.add(key)));
+  const remaining = [...keySet].filter((key) => !preferredColumns.includes(key)).sort();
+  const columns = [...preferredColumns.filter((key) => keySet.has(key)), ...remaining];
+  const lines = [columns.map(csvCell).join(',')];
+  rows.forEach((row) => lines.push(columns.map((col) => csvCell(row[col])).join(',')));
+  return lines.join('\n');
+}
+
+export const LEDGER_CSV_COLUMNS = [
+  'date',
+  'ledger',
+  'tripName',
+  'category',
+  'amount',
+  'currency',
+  'localAmount',
+  'payer',
+  'splitType',
+  'owedBy',
+  'splitAmong',
+  'paymentMethod',
+  'note',
+  'rewardPoints',
+  'isCashWithdrawal',
+  'id',
+];
+
+export const CARD_TRANSACTION_CSV_COLUMNS = [
+  'date',
+  'cardName',
+  'amount',
+  'category',
+  'channel',
+  'isBonusEligible',
+  'rewardOverride',
+  'rewardPoints',
+  'pointsRedeemed',
+  'note',
+  'id',
+];
+
+// A full JSON dump of every collection - the closest thing to "everything,
+// in case the app or this Firestore project ever goes away." Deliberately
+// excludes pinConfig (a PIN hash isn't financial data worth exporting, and
+// shipping it out in a downloadable file is a needless exposure).
+export function buildFullBackupJson(data) {
+  return JSON.stringify({ exportedAt: new Date().toISOString(), schemaVersion: 1, ...data }, null, 2);
 }

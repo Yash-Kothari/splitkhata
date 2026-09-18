@@ -8,12 +8,16 @@ import {
   subscribeToMembers,
   subscribeToPaymentMethods,
   subscribeToCurrencies,
+  subscribeToCreditCards,
+  subscribeToCardTransactions,
   deleteExpense,
+  deleteCardTransaction,
 } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
 import { useJump } from '../../lib/JumpContext';
 import { useUndoDelete } from '../../lib/useUndoDelete';
 import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger, formatCurrency } from '../../lib/utils';
+import { reportError } from '../../lib/errorReporting';
 import AppHeader from '../../components/AppHeader';
 import TripPicker from '../../components/TripPicker';
 import TripSettings from '../../components/TripSettings';
@@ -31,33 +35,49 @@ export default function Travel() {
   const [trips, setTrips] = useState([]);
   const [cashMovements, setCashMovements] = useState([]);
   const [categories, setCategories] = useState(DEFAULT_TRAVEL_CATEGORIES);
-  const [rawCategoryDocs, setRawCategoryDocs] = useState([]);
   const [members, setMembers] = useState(DEFAULT_PERSONS);
   const [paymentMethods, setPaymentMethods] = useState(['Cash']);
-  const [rawPaymentMethodDocs, setRawPaymentMethodDocs] = useState([]);
   const [currencies, setCurrencies] = useState([]);
+  const [creditCards, setCreditCards] = useState([]);
+  const [cardTransactions, setCardTransactions] = useState([]);
 
   const [selectedTrip, setSelectedTrip] = useState('');
   const [currentCurrency, setCurrentCurrency] = useState('INR');
   const [showSettings, setShowSettings] = useState(false);
-  const { pendingDeletes, handleDelete, handleUndo, pendingDeleteList } = useUndoDelete(deleteExpense, (err) => console.warn(err));
 
-  useEffect(() => subscribeToExpenses('travel', setAllTravelEntries, (err) => console.warn(err)), []);
-  useEffect(() => subscribeToTrips(setTrips, (err) => console.warn(err)), []);
-  useEffect(() => subscribeToCashMovements(setCashMovements, (err) => console.warn(err)), []);
+  // Mirrors household.js - deleting a linked entry also deletes the card
+  // transaction it created (see AddEntryForm's handleSubmit).
+  async function deleteTravelEntry(id) {
+    const entry = allTravelEntries?.find((e) => e.id === id);
+    await deleteExpense(id);
+    if (entry?.cardTransactionId) {
+      try {
+        await deleteCardTransaction(entry.cardTransactionId);
+      } catch (err) {
+        reportError(err, 'Deleted the entry, but could not remove its linked card transaction');
+      }
+    }
+  }
+
+  const { pendingDeletes, handleDelete, handleUndo, pendingDeleteList } = useUndoDelete(deleteTravelEntry, (err) =>
+    reportError(err, 'Could not delete entry'),
+  );
+
+  useEffect(() => subscribeToExpenses('travel', setAllTravelEntries, (err) => reportError(err, 'Could not load travel entries')), []);
+  useEffect(() => subscribeToTrips(setTrips, (err) => reportError(err, 'Could not load trips')), []);
+  useEffect(() => subscribeToCashMovements(setCashMovements, (err) => reportError(err, 'Could not load cash movements')), []);
   useEffect(
     () =>
       subscribeToCategories((data) => {
         if (data.travel?.length) setCategories(data.travel);
-        setRawCategoryDocs(data.rawDocs.filter((d) => d.ledger === 'travel'));
-      }, (err) => console.warn(err)),
+      }, (err) => reportError(err, 'Could not load categories')),
     [],
   );
   useEffect(
     () =>
       subscribeToMembers(
         (data) => data.members?.length && setMembers(data.members),
-        (err) => console.warn(err),
+        (err) => reportError(err, 'Could not load members'),
       ),
     [],
   );
@@ -65,11 +85,12 @@ export default function Travel() {
     () =>
       subscribeToPaymentMethods((data) => {
         if (data.methods?.length) setPaymentMethods(data.methods);
-        setRawPaymentMethodDocs(data.rawDocs);
-      }, (err) => console.warn(err)),
+      }, (err) => reportError(err, 'Could not load payment methods')),
     [],
   );
-  useEffect(() => subscribeToCurrencies((data) => setCurrencies(data.currencies), (err) => console.warn(err)), []);
+  useEffect(() => subscribeToCurrencies((data) => setCurrencies(data.currencies), (err) => reportError(err, 'Could not load currencies')), []);
+  useEffect(() => subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')), []);
+  useEffect(() => subscribeToCardTransactions(setCardTransactions, (err) => reportError(err, 'Could not load card transactions')), []);
 
   const selectedTripObj = trips.find((t) => t.name === selectedTrip) || null;
 
@@ -114,31 +135,64 @@ export default function Travel() {
             currentCurrency={currentCurrency}
             onCurrencyChange={setCurrentCurrency}
             onOpenSettings={() => setShowSettings(true)}
+            onSaveError={(err) => reportError(err, 'Could not save')}
           />
 
+          {/* BalanceStrip has its own internal sm:-breakpoint layout (a
+              settlement form meant to spread across a wide row) that breaks
+              when squeezed into the narrow lg:w-96 rail below - Tailwind's
+              sm:/lg: breakpoints key off viewport width, not this
+              container's actual width, so at a wide viewport they'd still
+              switch it into a wide-row layout inside a box that's nowhere
+              near wide enough. Kept full-width here instead, same as
+              TripPicker right above it. */}
           {selectedTripObj && allTravelEntries && (
-            <>
-              <BalanceStrip
+            <BalanceStrip
+              entries={tripEntries}
+              ledger="travel"
+              dbMembers={activeMembersList}
+              tripName={selectedTrip}
+              tripId={selectedTripObj.id}
+              tripRollup={tripRollup}
+            />
+          )}
+        </View>
+
+        {/* Two-column shell above 1024px - see household.js for the same
+            pattern and the reasoning behind the order-* stacking. */}
+        {selectedTripObj && allTravelEntries && (
+          <View className="flex-col lg:flex-row" style={{ gap: 20 }}>
+            <View className="order-2 lg:order-1 lg:flex-1">
+              <View className="px-4">
+                <AddEntryForm
+                  deviceName={user?.displayName}
+                  ledger="travel"
+                  tripName={selectedTrip}
+                  dbCategories={categories}
+                  dbMembers={activeMembersList}
+                  currentCurrency={selectedTripObj.currency}
+                  dbPaymentMethods={paymentMethods}
+                  tripEntries={tripEntries}
+                  creditCards={creditCards}
+                  cardTransactions={cardTransactions}
+                  recentEntries={tripEntries}
+                />
+              </View>
+
+              <EntryList
                 entries={tripEntries}
                 ledger="travel"
-                dbMembers={activeMembersList}
-                tripName={selectedTrip}
-                tripId={selectedTripObj.id}
-                tripRollup={tripRollup}
-              />
-
-              <BudgetAlerts entries={tripEntries} ledger="travel" month={null} budgets={selectedTripObj.categoryBudgets || {}} />
-
-              <AddEntryForm
-                deviceName={user?.displayName}
-                ledger="travel"
-                tripName={selectedTrip}
-                dbCategories={categories}
-                dbMembers={activeMembersList}
-                currentCurrency={selectedTripObj.currency}
+                categories={categories}
+                members={activeMembersList}
                 dbPaymentMethods={paymentMethods}
-                tripEntries={tripEntries}
+                currentCurrency={selectedTripObj.currency}
+                pendingDeletes={pendingDeletes}
+                onDelete={handleDelete}
               />
+            </View>
+
+            <View className="order-1 lg:order-2 w-full lg:w-96 px-4" style={{ gap: 16 }}>
+              <BudgetAlerts entries={tripEntries} ledger="travel" month={null} budgets={selectedTripObj.categoryBudgets || {}} />
 
               <CategoryChart
                 entries={tripEntries}
@@ -148,21 +202,8 @@ export default function Travel() {
                 ledger="travel"
                 budgets={selectedTripObj.categoryBudgets || {}}
               />
-            </>
-          )}
-        </View>
-
-        {selectedTripObj && allTravelEntries && (
-          <EntryList
-            entries={tripEntries}
-            ledger="travel"
-            categories={categories}
-            members={activeMembersList}
-            dbPaymentMethods={paymentMethods}
-            currentCurrency={selectedTripObj.currency}
-            pendingDeletes={pendingDeletes}
-            onDelete={handleDelete}
-          />
+            </View>
+          </View>
         )}
       </ScrollView>
 
@@ -179,12 +220,11 @@ export default function Travel() {
         trips={trips}
         entries={allTravelEntries || []}
         dbCategories={categories}
-        rawCategoryDocs={rawCategoryDocs}
         dbPaymentMethods={paymentMethods}
-        rawPaymentMethodDocs={rawPaymentMethodDocs}
         dbMembers={members}
         currentCurrency={selectedTripObj?.currency}
         onTripDeleted={() => setSelectedTrip('')}
+        onSaveError={(err) => reportError(err, 'Could not save')}
       />
     </View>
   );

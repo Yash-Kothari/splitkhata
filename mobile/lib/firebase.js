@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { reportError } from './errorReporting';
 import { initializeApp } from 'firebase/app';
 // firebase/auth's own package.json exports map has no "react-native"
 // condition (only node/browser/default), so it resolves to the web build
@@ -346,7 +347,7 @@ export function subscribeToHouseholdBudgets(callback) {
   return onSnapshot(
     budgetsDocRef,
     (docSnap) => callback(docSnap.exists() && docSnap.data().budgets ? docSnap.data().budgets : {}),
-    (err) => { console.warn('Household budgets subscription error:', err); callback({}); },
+    (err) => { reportError(err, 'Could not load household budgets'); callback({}); },
   );
 }
 
@@ -363,7 +364,7 @@ export function subscribeToPaymentReminderConfig(callback) {
         : { enabled: true, amountThreshold: 2000 };
       callback(config);
     },
-    (err) => { console.warn('Payment reminder config subscription error:', err); callback({ enabled: true, amountThreshold: 2000 }); },
+    (err) => { reportError(err, 'Could not load payment reminder settings'); callback({ enabled: true, amountThreshold: 2000 }); },
   );
 }
 
@@ -586,7 +587,7 @@ export function subscribeToRecurringRules(callback) {
   return onSnapshot(
     rulesDocRef,
     (docSnap) => callback(docSnap.exists() && Array.isArray(docSnap.data().rules) ? docSnap.data().rules : []),
-    (err) => { console.warn('Recurring rules subscription error:', err); callback([]); },
+    (err) => { reportError(err, 'Could not load recurring rules'); callback([]); },
   );
 }
 
@@ -610,7 +611,7 @@ export function subscribeToPinConfig(callback) {
         callback({ pin: '', enabled: false });
       }
     },
-    (err) => { console.warn('PIN config subscription error:', err); callback({ pin: '', enabled: false }); },
+    (err) => { reportError(err, 'Could not load security PIN settings'); callback({ pin: '', enabled: false }); },
   );
 }
 

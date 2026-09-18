@@ -11,6 +11,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.splitkhata.mobile",
+      "deploymentTarget": "17.0",
       "config": {
         "usesNonExemptEncryption": false
       }
@@ -43,7 +44,8 @@
           "photosPermission": false,
           "microphonePermission": false
         }
-      ]
+      ],
+      "./plugins/withUiSceneManifest.js"
     ],
     "experiments": {
       "baseUrl": "/splitkhata"

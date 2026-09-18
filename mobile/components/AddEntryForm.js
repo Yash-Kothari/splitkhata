@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import PickerField from './PickerField';
+import DateField from './DateField';
 import Card from './Card';
-import { addExpense, addExpensesBatch, generateStructured, extractReceiptFromImage } from '../lib/firebase';
+import { addExpense, addExpensesBatch, updateExpense, addCardTransaction, generateStructured, extractReceiptFromImage } from '../lib/firebase';
+import { reportError } from '../lib/errorReporting';
 import {
   DEFAULT_PERSONS as PERSONS,
   DEFAULT_CATEGORIES,
@@ -19,6 +21,11 @@ import {
   buildCategorySuggestionSchema,
   buildReceiptExtractionPrompt,
   buildReceiptExtractionSchema,
+  rankCardsForEntry,
+  getRecentCombinations,
+  inferCardRewardFields,
+  resolveStrategyParamsForDate,
+  formatCurrency,
 } from '../lib/utils';
 
 const SPLIT_TYPE_OPTIONS = [
@@ -51,12 +58,20 @@ export default function AddEntryForm({
   currentCurrency = 'INR',
   dbPaymentMethods = [],
   tripEntries = [],
+  creditCards = [],
+  cardTransactions = [],
+  recentEntries = [],
 }) {
   const isTravel = ledger === 'travel';
   const categories =
     dbCategories && dbCategories.length > 0 ? dbCategories : isTravel ? DEFAULT_TRAVEL_CATEGORIES : DEFAULT_CATEGORIES;
   const membersList = dbMembers && dbMembers.length > 0 ? dbMembers : PERSONS;
   const paymentMethodsList = dbPaymentMethods && dbPaymentMethods.length > 0 ? dbPaymentMethods : ['Cash'];
+  // A tracked card counts as a payment method too, so picking it here can
+  // link the entry to a card transaction (see handleSubmit) - kept as a
+  // separate list from paymentMethodsList since travel's own FIFO cash
+  // logic and Quick Add schema key off that list not including cards.
+  const paymentMethodOptions = Array.from(new Set([...paymentMethodsList, ...creditCards.map((c) => c.name).filter(Boolean)]));
 
   const [amount, setAmount] = useState('');
   const [localAmount, setLocalAmount] = useState('');
@@ -71,6 +86,7 @@ export default function AddEntryForm({
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState(true);
+  const [aiToolsOpen, setAiToolsOpen] = useState(false);
   const [splitAcrossMonths, setSplitAcrossMonths] = useState(false);
   const [monthsCount, setMonthsCount] = useState('6');
   const [quickAddText, setQuickAddText] = useState('');
@@ -95,6 +111,25 @@ export default function AddEntryForm({
   );
   const amountLocked = isTravel && paymentMethod === 'Cash' && fifoResult != null;
 
+  // Which tracked card would earn the most on this specific entry, right
+  // where the amount/category are being typed - the reward engine already
+  // models every card's real terms, this just surfaces it at the moment
+  // it's actually useful instead of only in the Cards tab after the fact.
+  const rankedCards = useMemo(
+    () => rankCardsForEntry(creditCards, cardTransactions, parseFloat(amount) || 0, category, date),
+    [creditCards, cardTransactions, amount, category, date],
+  );
+
+  // Real household spending repeats far more than a blank form assumes -
+  // one tap on a recent combination fills category/payer/payment method,
+  // leaving only the amount to type.
+  const recentCombinations = useMemo(() => getRecentCombinations(recentEntries), [recentEntries]);
+  function applyRecentCombination(combo) {
+    setCategory(combo.category);
+    setPayer(combo.payer);
+    if (combo.paymentMethod) setPaymentMethod(combo.paymentMethod);
+  }
+
   useEffect(() => {
     if (categories.length && !categories.includes(category)) setCategory(categories[0]);
   }, [ledger, categories.join('|')]);
@@ -118,10 +153,10 @@ export default function AddEntryForm({
   }, [membersList.join('|')]);
 
   useEffect(() => {
-    if (paymentMethodsList.length && !paymentMethodsList.includes(paymentMethod)) {
-      setPaymentMethod(paymentMethodsList[0]);
+    if (paymentMethodOptions.length && !paymentMethodOptions.includes(paymentMethod)) {
+      setPaymentMethod(paymentMethodOptions[0]);
     }
-  }, [paymentMethodsList.join('|')]);
+  }, [paymentMethodOptions.join('|')]);
 
   useEffect(() => {
     if (!isTravel || paymentMethod !== 'Cash' || fifoResult == null) return;
@@ -259,7 +294,7 @@ export default function AddEntryForm({
         }));
         await addExpensesBatch(installments);
       } else {
-        await addExpense({
+        const newEntryId = await addExpense({
           amount: parsed,
           payer,
           category,
@@ -271,11 +306,35 @@ export default function AddEntryForm({
           date,
           ledger,
           tripName: isTravel ? tripName : '',
-          paymentMethod: isTravel ? paymentMethod : null,
+          paymentMethod: paymentMethod || null,
           localAmount: parsedLocal,
           rewardPoints: parsedPoints,
           deviceName: deviceName || payer,
         });
+
+        // When the payment method names a tracked card, create the card
+        // transaction as a side effect of saving the expense - one form,
+        // two records, joined by id - instead of making that a second,
+        // separate act of discipline in the Cards tab. Best-effort: a
+        // failure here shouldn't undo the expense that already saved fine.
+        const matchedCard = creditCards.find((c) => c.name === paymentMethod);
+        if (matchedCard) {
+          try {
+            const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, date);
+            const fields = inferCardRewardFields(matchedCard, category, params);
+            const cardTransactionId = await addCardTransaction({
+              cardId: matchedCard.id,
+              amount: parsed,
+              date,
+              note: trimmedNote,
+              linkedEntryId: newEntryId,
+              ...fields,
+            });
+            await updateExpense(newEntryId, { cardTransactionId });
+          } catch (err) {
+            reportError(err, 'Saved the entry, but could not link it to the card');
+          }
+        }
       }
       setAmount('');
       setLocalAmount('');
@@ -306,62 +365,101 @@ export default function AddEntryForm({
 
       {expanded && (
         <View className="mt-3">
-          <View className="rounded-xl border border-ledger-green/20 bg-ledger-green/5 px-3.5 py-3 mb-3">
-            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-              ✨ Quick Add - describe it in a sentence
-            </Text>
-            <View className="flex-row gap-2">
-              <TextInput
-                value={quickAddText}
-                onChangeText={setQuickAddText}
-                onSubmitEditing={handleQuickAdd}
-                placeholder="e.g. 1200 dinner with Kruti last night"
-                className="flex-1 font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-              />
-              <Pressable
-                onPress={handleQuickAdd}
-                disabled={!quickAddText.trim() || quickAddStatus.state === 'loading'}
-                className="shrink-0 min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
-              >
-                {quickAddStatus.state === 'loading' ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <Text className="font-body-semibold text-sm text-white">Parse</Text>
-                )}
-              </Pressable>
+          {recentCombinations.length > 0 && (
+            <View className="mb-3">
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1.5">Recent</Text>
+              <View className="flex-row flex-wrap gap-1.5">
+                {recentCombinations.map((c) => (
+                  <Pressable
+                    key={`${c.category}|${c.payer}|${c.paymentMethod}`}
+                    onPress={() => applyRecentCombination(c)}
+                    className="min-h-9 px-3 rounded-full border border-ink/15 bg-paper items-center justify-center flex-row"
+                  >
+                    <Text className="font-body-medium text-xs text-ink">
+                      {c.category} · {c.payer}
+                      {c.paymentMethod ? ` · ${c.paymentMethod}` : ''}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
             </View>
-            {quickAddStatus.state === 'done' && (
-              <Text className="font-body text-2xs text-ledger-green mt-1.5">Filled in below - review and Add to Ledger.</Text>
-            )}
-            {quickAddStatus.state === 'error' && (
-              <Text className="font-body text-2xs text-stamp-red mt-1.5">{quickAddStatus.error}</Text>
-            )}
-          </View>
+          )}
 
-          <View className="rounded-xl border border-ledger-green/20 bg-ledger-green/5 px-3.5 py-3 mb-3">
-            <View className="flex-row items-center justify-between gap-2">
-              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text flex-1">
-                📷 Scan a receipt to auto-fill
-              </Text>
-              <Pressable
-                onPress={handleScanReceipt}
-                disabled={receiptStatus.state === 'loading'}
-                className="shrink-0 min-h-9 px-3.5 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
-              >
-                {receiptStatus.state === 'loading' ? (
-                  <ActivityIndicator color="white" size="small" />
-                ) : (
-                  <Text className="font-body-semibold text-xs text-white">Take Photo</Text>
+          {/* Quick Add and receipt scan are occasional tools, not core to
+              every entry - collapsed by default behind one affordance
+              instead of always occupying the top of the form. */}
+          {!aiToolsOpen ? (
+            <Pressable
+              onPress={() => setAiToolsOpen(true)}
+              className="rounded-xl border border-ledger-green/20 bg-ledger-green/5 px-3.5 py-2.5 mb-3 flex-row items-center justify-center"
+            >
+              <Text className="font-body-semibold text-xs text-ledger-green">✨ Quick Add / 📷 Scan Receipt</Text>
+            </Pressable>
+          ) : (
+            <>
+              <View className="rounded-xl border border-ledger-green/20 bg-ledger-green/5 px-3.5 py-3 mb-3">
+                <View className="flex-row items-center justify-between gap-2 mb-1">
+                  <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text">
+                    ✨ Quick Add - describe it in a sentence
+                  </Text>
+                  <Pressable onPress={() => setAiToolsOpen(false)} hitSlop={6}>
+                    <Text className="font-body-semibold text-2xs text-muted-text">Hide</Text>
+                  </Pressable>
+                </View>
+                <View className="flex-row gap-2">
+                  <TextInput
+                    value={quickAddText}
+                    onChangeText={setQuickAddText}
+                    onSubmitEditing={handleQuickAdd}
+                    placeholder="e.g. 1200 dinner with Kruti last night"
+                    className="flex-1 font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+                  />
+                  <Pressable
+                    onPress={handleQuickAdd}
+                    disabled={!quickAddText.trim() || quickAddStatus.state === 'loading'}
+                    className="shrink-0 min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+                  >
+                    {quickAddStatus.state === 'loading' ? (
+                      <ActivityIndicator color="white" />
+                    ) : (
+                      <Text className="font-body-semibold text-sm text-white">Parse</Text>
+                    )}
+                  </Pressable>
+                </View>
+                {quickAddStatus.state === 'done' && (
+                  <Text className="font-body text-2xs text-ledger-green mt-1.5">Filled in below - review and Add to Ledger.</Text>
                 )}
-              </Pressable>
-            </View>
-            {receiptStatus.state === 'done' && (
-              <Text className="font-body text-2xs text-ledger-green mt-1.5">Filled in below - review and Add to Ledger.</Text>
-            )}
-            {receiptStatus.state === 'error' && (
-              <Text className="font-body text-2xs text-stamp-red mt-1.5">{receiptStatus.error}</Text>
-            )}
-          </View>
+                {quickAddStatus.state === 'error' && (
+                  <Text className="font-body text-2xs text-stamp-red mt-1.5">{quickAddStatus.error}</Text>
+                )}
+              </View>
+
+              <View className="rounded-xl border border-ledger-green/20 bg-ledger-green/5 px-3.5 py-3 mb-3">
+                <View className="flex-row items-center justify-between gap-2">
+                  <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text flex-1">
+                    📷 Scan a receipt to auto-fill
+                  </Text>
+                  <Pressable
+                    onPress={handleScanReceipt}
+                    disabled={receiptStatus.state === 'loading'}
+                    className="shrink-0 min-h-9 px-3.5 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+                  >
+                    {receiptStatus.state === 'loading' ? (
+                      <ActivityIndicator color="white" size="small" />
+                    ) : (
+                      <Text className="font-body-semibold text-xs text-white">Take Photo</Text>
+                    )}
+                  </Pressable>
+                </View>
+                {receiptStatus.state === 'done' && (
+                  <Text className="font-body text-2xs text-ledger-green mt-1.5">Filled in below - review and Add to Ledger.</Text>
+                )}
+                {receiptStatus.state === 'error' && (
+                  <Text className="font-body text-2xs text-stamp-red mt-1.5">{receiptStatus.error}</Text>
+                )}
+              </View>
+            </>
+          )}
 
           <View className="flex-row flex-wrap" style={{ gap: 14 }}>
             <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
@@ -453,18 +551,15 @@ export default function AddEntryForm({
               ) : null}
             </View>
 
-            {isTravel && (
-              <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
-                <PickerField label="Payment Method" value={paymentMethod} options={paymentMethodsList} onChange={setPaymentMethod} />
-              </View>
-            )}
+            <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
+              <PickerField label="Payment Method" value={paymentMethod} options={paymentMethodOptions} onChange={setPaymentMethod} />
+            </View>
 
             <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
               <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
-              <TextInput
+              <DateField
                 value={date}
-                onChangeText={setDate}
-                placeholder="2026-08-24"
+                onChange={setDate}
                 className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
               />
             </View>
@@ -479,6 +574,20 @@ export default function AddEntryForm({
               />
             </View>
           </View>
+
+          {rankedCards.length > 0 && (
+            <Text className="font-body text-2xs text-muted-text mt-2">
+              💳{' '}
+              {rankedCards
+                .map((r) => `${r.card.name || r.card.id} → ${r.unit === 'points' ? `${Math.round(r.earned).toLocaleString('en-IN')} pts` : formatCurrency(r.earned)}`)
+                .join('. ')}
+              {rankedCards[0].capStatus.length > 0
+                ? `. ${rankedCards[0].card.name || rankedCards[0].card.id} cap: ${rankedCards[0].capStatus
+                    .map((c) => (c.unit === 'points' ? `${Math.round(c.remaining).toLocaleString('en-IN')} pts` : formatCurrency(c.remaining)))
+                    .join(', ')} left this ${rankedCards[0].capStatus[0].capPeriod}.`
+                : ''}
+            </Text>
+          )}
 
           {splitType === 'shared' && membersList.length > 2 && (
             <View className="mt-3">

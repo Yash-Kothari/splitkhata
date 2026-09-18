@@ -1,48 +1,37 @@
 # Splitkhata - Household & Travel Ledger
 
-A shared expense tracker for two people. Log an expense, say who paid, split it or not, tag a category, and see month-over-month and category trends. Built for GitHub Pages, Cloud Run, and comfortable phone use.
+A shared expense tracker for two people. Log an expense, say who paid, split it or not, tag a category, and see month-over-month and category trends. Built for GitHub Pages and comfortable phone use.
 
 ## Features
 
-- **Balance strip**: always shows who owes whom (split expenses only)
-- **Quick add form**: amount, payer, category dropdown, split toggle, date, note
-- **Category database manager**: manage and add new categories dynamically in Settings
+- **Balance strip**: always shows who owes whom (split expenses only), with real pairwise settlements once a household or trip has more than two members
+- **Quick add form**: amount, payer, category, payment method, split toggle, date, note - plus a natural-language Quick Add and receipt scanning
+- **Card rewards**: tracks credit card reward rules against each bank's real terms, links card transactions to ledger entries, and ranks which card to use for a given entry
+- **Recurring rules & budgets**: recurring bills auto-generate their monthly entry, and category budgets warn before they're exceeded, including a month-end forecast
 - **Charts**: monthly spend by payer, category donut with month filter
-- **Entry list**: passbook-style rows, filtered by month, search filter, deletable
-- **Real-time sync**: Firebase Firestore keeps both partners in sync instantly
-- **Offline support**: Firestore and local database fallback cache locally and sync when reconnected
+- **Entry list**: passbook-style rows, filtered by month, search filter, deletable with undo
+- **Export & backup**: CSV per ledger or a full JSON backup of everything, from Settings
+- **Real-time sync**: Firebase Firestore keeps both partners in sync instantly, on the website and the native app
+- **Responsive shell**: a two-column layout with a top nav above 1024px; a single-column, bottom-tab layout on phones
 
 ## Stack
 
-- Vite + React
-- Tailwind CSS v4
+- Expo / React Native, built for both the native iOS app and the website (via `expo export --platform web`)
+- NativeWind (Tailwind for React Native)
 - Recharts
 - Firebase Firestore
 
+The app lives in `mobile/` - see `mobile/README.md` for that project's own setup. This repo root otherwise only holds Firebase project config (`firestore.rules`, `firebase.json`) and `scripts/check-card-data.mjs`, a standalone diagnostic script.
+
 ## Local development
 
-1. **Create a Firebase project** (Spark / free plan)
-   - Enable **Firestore Database** (start in production mode)
-   - In **Authentication → Sign-in method**, enable **Google** sign-in. Only the Google accounts listed in `firestore.rules` can access the shared ledger.
-   - Deploy the security rules from `firestore.rules`:
-     ```bash
-     firebase deploy --only firestore:rules
-     ```
-   - Register a web app and copy the config snippet
-
-2. **Configure environment**
-   ```bash
-   cp .env.example .env
-   # Fill in VITE_FIREBASE_* values from Firebase Console
-   ```
-
-3. **Install and run**
-   ```bash
-   npm install
-   npm run dev
-   ```
-
-4. Open the local URL, pick your identity (e.g. Yash or Kruti) - this is saved on your device.
+```bash
+cd mobile
+npm install
+npm run web       # website, via react-native-web
+# or
+npm start         # Expo dev server, for the native app in a simulator/device
+```
 
 ## License
 

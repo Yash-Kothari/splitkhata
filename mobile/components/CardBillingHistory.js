@@ -38,6 +38,8 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, onSaveError }
   const { totalReward: expectedReward, unit: rewardUnit } = applyRewardOverrides(
     computeCardCycleReward(card, cycleTxns, cycle.cycleStart),
     cycleTxns,
+    card,
+    cycle.cycleStart,
   );
 
   const billConfirmed = cycleRecord?.billConfirmedAt != null;

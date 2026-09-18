@@ -86,8 +86,7 @@ export default function SignInScreen() {
           </View>
         ) : configMissing ? (
           <Text className="font-body text-xs text-stamp-red text-center">
-            Google sign-in isn't configured yet - set EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID and
-            EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID in mobile/.env.
+            Google sign-in isn't set up on this build yet - ask whoever set up the app to enable it.
           </Text>
         ) : (
           <Pressable

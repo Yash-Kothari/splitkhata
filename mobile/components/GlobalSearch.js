@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { subscribeToExpenses } from '../lib/firebase';
 import { useJump } from '../lib/JumpContext';
 import { formatCurrency, normalizeLedger, searchAllEntries, getMonthKey } from '../lib/utils';
+import { reportError } from '../lib/errorReporting';
 
 function formatDate(dateStr) {
   try {
@@ -28,12 +29,12 @@ export default function GlobalSearch({ visible, onClose }) {
 
   useEffect(() => {
     if (!visible) return undefined;
-    return subscribeToExpenses('household', setHouseholdEntries, (err) => console.warn(err));
+    return subscribeToExpenses('household', setHouseholdEntries, (err) => reportError(err, 'Could not load household entries'));
   }, [visible]);
 
   useEffect(() => {
     if (!visible) return undefined;
-    return subscribeToExpenses('travel', setTravelEntries, (err) => console.warn(err));
+    return subscribeToExpenses('travel', setTravelEntries, (err) => reportError(err, 'Could not load travel entries'));
   }, [visible]);
 
   const results = searchAllEntries([...householdEntries, ...travelEntries], term);

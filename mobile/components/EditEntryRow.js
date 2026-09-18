@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, Alert } from 'react-native';
 import PickerField from './PickerField';
+import DateField from './DateField';
 import { cardShadow } from './Card';
 import { updateExpense } from '../lib/firebase';
 import { computeFifoCashAmount, formatFifoBreakdownSummary } from '../lib/utils';
@@ -156,9 +157,9 @@ export default function EditEntryRow({
 
           <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
             <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
-            <TextInput
+            <DateField
               value={date}
-              onChangeText={setDate}
+              onChange={setDate}
               className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
             />
           </View>
@@ -285,11 +286,10 @@ export default function EditEntryRow({
         )}
 
         <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date (YYYY-MM-DD)</Text>
-          <TextInput
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
+          <DateField
             value={date}
-            onChangeText={setDate}
-            placeholder="2026-08-24"
+            onChange={setDate}
             className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
           />
         </View>

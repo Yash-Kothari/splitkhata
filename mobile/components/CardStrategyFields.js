@@ -101,16 +101,22 @@ export default function CardStrategyFields({ card, draft, onChange, gap = 14 }) 
     // transaction - most spend on this card goes through the app. `?? true`
     // only fills in the unset case; an explicit false (user picked "other")
     // still sticks.
+    const value = draft.channel === 'excluded' ? 'excluded' : (draft.isBonusEligible ?? true) ? 'supermoney' : 'other';
     return (
       <View className={halfWidth}>
         <PickerField
           label="Category"
-          value={(draft.isBonusEligible ?? true) ? 'supermoney' : 'other'}
+          value={value}
           options={[
             { value: 'supermoney', label: 'Super.Money App UPI (3%)' },
             { value: 'other', label: 'Other UPI / Card Spend (1%)' },
+            { value: 'excluded', label: 'Excluded (Repayments, Utility, Fuel, Jewellery, Cash Withdrawal, Wallet Load, Insurance, Education, Government, Financial Institutions, Rental, EMI, Telecom)' },
           ]}
-          onChange={(v) => onChange({ isBonusEligible: v === 'supermoney' })}
+          onChange={(v) => {
+            if (v === 'excluded') onChange({ channel: 'excluded', isBonusEligible: false });
+            else if (v === 'supermoney') onChange({ channel: null, isBonusEligible: true });
+            else onChange({ channel: null, isBonusEligible: false });
+          }}
         />
       </View>
     );

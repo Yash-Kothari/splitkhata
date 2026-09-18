@@ -1,12 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, Alert } from 'react-native';
 import { ScrollView } from 'react-native';
-import { subscribeToExpenses, subscribeToMembers, subscribeToPaymentReminderConfig, addExpense, deleteExpense } from '../../lib/firebase';
+import {
+  subscribeToExpenses,
+  subscribeToMembers,
+  subscribeToPaymentReminderConfig,
+  addExpense,
+  deleteExpense,
+  deleteCardTransaction,
+} from '../../lib/firebase';
 import { useUndoDelete } from '../../lib/useUndoDelete';
 import { DEFAULT_PERSONS, computeBalance, todayISO, formatCurrency } from '../../lib/utils';
+import { reportError } from '../../lib/errorReporting';
 import AppHeader from '../../components/AppHeader';
 import Card from '../../components/Card';
 import PickerField from '../../components/PickerField';
+import DateField from '../../components/DateField';
 import BalanceStrip from '../../components/BalanceStrip';
 import EntryList from '../../components/EntryList';
 import PaymentReminderBanner from '../../components/PaymentReminderBanner';
@@ -136,9 +145,9 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
 
             <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
               <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
-              <TextInput
+              <DateField
                 value={date}
-                onChangeText={setDate}
+                onChange={setDate}
                 className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
               />
             </View>
@@ -195,15 +204,32 @@ export default function Payments() {
   const [travelEntries, setTravelEntries] = useState([]);
   const [members, setMembers] = useState(DEFAULT_PERSONS);
   const [reminderConfig, setReminderConfig] = useState({ enabled: true, amountThreshold: 2000 });
-  const { pendingDeletes, handleDelete, handleUndo, pendingDeleteList } = useUndoDelete(deleteExpense, (err) => console.warn(err));
 
-  useEffect(() => subscribeToExpenses('household', setEntries, (err) => console.warn(err)), []);
-  useEffect(() => subscribeToExpenses('travel', setTravelEntries, (err) => console.warn(err)), []);
+  // Mirrors household.js/travel.js - deleting a linked entry also deletes
+  // the card transaction it created (see AddEntryForm's handleSubmit).
+  async function deletePaymentsEntry(id) {
+    const entry = [...(entries || []), ...travelEntries].find((e) => e.id === id);
+    await deleteExpense(id);
+    if (entry?.cardTransactionId) {
+      try {
+        await deleteCardTransaction(entry.cardTransactionId);
+      } catch (err) {
+        reportError(err, 'Deleted the entry, but could not remove its linked card transaction');
+      }
+    }
+  }
+
+  const { pendingDeletes, handleDelete, handleUndo, pendingDeleteList } = useUndoDelete(deletePaymentsEntry, (err) =>
+    reportError(err, 'Could not delete entry'),
+  );
+
+  useEffect(() => subscribeToExpenses('household', setEntries, (err) => reportError(err, 'Could not load household entries')), []);
+  useEffect(() => subscribeToExpenses('travel', setTravelEntries, (err) => reportError(err, 'Could not load travel entries')), []);
   useEffect(
     () =>
       subscribeToMembers(
         (data) => data.members?.length && setMembers(data.members),
-        (err) => console.warn(err),
+        (err) => reportError(err, 'Could not load members'),
       ),
     [],
   );
@@ -218,6 +244,14 @@ export default function Payments() {
     <View className="flex-1 bg-paper">
       <AppHeader badge="💰 Payments" />
       <ScrollView contentContainerStyle={{ paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+        {/* BalanceStrip and RewardPointsCard both have their own internal
+            sm:-breakpoint layouts (settlement forms meant to spread across
+            a wide row) that break when squeezed into the narrow lg:w-96
+            rail below - Tailwind's sm:/lg: breakpoints key off viewport
+            width, not a container's actual width, so at a wide viewport
+            they'd still switch into a wide-row layout inside a box nowhere
+            near wide enough. Kept full-width here instead, matching
+            BalanceStrip's placement on the Travel tab. */}
         <View className="px-4">
           {entries && <PaymentReminderBanner entries={entries} dbMembers={members} config={reminderConfig} />}
           {entries && <BalanceStrip entries={entries} ledger="household" dbMembers={members} />}

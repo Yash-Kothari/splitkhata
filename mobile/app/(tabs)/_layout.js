@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Tabs } from 'expo-router';
-import { View, Text } from 'react-native';
-import { subscribeToPinConfig } from '../../lib/firebase';
+import { View, Text, useWindowDimensions } from 'react-native';
+import { subscribeToPinConfig, subscribeToRecurringRules, saveRecurringRulesToDb, addExpensesBatch } from '../../lib/firebase';
+import { computeRecurringEntriesToGenerate, getMonthKey, todayISO } from '../../lib/utils';
+import { reportError } from '../../lib/errorReporting';
 import { useLock } from '../../lib/LockContext';
 import PinLockScreen from '../../components/PinLockScreen';
 import AskQuestion from '../../components/AskQuestion';
+import TopNavBar from '../../components/TopNavBar';
 
 // A plain color-change on the emoji (the old behavior) is subtle enough
 // that it wasn't reading as "this is the selected tab" - a filled pill
@@ -57,16 +60,66 @@ function PinGate({ children }) {
   return children;
 }
 
+// Runs at most once per app session - mirrors web's App.jsx, which was the
+// only place this ever ran; mobile imported the Recurring rules UI but never
+// called the generator, so a rule created on the phone only ever
+// materialized if someone happened to open the web build that same month.
+// The ref only ever locks true, never resets. Waits for dbRecurringRules to
+// have actually loaded (an empty array on first render means "not loaded
+// yet" as often as "no rules"), so it keeps re-checking until real data
+// shows up.
+function RecurringRuleRunner() {
+  const generatedRef = useRef(false);
+
+  useEffect(
+    () =>
+      subscribeToRecurringRules((rules) => {
+        if (generatedRef.current || !rules.length) return;
+        generatedRef.current = true;
+        (async () => {
+          const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(rules, getMonthKey(todayISO()));
+          if (toCreate.length) {
+            try {
+              await addExpensesBatch(toCreate);
+            } catch (err) {
+              reportError(err, 'Recurring expense generation failed');
+              return;
+            }
+          }
+          if (updatedRules) {
+            await saveRecurringRulesToDb(updatedRules);
+          }
+        })();
+      }),
+    [],
+  );
+
+  return null;
+}
+
 export default function TabsLayout() {
+  // The bottom tab bar (a phone idiom) and TopNavBar (the desktop-idiom
+  // segmented control it replaces above 768px) are mutually exclusive -
+  // hiding one without the other would either double up on nav or leave
+  // none at all on some width.
+  const { width } = useWindowDimensions();
+  const isWide = width >= 768;
+
   return (
     <PinGate>
       <View style={{ flex: 1 }}>
+        <RecurringRuleRunner />
+        <TopNavBar />
         <Tabs
           screenOptions={{
             headerShown: false,
             tabBarActiveTintColor: '#3D7068',
             tabBarInactiveTintColor: '#5C6478',
-            tabBarStyle: { backgroundColor: '#F2ECDD', borderTopColor: 'rgba(36,48,74,0.1)' },
+            tabBarStyle: {
+              display: isWide ? 'none' : 'flex',
+              backgroundColor: '#F2ECDD',
+              borderTopColor: 'rgba(36,48,74,0.1)',
+            },
             tabBarLabelStyle: { fontFamily: 'Inter_500Medium', fontSize: 11 },
           }}
         >

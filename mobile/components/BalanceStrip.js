@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, Alert } from 'react-native';
 import PickerField from './PickerField';
+import DateField from './DateField';
 import Card from './Card';
 import { addExpense, updateExpense, deleteExpense, updateTripInDb, generateDigest } from '../lib/firebase';
 import {
@@ -25,10 +26,13 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
   const balanceEntries = useMemo(() => (isTravel ? excludeCashSpend(entries) : entries), [entries, isTravel]);
   const balance = useMemo(() => computeBalance(balanceEntries, ledger, dbMembers), [balanceEntries, ledger, dbMembers]);
   const ledgerLabel = isTravel ? 'Travel' : 'Household';
-  const hasGuests = isTravel && dbMembers.length > 2;
+  // Once a third person is on this ledger (a trip guest, or a household
+  // with more than two members), there's no single honest "X owes Y" figure
+  // any more - see web's BalanceStrip.jsx for the full reasoning.
+  const hasMultipleMembers = dbMembers.length > 2;
   const settlements = useMemo(
-    () => (hasGuests ? computeSettlements(balanceEntries, ledger, dbMembers) : null),
-    [hasGuests, balanceEntries, ledger, dbMembers],
+    () => (hasMultipleMembers ? computeSettlements(balanceEntries, ledger, dbMembers) : null),
+    [hasMultipleMembers, balanceEntries, ledger, dbMembers],
   );
   const memberTotals = useMemo(
     () => (isTravel ? computeMemberTotals(balanceEntries, dbMembers) : null),
@@ -37,12 +41,12 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
 
   const hasPoints = isTravel && entries.some((e) => Number(e.rewardPoints || 0) !== 0);
   const pointsBalance = useMemo(
-    () => (hasPoints && !hasGuests ? computeBalance(entries, ledger, dbMembers, 'rewardPoints') : null),
-    [hasPoints, hasGuests, entries, ledger, dbMembers],
+    () => (hasPoints && !hasMultipleMembers ? computeBalance(entries, ledger, dbMembers, 'rewardPoints') : null),
+    [hasPoints, hasMultipleMembers, entries, ledger, dbMembers],
   );
   const pointsSettlements = useMemo(
-    () => (hasPoints && hasGuests ? computeSettlements(entries, ledger, dbMembers, 'rewardPoints') : null),
-    [hasPoints, hasGuests, entries, ledger, dbMembers],
+    () => (hasPoints && hasMultipleMembers ? computeSettlements(entries, ledger, dbMembers, 'rewardPoints') : null),
+    [hasPoints, hasMultipleMembers, entries, ledger, dbMembers],
   );
   const totalPointsSpent = useMemo(
     () => (isTravel ? entries.reduce((sum, e) => sum + Number(e.rewardPoints || 0), 0) : 0),
@@ -57,13 +61,13 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
   const categoryBreakdown = useMemo(() => (isTravel ? groupByCategory(entries, null, 'travel') : null), [entries, isTravel]);
   const digestPrompt = useMemo(() => {
     if (!isTravel) return null;
-    const settlementLines = hasGuests
+    const settlementLines = hasMultipleMembers
       ? (settlements || []).map((s) => `${s.debtor} owes ${s.creditor} ${formatCurrency(s.amount, displayCurrency)}`)
       : balance.status !== 'settled'
         ? [`${balance.debtor} owes ${balance.creditor} ${formatCurrency(balance.amount, displayCurrency)}`]
         : [];
     return buildTripDigestPrompt({ tripName, currency: displayCurrency, totalSpend, memberTotals, categoryBreakdown, settlementLines });
-  }, [isTravel, hasGuests, settlements, balance, tripName, displayCurrency, totalSpend, memberTotals, categoryBreakdown]);
+  }, [isTravel, hasMultipleMembers, settlements, balance, tripName, displayCurrency, totalSpend, memberTotals, categoryBreakdown]);
   const [digest, setDigest] = useState({ status: 'idle', text: '', error: '' });
 
   async function handleGenerateDigest() {
@@ -200,7 +204,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
         {isTravel ? 'Trip Summary' : 'Household Net Balance'}
       </Text>
 
-      {hasGuests ? (
+      {hasMultipleMembers ? (
         settlements.length === 0 ? (
           <Text className="font-body-semibold text-base text-ledger-green">All settled up - no one owes anyone</Text>
         ) : (
@@ -241,7 +245,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
         </Text>
       )}
 
-      {hasGuests && hasPoints ? (
+      {hasMultipleMembers && hasPoints ? (
         pointsSettlements.length === 0 ? (
           <Text className="font-body-medium text-sm text-ledger-green mt-1">💳 All settled up in points</Text>
         ) : (
@@ -255,7 +259,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
             </Text>
           ))
         )
-      ) : !hasGuests && hasPoints ? (
+      ) : !hasMultipleMembers && hasPoints ? (
         pointsBalance.status === 'settled' ? (
           <Text className="font-body-medium text-sm text-ledger-green mt-1">💳 All settled up in points</Text>
         ) : (
@@ -321,7 +325,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
 
       <View className="flex-col sm:flex-row sm:items-center w-full sm:w-auto mt-3 sm:mt-0" style={{ gap: 8 }}>
       {isTravel ? (
-        hasGuests ? (
+        hasMultipleMembers ? (
           <Text className="font-body text-2xs text-muted-text">Settle with guests separately - can't roll into household.</Text>
         ) : confirmingRollup ? null : rollupNowSettled ? (
           <Pressable onPress={() => setConfirmingRollup(true)} className="w-full sm:w-auto min-h-9 px-3.5 rounded-lg bg-mustard/90 items-center justify-center">
@@ -351,7 +355,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
       </View>
       </View>
 
-      {isTravel && !hasGuests && confirmingRollup && (
+      {isTravel && !hasMultipleMembers && confirmingRollup && (
         <View className="mt-4 pt-4 border-t border-ink/10">
           <Text className="font-body text-sm text-ink mb-3">
             {rollupNowSettled ? (
@@ -443,9 +447,9 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
 
             <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
               <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
-              <TextInput
+              <DateField
                 value={date}
-                onChangeText={setDate}
+                onChange={setDate}
                 className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
               />
             </View>

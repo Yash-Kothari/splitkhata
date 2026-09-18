@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
 import CardStrategyFields from './CardStrategyFields';
+import DateField from './DateField';
 import { updateCardTransaction } from '../lib/firebase';
 import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward } from '../lib/utils';
+import { reportError } from '../lib/errorReporting';
 
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
 const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper';
@@ -78,6 +80,8 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
         rewardOverride: draftRewardOverride === '' ? null : parseFloat(draftRewardOverride),
       });
       setEditing(false);
+    } catch (err) {
+      reportError(err, 'Could not save transaction');
     } finally {
       setSaving(false);
     }
@@ -100,7 +104,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
           </View>
           <View className="w-full sm:w-[calc(50%-6px)]">
             <Text className={label}>Date</Text>
-            <TextInput value={draftDate} onChangeText={setDraftDate} className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
+            <DateField value={draftDate} onChange={setDraftDate} className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
           </View>
         </View>
 

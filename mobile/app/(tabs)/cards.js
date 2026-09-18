@@ -14,11 +14,13 @@ import {
   computeCardCycleReward,
   resolveStrategyParamsForDate,
   computeCardMilestoneProgress,
+  computeQuarterlyMilestoneBonusEarned,
   getAnnualMilestoneWindow,
   computeCardCapStatus,
   applyRewardOverrides,
   getQuarterBounds,
 } from '../../lib/utils';
+import { reportError } from '../../lib/errorReporting';
 import { useUndoDelete } from '../../lib/useUndoDelete';
 import Card from '../../components/Card';
 import CardTransactionForm from '../../components/CardTransactionForm';
@@ -54,11 +56,13 @@ export default function Cards() {
   const [showMilestones, setShowMilestones] = useState(true);
   const [showCaps, setShowCaps] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
-  const { pendingDeletes, handleDelete, handleUndo, pendingDeleteList } = useUndoDelete(deleteCardTransaction, (err) => console.warn(err));
+  const { pendingDeletes, handleDelete, handleUndo, pendingDeleteList } = useUndoDelete(deleteCardTransaction, (err) =>
+    reportError(err, 'Could not delete transaction'),
+  );
 
-  useEffect(() => subscribeToCreditCards(setCreditCards, (err) => console.warn(err)), []);
-  useEffect(() => subscribeToCardTransactions(setCardTransactions, (err) => console.warn(err)), []);
-  useEffect(() => subscribeToCardBillingCycles(setCardBillingCycles, (err) => console.warn(err)), []);
+  useEffect(() => subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')), []);
+  useEffect(() => subscribeToCardTransactions(setCardTransactions, (err) => reportError(err, 'Could not load card transactions')), []);
+  useEffect(() => subscribeToCardBillingCycles(setCardBillingCycles, (err) => reportError(err, 'Could not load billing cycles')), []);
 
   const selectedCard = creditCards.find((c) => c.id === selectedCardId) || creditCards[0] || null;
   const cardNameCounts = creditCards.reduce((acc, c) => ({ ...acc, [c.name]: (acc[c.name] || 0) + 1 }), {});
@@ -72,16 +76,24 @@ export default function Cards() {
   const currentCycle = selectedCard ? getCardCycleForDate(today, selectedCard.billingCycleDay ?? 1) : null;
   const currentCycleTxns = currentCycle ? getTransactionsInCycle(cardTxns, selectedCard.id, currentCycle.cycleStart, currentCycle.cycleEnd) : [];
   const currentCycleReward = selectedCard
-    ? applyRewardOverrides(computeCardCycleReward(selectedCard, currentCycleTxns, currentCycle.cycleStart), currentCycleTxns)
+    ? applyRewardOverrides(computeCardCycleReward(selectedCard, currentCycleTxns, currentCycle.cycleStart), currentCycleTxns, selectedCard, currentCycle.cycleStart)
     : { totalReward: 0, unit: 'inr' };
   const currentCycleSpend = currentCycleTxns.reduce((s, t) => s + t.amount, 0);
   const lifetimeReward = selectedCard
-    ? applyRewardOverrides(computeCardCycleReward(selectedCard, cardTxns, today), cardTxns)
+    ? applyRewardOverrides(computeCardCycleReward(selectedCard, cardTxns, today), cardTxns, selectedCard, today)
     : { totalReward: 0, unit: 'inr' };
   const lifetimePointsRedeemed = cardTxns.reduce((s, t) => s + (t.pointsRedeemed || 0), 0);
-  const lifetimeRewardTotal = (selectedCard?.startingRewardPoints || 0) + lifetimeReward.totalReward - lifetimePointsRedeemed;
-
   const params = selectedCard ? resolveStrategyParamsForDate(selectedCard.strategyParamsHistory, today) : {};
+  // Quarterly milestone bonuses (e.g. Diners' 10,000 pts at ₹4L/quarter) are
+  // a separate lump sum on top of computeCardCycleReward's per-cycle math -
+  // see computeQuarterlyMilestoneBonusEarned for why they can't live inside
+  // that function.
+  const quarterlyBonusEarned = selectedCard
+    ? computeQuarterlyMilestoneBonusEarned(cardTxns, selectedCard.id, params.quarterlyMilestoneTarget, params.quarterlyMilestoneBonus, today)
+    : 0;
+  const lifetimeRewardTotal =
+    (selectedCard?.startingRewardPoints || 0) + lifetimeReward.totalReward + quarterlyBonusEarned - lifetimePointsRedeemed;
+
   const { quarterStart, quarterEnd } = getQuarterBounds(today);
   const { periodStart: annualPeriodStart, periodEnd: annualPeriodEnd } = getAnnualMilestoneWindow(
     selectedCard?.annualMilestoneAnchorMonth,
@@ -151,9 +163,53 @@ export default function Cards() {
             ))}
           </ScrollView>
 
-          {selectedCard && (
-            <>
+        </View>
+
+        {/* Two-column shell above 1024px - see household.js for the same
+            pattern and the reasoning behind the order-* stacking. */}
+        {selectedCard && (
+          <View className="flex-col lg:flex-row" style={{ gap: 20 }}>
+            <View className="order-2 lg:order-1 lg:flex-1 px-4">
+              <CardTransactionForm card={selectedCard} cardTxns={cardTxns} onSaveError={(err) => reportError(err, 'Could not save transaction')} />
+
               <Card className="p-4 mb-4">
+                <View className="flex-row items-center justify-between gap-2 mb-3">
+                  <Text className="font-display text-base text-ink">Transactions</Text>
+                  <TextInput
+                    value={txnSearch}
+                    onChangeText={setTxnSearch}
+                    placeholder="Search..."
+                    className="h-9 px-3 text-xs font-body rounded-lg border border-ink/15 bg-paper text-ink w-36 shadow-2xs"
+                  />
+                </View>
+                {filteredTxns.length === 0 ? (
+                  <Text className="font-body text-sm text-muted-text text-center py-6">No transactions yet.</Text>
+                ) : (
+                  filteredTxns.map((txn, i) => (
+                    <CardTransactionRow
+                      key={txn.id}
+                      txn={txn}
+                      card={selectedCard}
+                      cardTxns={cardTxns}
+                      cycleReward={txn.date >= currentCycle.cycleStart && txn.date < currentCycle.cycleEnd ? currentCycleReward : null}
+                      onDelete={handleDelete}
+                      isLast={i === filteredTxns.length - 1}
+                    />
+                  ))
+                )}
+              </Card>
+
+              <CardBillingHistory
+                card={selectedCard}
+                cardTxns={cardTxns}
+                cardBillingCycles={cardBillingCycles}
+                today={today}
+                onSaveError={(err) => reportError(err, 'Could not save billing cycle')}
+              />
+            </View>
+
+            <View className="order-1 lg:order-2 w-full lg:w-96 px-4" style={{ gap: 16 }}>
+              <Card className="p-4">
                 <View className="mb-3">
                   <Text className="font-display text-lg text-ink" numberOfLines={1}>{selectedCard.name}</Text>
                   <Text className="font-body text-2xs text-muted-text mb-1.5">
@@ -188,7 +244,7 @@ export default function Cards() {
               </Card>
 
               {(quarterlyMilestone || annualMilestone) && (
-                <Card className="p-4 mb-4">
+                <Card className="p-4">
                   <Pressable onPress={() => setShowMilestones((v) => !v)} className="flex-row items-center justify-between">
                     <Text className="font-display text-sm text-ink">Milestone Progress</Text>
                     <View className="px-2 py-0.5 rounded-md bg-paper border border-ink/10">
@@ -205,7 +261,10 @@ export default function Cards() {
                           </View>
                           <ProgressBar pctUsed={quarterlyMilestone.pctUsed} />
                           <Text className="font-body text-2xs text-muted-text mt-1">
-                            {formatCurrency(quarterlyMilestone.spent)} of {formatCurrency(quarterlyMilestone.target)} - {params.quarterlyMilestoneBonus?.toLocaleString('en-IN')} bonus points at target
+                            {formatCurrency(quarterlyMilestone.spent)} of {formatCurrency(quarterlyMilestone.target)} -{' '}
+                            {quarterlyMilestone.pctUsed >= 1
+                              ? `${params.quarterlyMilestoneBonus?.toLocaleString('en-IN')} bonus points earned, included above`
+                              : `${params.quarterlyMilestoneBonus?.toLocaleString('en-IN')} bonus points at target`}
                           </Text>
                         </View>
                       )}
@@ -227,7 +286,7 @@ export default function Cards() {
               )}
 
               {capStatuses.length > 0 && (
-                <Card className="p-4 mb-4">
+                <Card className="p-4">
                   <Pressable onPress={() => setShowCaps((v) => !v)} className="flex-row items-center justify-between">
                     <Text className="font-display text-sm text-ink">Caps Remaining</Text>
                     <View className="px-2 py-0.5 rounded-md bg-paper border border-ink/10">
@@ -259,46 +318,9 @@ export default function Cards() {
                   )}
                 </Card>
               )}
-
-              <CardTransactionForm card={selectedCard} cardTxns={cardTxns} onSaveError={(err) => console.warn(err)} />
-
-              <Card className="p-4 mb-4">
-                <View className="flex-row items-center justify-between gap-2 mb-3">
-                  <Text className="font-display text-base text-ink">Transactions</Text>
-                  <TextInput
-                    value={txnSearch}
-                    onChangeText={setTxnSearch}
-                    placeholder="Search..."
-                    className="h-9 px-3 text-xs font-body rounded-lg border border-ink/15 bg-paper text-ink w-36 shadow-2xs"
-                  />
-                </View>
-                {filteredTxns.length === 0 ? (
-                  <Text className="font-body text-sm text-muted-text text-center py-6">No transactions yet.</Text>
-                ) : (
-                  filteredTxns.map((txn, i) => (
-                    <CardTransactionRow
-                      key={txn.id}
-                      txn={txn}
-                      card={selectedCard}
-                      cardTxns={cardTxns}
-                      cycleReward={txn.date >= currentCycle.cycleStart && txn.date < currentCycle.cycleEnd ? currentCycleReward : null}
-                      onDelete={handleDelete}
-                      isLast={i === filteredTxns.length - 1}
-                    />
-                  ))
-                )}
-              </Card>
-
-              <CardBillingHistory
-                card={selectedCard}
-                cardTxns={cardTxns}
-                cardBillingCycles={cardBillingCycles}
-                today={today}
-                onSaveError={(err) => console.warn(err)}
-              />
-            </>
-          )}
-        </View>
+            </View>
+          </View>
+        )}
       </ScrollView>
 
       <UndoToast

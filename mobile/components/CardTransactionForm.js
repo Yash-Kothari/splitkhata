@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
 import Card from './Card';
+import DateField from './DateField';
 import CardStrategyFields from './CardStrategyFields';
 import { addCardTransaction } from '../lib/firebase';
 import { todayISO, CARD_REWARD_STRATEGIES, previewTransactionReward, formatCurrency } from '../lib/utils';
@@ -97,7 +98,7 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
             </View>
             <View className="w-full sm:w-[calc(50%-7px)]">
               <Text className={label}>Date</Text>
-              <TextInput value={date} onChangeText={setDate} placeholder="2026-08-24" className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
+              <DateField value={date} onChange={setDate} className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
             </View>
           </View>
 

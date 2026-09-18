@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, Alert } from 'react-native';
 import Card from './Card';
 import PickerField from './PickerField';
+import DateField from './DateField';
 import { addTripToDb } from '../lib/firebase';
 import { DEFAULT_CURRENCIES, formatCurrency, isTripActive, normalizeLedger, todayISO } from '../lib/utils';
 
@@ -110,19 +111,17 @@ export default function TripPicker({
         </View>
         <View className="w-full sm:w-[calc(25%-9px)]">
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Start Date (optional)</Text>
-          <TextInput
+          <DateField
             value={startDate}
-            onChangeText={setStartDate}
-            placeholder="2026-08-24"
+            onChange={setStartDate}
             className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
           />
         </View>
         <View className="w-full sm:w-[calc(25%-9px)]">
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">End Date (optional)</Text>
-          <TextInput
+          <DateField
             value={endDate}
-            onChangeText={setEndDate}
-            placeholder="2026-09-02"
+            onChange={setEndDate}
             className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
           />
         </View>

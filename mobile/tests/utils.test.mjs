@@ -35,6 +35,7 @@ import {
   setRecurringRules,
   buildRecurringEntryDate,
   computeRecurringEntriesToGenerate,
+  computeMonthForecast,
   getPaymentReminderConfig,
   setPaymentReminderConfig,
   getUnsettledSinceDate,
@@ -54,8 +55,12 @@ import {
   computeHsbcPremierCycleReward,
   computeCardCycleReward,
   previewTransactionReward,
+  inferCardRewardFields,
+  rankCardsForEntry,
+  getRecentCombinations,
   resolveStrategyParamsForDate,
   computeCardMilestoneProgress,
+  computeQuarterlyMilestoneBonusEarned,
   getAnnualMilestoneWindow,
   computeCardCapStatus,
   applyRewardOverrides,
@@ -66,6 +71,8 @@ import {
   getCardBillingCycles,
   setCardBillingCycles,
   getCardBillingCycleKey,
+  toCsv,
+  buildFullBackupJson,
 } from '../lib/utils.js';
 
 test('uses Yash and Kruti as default pair names', () => {
@@ -961,6 +968,51 @@ test('computeRecurringEntriesToGenerate caps backfill so a long-dormant rule doe
   assert.ok(toCreate.length <= 6, `expected a bounded backfill, got ${toCreate.length} entries`);
 });
 
+// --- Month forecast ("can we afford this?") ---
+
+test('computeMonthForecast sums only recurring rules not yet generated for this month', () => {
+  const rules = [
+    { id: 'r1', active: true, dayOfMonth: 1, amount: 30000, lastGeneratedMonth: '2026-08' }, // already generated (and already in `entries`, dated the 1st)
+    { id: 'r2', active: true, dayOfMonth: 28, amount: 5000, lastGeneratedMonth: '2026-07' }, // due the 28th but not generated yet this month - a real future commitment even though its own day hasn't passed
+    { id: 'r3', active: false, dayOfMonth: 28, amount: 9999, lastGeneratedMonth: '2026-07' }, // inactive, excluded regardless
+    { id: 'r4', active: true, dayOfMonth: 5, amount: 1200, lastGeneratedMonth: null }, // never generated at all
+  ];
+  const forecast = computeMonthForecast([], rules, {}, '2026-08-15');
+  assert.equal(forecast.remainingCommitted, 6200, 'r2 + r4 - neither has a generated entry for August yet');
+  assert.equal(forecast.daysElapsed, 15);
+  assert.equal(forecast.totalDays, 31);
+  assert.equal(forecast.daysRemaining, 16);
+});
+
+test('computeMonthForecast treats a rule already generated this month as already reflected in entries, not still committed', () => {
+  // Mirrors the real generator: a rule due the 28th still gets its entry
+  // created (dated the 28th) as soon as the app opens this month, well
+  // before the 28th actually arrives - lastGeneratedMonth is what proves
+  // that, not dayOfMonth vs. today.
+  const rules = [{ id: 'r1', active: true, dayOfMonth: 28, amount: 5000, lastGeneratedMonth: '2026-08' }];
+  const forecast = computeMonthForecast([], rules, {}, '2026-08-15');
+  assert.equal(forecast.remainingCommitted, 0);
+});
+
+test('computeMonthForecast projects each budgeted category\'s spend to month-end at its current pace', () => {
+  const entries = [
+    { date: '2026-08-01', category: 'Groceries', amount: 3000, ledger: 'household', split: true, splitType: 'shared' },
+    { date: '2026-08-10', category: 'Groceries', amount: 3000, ledger: 'household', split: true, splitType: 'shared' },
+  ];
+  // 6000 spent by day 10 of a 31-day month -> projected 6000 * 31/10 = 18600
+  const forecast = computeMonthForecast(entries, [], { Groceries: 15000 }, '2026-08-10');
+  const groceries = forecast.categories.find((c) => c.category === 'Groceries');
+  assert.equal(groceries.spent, 6000);
+  assert.equal(Math.round(groceries.projectedSpent), 18600);
+  assert.ok(groceries.projectedPctUsed > 1, 'on pace to exceed the 15000 limit by month-end');
+});
+
+test('computeMonthForecast returns no categories when nothing has a budget set', () => {
+  const entries = [{ date: '2026-08-01', category: 'Groceries', amount: 3000, ledger: 'household', split: true, splitType: 'shared' }];
+  const forecast = computeMonthForecast(entries, [], {}, '2026-08-10');
+  assert.deepEqual(forecast.categories, []);
+});
+
 test('getPaymentReminderConfig/setPaymentReminderConfig round-trip through storage, defaulting to enabled/₹2000', () => {
   setPaymentReminderConfig({});
   assert.deepEqual(getPaymentReminderConfig(), { enabled: true, amountThreshold: 2000 });
@@ -1287,6 +1339,31 @@ test('HSBC Live+: a blank/null bonusMonthlyCap means uncapped, not "capped at ze
   assert.equal(bonusEarned, 800, 'a cleared cap field must not silently zero out every bonus-tier reward');
 });
 
+test('HSBC Live+: the bonus cap resets every calendar month, not once per call', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate;
+  const { bonusEarned } = computeHsbcCycleReward(params, [
+    { id: 't1', date: '2026-08-28', amount: 8000, isBonusEligible: true }, // Aug: round(8000*10/100)=800
+    { id: 't2', date: '2026-08-29', amount: 8000, isBonusEligible: true }, // Aug: another 800, combined 1600 capped to 1200
+    { id: 't3', date: '2026-09-02', amount: 8000, isBonusEligible: true }, // Sep: a fresh 800, well under the cap on its own
+  ]);
+  assert.equal(
+    bonusEarned,
+    2000,
+    'a billing cycle spanning Aug 28 - Sep 27 must cap August (1200) and September (800) separately, not pool them into one 1200 cap',
+  );
+});
+
+test('HSBC Live+: a lifetime history spanning many months caps independently per month', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate;
+  const { bonusEarned } = computeHsbcCycleReward(params, [
+    { id: 't1', date: '2026-06-05', amount: 8000, isBonusEligible: true }, // Jun: 800
+    { id: 't2', date: '2026-07-05', amount: 8000, isBonusEligible: true }, // Jul: 800
+    { id: 't3', date: '2026-07-10', amount: 8000, isBonusEligible: true }, // Jul: another 800, capped to 1200 total
+    { id: 't4', date: '2026-08-05', amount: 8000, isBonusEligible: true }, // Aug: 800
+  ]);
+  assert.equal(bonusEarned, 800 + 1200 + 800, 'each month is capped on its own, not the whole history at once');
+});
+
 // --- Axis SuperMoney RuPay ---
 
 test('SuperMoney: a transaction under ₹100 earns nothing on either pool', () => {
@@ -1342,6 +1419,21 @@ test('SuperMoney: a blank/null bonusFloor still lets the bonus pool earn up to t
     { id: 't2', date: '2026-08-01', amount: 10000, isBonusEligible: true }, // bonus raw 3% = 300, capped by base pool
   ]);
   assert.equal(bonusFinal, 100, 'without a floor, the bonus pool is simply capped at the base pool, same as the normal case');
+});
+
+test('SuperMoney: an excluded-category transaction (e.g. rent, utilities) earns on neither pool', () => {
+  const params = CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool;
+  const { totalReward, baseTotal, bonusRawTotal, perTransaction } = computeSuperMoneyCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 10000, isBonusEligible: true, channel: 'excluded' },
+    { id: 't2', date: '2026-08-02', amount: 10000, isBonusEligible: false, channel: 'excluded' },
+  ]);
+  assert.equal(totalReward, 0);
+  assert.equal(baseTotal, 0);
+  assert.equal(bonusRawTotal, 0);
+  assert.deepEqual(perTransaction, [
+    { id: 't1', earned: 0, pool: null },
+    { id: 't2', earned: 0, pool: null },
+  ]);
 });
 
 // --- HSBC Premier ---
@@ -1560,6 +1652,40 @@ test('computeCardMilestoneProgress treats a missing startingSpend as zero, not N
   assert.equal(spent, 100000);
 });
 
+// --- Quarterly milestone bonus (a lump sum, not part of any cycle's earn math) ---
+
+test('computeQuarterlyMilestoneBonusEarned credits the bonus once for a quarter that crossed target', () => {
+  const txns = [
+    { cardId: 'c1', date: '2026-02-01', amount: 500000, category: 'regular' }, // Q1: over the 400000 target
+    { cardId: 'c1', date: '2026-05-01', amount: 100000, category: 'regular' }, // Q2: under target
+    { cardId: 'c2', date: '2026-02-01', amount: 900000, category: 'regular' }, // different card
+  ];
+  const total = computeQuarterlyMilestoneBonusEarned(txns, 'c1', 400000, 10000, '2026-06-01');
+  assert.equal(total, 10000, 'only Q1 crossed target, so the bonus is counted exactly once');
+});
+
+test('computeQuarterlyMilestoneBonusEarned sums a separate bonus per quarter that each crossed target', () => {
+  const txns = [
+    { cardId: 'c1', date: '2026-02-01', amount: 500000, category: 'regular' }, // Q1
+    { cardId: 'c1', date: '2026-05-01', amount: 500000, category: 'regular' }, // Q2
+  ];
+  const total = computeQuarterlyMilestoneBonusEarned(txns, 'c1', 400000, 10000, '2026-06-01');
+  assert.equal(total, 20000, 'both quarters crossed target independently');
+});
+
+test('computeQuarterlyMilestoneBonusEarned returns 0 when no quarter has crossed target', () => {
+  const txns = [{ cardId: 'c1', date: '2026-02-01', amount: 100000, category: 'regular' }];
+  assert.equal(computeQuarterlyMilestoneBonusEarned(txns, 'c1', 400000, 10000, '2026-06-01'), 0);
+});
+
+test('computeQuarterlyMilestoneBonusEarned returns 0 for a card with no transactions, or no target/bonus configured', () => {
+  const txns = [{ cardId: 'c1', date: '2026-02-01', amount: 500000, category: 'regular' }];
+  assert.equal(computeQuarterlyMilestoneBonusEarned([], 'c1', 400000, 10000, '2026-06-01'), 0);
+  assert.equal(computeQuarterlyMilestoneBonusEarned(txns, 'c2', 400000, 10000, '2026-06-01'), 0, 'no c2 transactions');
+  assert.equal(computeQuarterlyMilestoneBonusEarned(txns, 'c1', null, 10000, '2026-06-01'), 0, 'no target configured');
+  assert.equal(computeQuarterlyMilestoneBonusEarned(txns, 'c1', 400000, null, '2026-06-01'), 0, 'no bonus configured');
+});
+
 // --- Annual milestone window (card renewal cycle, not calendar year) ---
 
 test('getAnnualMilestoneWindow runs a 12-month window from the given anchor month, not Jan-Dec', () => {
@@ -1594,6 +1720,109 @@ test('previewTransactionReward returns null until there is enough to compute (no
   const card = { billingCycleDay: 1, rewardStrategy: 'sbi_two_channel_cashback', strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }] };
   assert.equal(previewTransactionReward(card, [], { date: '2026-08-10' }), null);
   assert.equal(previewTransactionReward(card, [], { amount: 500 }), null);
+});
+
+// --- Card ranking / reward-category inference for the entry form ---
+
+test('inferCardRewardFields (Diners) matches a household category to a known category key by keyword', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hdfc_diners_slab_milestone' }, 'Groceries', params), { category: 'grocery' });
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hdfc_diners_slab_milestone' }, 'Eating Out', params), { category: 'weekend_dining' });
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hdfc_diners_slab_milestone' }, 'Fuel', params), { category: 'excluded' });
+});
+
+test('inferCardRewardFields (Diners) falls back to "regular" for an unrecognized category name', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hdfc_diners_slab_milestone' }, 'Miscellaneous', params), { category: 'regular' });
+});
+
+test('inferCardRewardFields (SBI) infers excluded from a keyword, else defaults to online', () => {
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'sbi_two_channel_cashback' }, 'Rent'), { channel: 'excluded' });
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'sbi_two_channel_cashback' }, 'Groceries'), { channel: 'online' });
+});
+
+test('inferCardRewardFields (HSBC Live+) infers the bonus tier and exclusions by keyword', () => {
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_tiered_cashback_aggregate' }, 'Dining'), { channel: null, isBonusEligible: true });
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_tiered_cashback_aggregate' }, 'Insurance'), { channel: 'excluded', isBonusEligible: false });
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_tiered_cashback_aggregate' }, 'Misc'), { channel: null, isBonusEligible: false });
+});
+
+test('inferCardRewardFields (Axis Supermoney) defaults to the bonus pool unless a keyword excludes it', () => {
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'axis_supermoney_dual_pool' }, 'Groceries'), { channel: null, isBonusEligible: true });
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'axis_supermoney_dual_pool' }, 'Telecom'), { channel: 'excluded', isBonusEligible: false });
+});
+
+test('inferCardRewardFields (HSBC Premier) infers fuel-excluded and capped categories by keyword', () => {
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_premier_flat_capped' }, 'Fuel'), { category: 'fuel_excluded' });
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_premier_flat_capped' }, 'Education'), { category: 'capped_category' });
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_premier_flat_capped' }, 'Misc'), { category: 'regular' });
+});
+
+test('rankCardsForEntry ranks tracked cards by what each would actually earn, best first', () => {
+  const hsbcCard = {
+    id: 'c1',
+    billingCycleDay: 1,
+    rewardStrategy: 'hsbc_tiered_cashback_aggregate',
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }],
+  };
+  const axisCard = {
+    id: 'c2',
+    billingCycleDay: 1,
+    rewardStrategy: 'axis_supermoney_dual_pool',
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool }],
+  };
+  // ₹2000 spent on "Dining" - HSBC Live+'s 10% bonus tier (round(2000*10/100)=200) beats
+  // Axis's 3% super.money tier (floor(2000*3/100)=60).
+  const ranked = rankCardsForEntry([axisCard, hsbcCard], [], 2000, 'Dining', '2026-08-10');
+  assert.equal(ranked.length, 2);
+  assert.equal(ranked[0].card.id, 'c1', 'HSBC Live+ earns more on this dining spend than Axis');
+  assert.equal(ranked[0].earned, 200);
+  assert.equal(ranked[1].earned, 60);
+  assert.ok(ranked[0].earned >= ranked[1].earned, 'sorted best-first');
+});
+
+test('rankCardsForEntry returns [] until there is an amount, a date, or any tracked card', () => {
+  const card = { id: 'c1', rewardStrategy: 'sbi_two_channel_cashback', strategyParamsHistory: [] };
+  assert.deepEqual(rankCardsForEntry([card], [], null, 'Groceries', '2026-08-10'), []);
+  assert.deepEqual(rankCardsForEntry([card], [], 500, 'Groceries', ''), []);
+  assert.deepEqual(rankCardsForEntry([], [], 500, 'Groceries', '2026-08-10'), []);
+});
+
+test('getRecentCombinations ranks by frequency among recent entries, breaking ties by most recent', () => {
+  const entries = [
+    { date: '2026-08-01', category: 'Groceries', payer: 'Yash', paymentMethod: 'HSBC Live+' },
+    { date: '2026-08-05', category: 'Groceries', payer: 'Yash', paymentMethod: 'HSBC Live+' },
+    { date: '2026-08-10', category: 'Eating Out', payer: 'Kruti', paymentMethod: 'Cash' },
+  ];
+  const combos = getRecentCombinations(entries);
+  assert.equal(combos.length, 2);
+  assert.deepEqual(combos[0], { category: 'Groceries', payer: 'Yash', paymentMethod: 'HSBC Live+', count: 2, lastDate: '2026-08-05' });
+  assert.equal(combos[1].count, 1);
+});
+
+test('getRecentCombinations only looks at the most recent windowSize entries, not the whole history', () => {
+  const oldEntries = Array.from({ length: 5 }, (_, i) => ({
+    date: `2026-01-0${i + 1}`,
+    category: 'Old Habit',
+    payer: 'Yash',
+    paymentMethod: null,
+  }));
+  const recentEntries = [{ date: '2026-08-01', category: 'Groceries', payer: 'Yash', paymentMethod: null }];
+  const combos = getRecentCombinations([...oldEntries, ...recentEntries], 5, 1);
+  assert.equal(combos.length, 1);
+  assert.equal(combos[0].category, 'Groceries', 'windowSize=1 keeps only the single most recent entry');
+});
+
+test('getRecentCombinations skips entries missing a category or payer, and respects the limit', () => {
+  const entries = [
+    { date: '2026-08-01', category: 'Groceries', payer: '', paymentMethod: null },
+    { date: '2026-08-02', category: '', payer: 'Yash', paymentMethod: null },
+    { date: '2026-08-03', category: 'A', payer: 'Yash', paymentMethod: null },
+    { date: '2026-08-04', category: 'B', payer: 'Yash', paymentMethod: null },
+    { date: '2026-08-05', category: 'C', payer: 'Yash', paymentMethod: null },
+  ];
+  const combos = getRecentCombinations(entries, 2);
+  assert.equal(combos.length, 2, 'the two blank-field entries are skipped, and the limit caps the rest');
 });
 
 // --- Cap-remaining status (per-category / per-pool "how much room is left") ---
@@ -1689,15 +1918,31 @@ test('applyRewardOverrides substitutes the override and recomputes the total (ea
   assert.equal(result.totalReward, 250, '50 (formula) + 200 (override)');
 });
 
-test('applyRewardOverrides works for the HSBC Live+ aggregate model via its per-transaction estimate', () => {
+test('applyRewardOverrides recomputes the HSBC Live+ aggregate on non-overridden transactions, then adds the override on top', () => {
   const card = { rewardStrategy: 'hsbc_tiered_cashback_aggregate', strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }] };
   const txns = [
-    { id: 't1', date: '2026-08-01', amount: 1000, isBonusEligible: true, channel: null }, // estimate: round(1000*10/100)=100
-    { id: 't2', date: '2026-08-02', amount: 500, isBonusEligible: false, channel: null, rewardOverride: 50 }, // estimate would be round(500*1.5/100)=8, corrected to 50
+    { id: 't1', date: '2026-08-01', amount: 1000, isBonusEligible: true, channel: null }, // aggregate: round(1000*10/100)=100
+    { id: 't2', date: '2026-08-02', amount: 500, isBonusEligible: false, channel: null, rewardOverride: 50 }, // real aggregate would give round(500*1.5/100)=8, corrected to 50
   ];
   const cycleReward = computeCardCycleReward(card, txns, '2026-08-01');
-  const result = applyRewardOverrides(cycleReward, txns);
-  assert.equal(result.totalReward, 150, '100 (estimate) + 50 (override), overriding away from the pure aggregate total');
+  const result = applyRewardOverrides(cycleReward, txns, card, '2026-08-01');
+  assert.equal(result.totalReward, 150, '100 (t1 alone, recomputed) + 50 (override)');
+});
+
+test('applyRewardOverrides does not let an override bypass the HSBC Live+ monthly bonus cap on the rest of the pool', () => {
+  const card = { rewardStrategy: 'hsbc_tiered_cashback_aggregate', strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }] };
+  const txns = [
+    { id: 't1', date: '2026-08-01', amount: 8000, isBonusEligible: true, channel: null, rewardOverride: 500 }, // known real value, overridden
+    { id: 't2', date: '2026-08-02', amount: 8000, isBonusEligible: true, channel: null }, // aggregate: round(8000*10/100)=800
+    { id: 't3', date: '2026-08-03', amount: 8000, isBonusEligible: true, channel: null }, // aggregate: round(8000*10/100)=800, combined with t2 = 1600 > 1200 cap
+  ];
+  const cycleReward = computeCardCycleReward(card, txns, '2026-08-01');
+  const result = applyRewardOverrides(cycleReward, txns, card, '2026-08-01');
+  assert.equal(
+    result.totalReward,
+    1700,
+    't2+t3 recomputed together and capped at 1200, plus the 500 override on top - not 2100 from naively summing every estimate/override with no cap',
+  );
 });
 
 // --- Local storage round-trips ---
@@ -1725,4 +1970,48 @@ test('getCardBillingCycles/setCardBillingCycles round-trip through storage, defa
 
 test('getCardBillingCycleKey combines card and cycle start into a stable key', () => {
   assert.equal(getCardBillingCycleKey('c1', '2026-07-04'), 'c1|2026-07-04');
+});
+
+// --- Export / backup ---
+
+test('toCsv returns an empty string for no rows', () => {
+  assert.equal(toCsv([]), '');
+  assert.equal(toCsv(null), '');
+});
+
+test('toCsv puts preferred columns first, in order, then the rest alphabetically', () => {
+  const csv = toCsv([{ b: 1, a: 2, z: 3 }], ['z', 'a']);
+  assert.equal(csv, 'z,a,b\n3,2,1');
+});
+
+test('toCsv only includes preferred columns that actually appear in the data', () => {
+  const csv = toCsv([{ a: 1 }], ['nonexistent', 'a']);
+  assert.equal(csv, 'a\n1');
+});
+
+test('toCsv unions columns across rows with different shapes, leaving missing cells blank', () => {
+  const csv = toCsv([{ a: 1 }, { b: 2 }]);
+  assert.equal(csv, 'a,b\n1,\n,2');
+});
+
+test('toCsv quotes and escapes values containing commas, quotes, or newlines', () => {
+  const csv = toCsv([{ note: 'a, "quoted" note\nsecond line' }]);
+  assert.equal(csv, 'note\n"a, ""quoted"" note\nsecond line"');
+});
+
+test('toCsv joins array values with a semicolon and stringifies plain objects as JSON', () => {
+  const csv = toCsv([{ splitAmong: ['Yash', 'Kruti'], meta: { a: 1 } }]);
+  assert.equal(csv, 'meta,splitAmong\n"{""a"":1}",Yash;Kruti');
+});
+
+test('toCsv renders null/undefined cells as empty, not the string "null"', () => {
+  const csv = toCsv([{ note: null, other: undefined }]);
+  assert.equal(csv, 'note,other\n,');
+});
+
+test('buildFullBackupJson wraps the given collections with an export timestamp and schema version', () => {
+  const backup = JSON.parse(buildFullBackupJson({ householdEntries: [{ id: 'e1' }] }));
+  assert.equal(backup.schemaVersion, 1);
+  assert.ok(backup.exportedAt);
+  assert.deepEqual(backup.householdEntries, [{ id: 'e1' }]);
 });

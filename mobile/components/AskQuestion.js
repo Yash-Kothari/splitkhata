@@ -3,6 +3,7 @@ import { View, Text, TextInput, Pressable, ScrollView } from 'react-native';
 import { usePathname } from 'expo-router';
 import { subscribeToExpenses, subscribeToCategories, subscribeToMembers, subscribeToTrips, generateStructured, generateDigest } from '../lib/firebase';
 import { buildAskQuestionSchema, buildAskQuestionPrompt, buildAskAnswerNarrationPrompt, resolveAskQuery, todayISO } from '../lib/utils';
+import { reportError } from '../lib/errorReporting';
 
 const DEFAULT_EXAMPLES = ['Top 3 Biggest Expense of the month', 'How is Grocery expense compared to last month'];
 
@@ -31,24 +32,24 @@ export default function AskQuestion() {
   const [members, setMembers] = useState([]);
   const [trips, setTrips] = useState([]);
 
-  useEffect(() => subscribeToExpenses('household', setHouseholdEntries, (err) => console.warn(err)), []);
-  useEffect(() => subscribeToExpenses('travel', setTravelEntries, (err) => console.warn(err)), []);
+  useEffect(() => subscribeToExpenses('household', setHouseholdEntries, (err) => reportError(err, 'Could not load household entries')), []);
+  useEffect(() => subscribeToExpenses('travel', setTravelEntries, (err) => reportError(err, 'Could not load travel entries')), []);
   useEffect(
     () =>
       subscribeToCategories((data) => {
         setCategories({ household: data.household || [], travel: data.travel || [] });
-      }, (err) => console.warn(err)),
+      }, (err) => reportError(err, 'Could not load categories')),
     [],
   );
   useEffect(
     () =>
       subscribeToMembers(
         (data) => data.members?.length && setMembers(data.members),
-        (err) => console.warn(err),
+        (err) => reportError(err, 'Could not load members'),
       ),
     [],
   );
-  useEffect(() => subscribeToTrips(setTrips, (err) => console.warn(err)), []);
+  useEffect(() => subscribeToTrips(setTrips, (err) => reportError(err, 'Could not load trips')), []);
 
   const allEntries = [...householdEntries, ...travelEntries];
   const allCategories = Array.from(new Set([...categories.household, ...categories.travel]));

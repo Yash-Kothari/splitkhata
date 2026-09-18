@@ -1,13 +1,12 @@
 # Splitkhata (mobile)
 
-Native iPhone app for Splitkhata, built with Expo/React Native. Same Firebase project as the web app (`splitkhata-96cbd`) — data added here shows up on the web app and vice versa.
+Expo/React Native app for Splitkhata - this is the whole product now: it builds both the native iOS app and, via `expo export --platform web` / `expo start --web`, the production website (there is no separate web codebase). Same Firebase project (`splitkhata-96cbd`) either way, so data added on one device shows up everywhere.
 
-**Phase 1 scope**: sign-in + a fully working Household ledger tab. Payments/Travel/Cards show a "coming soon" placeholder — those are later phases.
+## Structure
 
-## What's reused from the web app
-
-- `lib/utils.js` is a byte-for-byte copy of the web app's `src/utils.js` — the entire reward/budget/split calculation engine. It has zero React or DOM dependencies, so it ports unchanged. `tests/utils.test.mjs` is the same 162-test suite; run it with `npm test`.
-- `lib/firebase.js` is a from-scratch port of the web app's Firestore layer (same collections, same document shapes), rewritten for React Native (AsyncStorage-backed auth persistence, no `window`/`localStorage`).
+- `lib/utils.js` - the entire reward/budget/split calculation engine. Zero React or DOM dependencies, so it runs unchanged on native and web. `tests/utils.test.mjs` is the test suite for it; run with `npm test`.
+- `lib/firebase.js` - the Firestore layer (collections, document shapes, auth), written for React Native (AsyncStorage-backed auth persistence, `Platform.OS` branches where web and native genuinely differ).
+- `app/` - Expo Router screens and layouts. `components/` - shared UI.
 
 ## One-time setup
 
@@ -41,10 +40,12 @@ Sign-in is gated to the same two emails as the web app (`firestore.rules`) — s
 ```bash
 cd mobile
 npm install
-npx expo run:ios          # builds a native project into ios/, boots the Simulator, installs & launches
+npm run web                # the website, via react-native-web
+# or
+npx expo run:ios           # builds a native project into ios/, boots the Simulator, installs & launches
 ```
 
-First run takes a few minutes (CocoaPods + native compile). After that, `npx expo start` alone is enough for fast iteration (Metro reload) as long as the native shell hasn't changed.
+First native run takes a few minutes (CocoaPods + native compile). After that, `npx expo start` alone is enough for fast iteration (Metro reload) as long as the native shell hasn't changed.
 
 ## Installing on your actual iPhone (free Apple ID, no paid Developer account)
 
@@ -56,7 +57,3 @@ First run takes a few minutes (CocoaPods + native compile). After that, `npx exp
 6. Press ▶ (Run). The app installs and launches directly on your phone — a real home-screen icon, no browser.
 
 **The catch**: a free-account signing certificate is only valid for **7 days**. After that the app just won't open until you repeat step 6 (with the phone plugged into this Mac) — Xcode re-signs it in seconds, no rebuild needed unless the code changed. This is an Apple policy for non-paid accounts, not something fixable in code; a $99/year Apple Developer account removes this limit entirely (via TestFlight) if it ever becomes worth it.
-
-## Later phases (not built yet)
-
-Travel + Payments + charts, then Cards (the biggest single feature), then Settings/receipt-scanning/PIN-lock/search. See `/Users/yash/.claude/plans/synchronous-mixing-corbato.md` for the full phase breakdown.

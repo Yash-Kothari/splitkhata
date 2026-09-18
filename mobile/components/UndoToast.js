@@ -7,7 +7,13 @@ import { View, Text, Pressable } from 'react-native';
 export default function UndoToast({ pendingDeleteList, getLabel, onUndo }) {
   if (pendingDeleteList.length === 0) return null;
   return (
-    <View className="absolute left-4 right-4 bottom-24" style={{ gap: 8 }}>
+    // bottom-40 clears AskQuestion's floating chat button (bottom-24, 56px
+    // tall) instead of sitting directly on top of it - both are anchored to
+    // the same corner, so any bottom offset they share collides. Capped to
+    // a fixed width from md up instead of always spanning left-4 to right-4,
+    // matching AskQuestion's own chat panel (md:w-96) rather than stretching
+    // edge-to-edge on a wide window.
+    <View className="absolute left-4 right-4 md:left-auto md:w-96 bottom-40" style={{ gap: 8 }}>
       {pendingDeleteList.map(({ item }) => (
         <View key={item.id} className="flex-row items-center justify-between gap-3 rounded-xl bg-ink px-4 py-3">
           <Text className="flex-1 font-body text-sm text-paper" numberOfLines={1}>

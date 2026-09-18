@@ -1,16 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, Modal, ScrollView, Alert, useWindowDimensions } from 'react-native';
 import PickerField from './PickerField';
-import {
-  updateTripInDb,
-  deleteTripFromDb,
-  addCashMovementToDb,
-  addExpense,
-  addCategoryToDb,
-  deleteCategoryFromDb,
-  addPaymentMethodToDb,
-  deletePaymentMethodFromDb,
-} from '../lib/firebase';
+import DateField from './DateField';
+import { updateTripInDb, deleteTripFromDb, addCashMovementToDb, addExpense } from '../lib/firebase';
 import { computeBudgetStatus, formatCurrency, groupByCategory, normalizeLedger, todayISO } from '../lib/utils';
 
 function Tag({ label, onRemove, removable = true }) {
@@ -34,9 +26,7 @@ export default function TripSettings({
   trips,
   entries,
   dbCategories,
-  rawCategoryDocs,
   dbPaymentMethods,
-  rawPaymentMethodDocs,
   dbMembers,
   currentCurrency,
   onSaveError,
@@ -55,8 +45,6 @@ export default function TripSettings({
   const [withdrawalDate, setWithdrawalDate] = useState(todayISO());
   const [withdrawalPayer, setWithdrawalPayer] = useState('');
   const [withdrawalPaymentMethod, setWithdrawalPaymentMethod] = useState('');
-  const [categoryDraft, setCategoryDraft] = useState('');
-  const [paymentMethodDraft, setPaymentMethodDraft] = useState('');
   const [guestDraft, setGuestDraft] = useState('');
   const [tripBudgetDrafts, setTripBudgetDrafts] = useState({});
   const [newBudgetCategory, setNewBudgetCategory] = useState('');
@@ -148,28 +136,6 @@ export default function TripSettings({
     }
   }
 
-  async function handleAddCategory() {
-    const trimmed = categoryDraft.trim();
-    if (!trimmed) return;
-    try {
-      await addCategoryToDb('travel', trimmed, rawCategoryDocs);
-      setCategoryDraft('');
-    } catch (err) {
-      onSaveError?.(err);
-    }
-  }
-
-  async function handleAddPaymentMethod() {
-    const trimmed = paymentMethodDraft.trim();
-    if (!trimmed) return;
-    try {
-      await addPaymentMethodToDb(trimmed, rawPaymentMethodDocs);
-      setPaymentMethodDraft('');
-    } catch (err) {
-      onSaveError?.(err);
-    }
-  }
-
   async function handleAddGuest() {
     const trimmed = guestDraft.trim();
     if (!trimmed || !trip) return;
@@ -220,19 +186,17 @@ export default function TripSettings({
           <View className="flex-row flex-wrap" style={{ gap: 12 }}>
             <View className="w-full sm:w-[calc(33.333%-8px)]">
               <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Start Date</Text>
-              <TextInput
+              <DateField
                 value={datesStart}
-                onChangeText={setDatesStart}
-                placeholder="2026-08-24"
+                onChange={setDatesStart}
                 className="font-body-medium text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
               />
             </View>
             <View className="w-full sm:w-[calc(33.333%-8px)]">
               <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">End Date</Text>
-              <TextInput
+              <DateField
                 value={datesEnd}
-                onChangeText={setDatesEnd}
-                placeholder="2026-09-02"
+                onChange={setDatesEnd}
                 className="font-body-medium text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
               />
             </View>
@@ -315,29 +279,10 @@ export default function TripSettings({
           </View>
 
           <View className="border-t border-ink/10 pt-4 mb-5">
-            <Text className="font-body-semibold text-xs text-ink mb-2">Travel Categories</Text>
-            <View className="flex-row gap-2 mb-2">
-              <TextInput
-                value={categoryDraft}
-                onChangeText={setCategoryDraft}
-                placeholder="Add travel category"
-                className="flex-1 font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2 bg-paper shadow-2xs"
-              />
-              <Pressable onPress={handleAddCategory} className="px-3.5 rounded-lg border border-ink/15 items-center justify-center">
-                <Text className="font-body-semibold text-xs text-ink">Add Category</Text>
-              </Pressable>
-            </View>
-            <View className="flex-row flex-wrap">
-              {dbCategories.map((c) => (
-                <Tag key={c} label={c} onRemove={() => deleteCategoryFromDb('travel', c, rawCategoryDocs).catch((err) => onSaveError?.(err))} />
-              ))}
-            </View>
-          </View>
-
-          <View className="border-t border-ink/10 pt-4 mb-5">
             <Text className="font-body-semibold text-xs text-ink mb-1">Category Budgets (this trip)</Text>
             <Text className="font-body text-2xs text-muted-text mb-2">
               Pick a category and set a limit for the whole trip, not per month. Nothing is flagged until you set one. Warns at 80% of the limit, alerts once it's exceeded.
+              Manage the travel category list itself from Settings, since it's shared across every trip.
             </Text>
             {unbudgetedCategories.length > 0 && (
               <View className="flex-row gap-2 mb-2">
@@ -390,34 +335,6 @@ export default function TripSettings({
                 </Text>
               </View>
             ))}
-          </View>
-
-          <View className="border-t border-ink/10 pt-4 mb-5">
-            <Text className="font-body-semibold text-xs text-ink mb-1">Payment Methods</Text>
-            <Text className="font-body text-2xs text-muted-text mb-2">
-              Which card or "Cash" paid for each expense - used to reconcile cash spend against the balance above.
-            </Text>
-            <View className="flex-row gap-2 mb-2">
-              <TextInput
-                value={paymentMethodDraft}
-                onChangeText={setPaymentMethodDraft}
-                placeholder="e.g. Yash Forex, Kruti Diners"
-                className="flex-1 font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2 bg-paper shadow-2xs"
-              />
-              <Pressable onPress={handleAddPaymentMethod} className="px-3.5 rounded-lg border border-ink/15 items-center justify-center">
-                <Text className="font-body-semibold text-xs text-ink">Add</Text>
-              </Pressable>
-            </View>
-            <View className="flex-row flex-wrap">
-              {dbPaymentMethods.map((m) => (
-                <Tag
-                  key={m}
-                  label={m}
-                  removable={m !== 'Cash'}
-                  onRemove={() => deletePaymentMethodFromDb(m, rawPaymentMethodDocs).catch((err) => onSaveError?.(err))}
-                />
-              ))}
-            </View>
           </View>
 
           <View className="border-t border-ink/10 pt-4 mb-5">
