@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Tabs } from 'expo-router';
-import { View, Text, useWindowDimensions } from 'react-native';
+import { View, Text, Platform, useWindowDimensions } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import { subscribeToPinConfig, subscribeToRecurringRules, saveRecurringRulesToDb, addExpensesBatch } from '../../lib/firebase';
 import { computeRecurringEntriesToGenerate, getMonthKey, todayISO } from '../../lib/utils';
@@ -129,8 +129,12 @@ export default function TabsLayout() {
               display: isWide ? 'none' : 'flex',
               backgroundColor: isDark ? '#1A2130' : '#F2ECDD',
               borderTopColor: isDark ? 'rgba(237,230,211,0.1)' : 'rgba(36,48,74,0.1)',
+              // The default 49px can't fit the icon pill plus label on web.
+              ...(Platform.OS === 'web' ? { height: 60 } : {}),
             },
-            tabBarLabelStyle: { fontFamily: 'Inter_500Medium', fontSize: 11 },
+            // An explicit lineHeight: the label box was exactly fontSize tall with
+            // hidden overflow on web, chopping the descenders (the "y" in Payments).
+            tabBarLabelStyle: { fontFamily: 'Inter_500Medium', fontSize: 11, lineHeight: 15 },
           }}
         >
           <Tabs.Screen

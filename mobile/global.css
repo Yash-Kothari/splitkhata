@@ -41,5 +41,8 @@
    Expo's web renderer mounts into it rather than body directly. */
 html, body, #root {
   height: 100%;
+  /* Mobile Safari's 100% includes the area behind its bottom toolbar, which
+     clips the bottom tab bar - dvh tracks the actually visible height. */
+  height: 100dvh;
   background-color: rgb(var(--color-paper));
 }
