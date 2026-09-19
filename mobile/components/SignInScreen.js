@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { View, Text, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, Pressable, ActivityIndicator, Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
-import { signInWithGoogleIdToken, signInDevTestUser, IS_DEV_EMULATOR } from '../lib/firebase';
+import { signInWithGoogleIdToken, signInWithGooglePopup, signInDevTestUser, IS_DEV_EMULATOR } from '../lib/firebase';
 
 // Matches web's shadow-xl on this specific card (GoogleSignIn in App.jsx) -
 // a taller, softer shadow than .panel-card's own box-shadow, which is what
@@ -66,7 +66,22 @@ export default function SignInScreen() {
     }
   }, [response]);
 
-  const configMissing = !IOS_CLIENT_ID || !WEB_CLIENT_ID;
+  const isWeb = Platform.OS === 'web';
+  const configMissing = !isWeb && (!IOS_CLIENT_ID || !WEB_CLIENT_ID);
+
+  async function handleWebSignIn() {
+    setError('');
+    setSigningIn(true);
+    try {
+      await signInWithGooglePopup();
+    } catch (err) {
+      if (err?.code !== 'auth/popup-closed-by-user' && err?.code !== 'auth/cancelled-popup-request') {
+        setError(err?.message || 'Sign-in failed.');
+      }
+    } finally {
+      setSigningIn(false);
+    }
+  }
 
   return (
     <View className="flex-1 items-center justify-center bg-paper px-6">
@@ -90,8 +105,8 @@ export default function SignInScreen() {
           </Text>
         ) : (
           <Pressable
-            disabled={!request || signingIn}
-            onPress={() => promptAsync()}
+            disabled={(!isWeb && !request) || signingIn}
+            onPress={() => (isWeb ? handleWebSignIn() : promptAsync())}
             className="w-full min-h-12 rounded-xl bg-ledger-green items-center justify-center px-4 disabled:opacity-50"
           >
             {signingIn ? (

@@ -17,6 +17,7 @@ import {
   GoogleAuthProvider,
   onAuthStateChanged,
   signInWithCredential,
+  signInWithPopup,
   signOut,
 } from '@firebase/auth';
 import {
@@ -200,6 +201,14 @@ export function subscribeToAuth(callback) {
 // The sign-in screen instead runs an expo-auth-session Google OAuth flow and
 // hands the resulting id_token here to finish the same Firebase Auth login
 // the web app gets, checked against the same firestore.rules allowlist.
+// Web only: Firebase's own popup flow, which returns through the project's
+// firebaseapp.com auth handler instead of the site's own address - the
+// expo-auth-session redirect goes to the bare origin (yash-kothari.github.io,
+// a 404 - the app lives under /splitkhata) and can never complete there.
+export async function signInWithGooglePopup() {
+  return signInWithPopup(auth, new GoogleAuthProvider());
+}
+
 export async function signInWithGoogleIdToken(idToken) {
   const credential = GoogleAuthProvider.credential(idToken);
   return signInWithCredential(auth, credential);
