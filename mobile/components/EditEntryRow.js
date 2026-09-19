@@ -3,8 +3,16 @@ import { View, Text, TextInput, Pressable, Alert } from 'react-native';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import { cardShadow } from './Card';
-import { updateExpense } from '../lib/firebase';
-import { computeFifoCashAmount, formatFifoBreakdownSummary } from '../lib/utils';
+import { updateExpense, addCardTransaction, updateCardTransaction, deleteCardTransaction } from '../lib/firebase';
+import { reportError } from '../lib/errorReporting';
+import {
+  buildPaymentInstruments,
+  computeFifoCashAmount,
+  formatFifoBreakdownSummary,
+  inferCardRewardFields,
+  resolveInstrument,
+  resolveStrategyParamsForDate,
+} from '../lib/utils';
 
 const SPLIT_TYPE_OPTIONS = [
   { value: 'shared', label: 'Split' },
@@ -30,7 +38,8 @@ export default function EditEntryRow({
   entry,
   categories,
   members,
-  dbPaymentMethods = [],
+  instruments: instrumentsProp,
+  creditCards = [],
   ledger = 'household',
   currentCurrency = 'INR',
   tripEntries = [],
@@ -40,7 +49,11 @@ export default function EditEntryRow({
 }) {
   const isTravel = ledger === 'travel';
   const isSettlement = entry.splitType === 'settlement';
-  const paymentMethodsList = dbPaymentMethods && dbPaymentMethods.length > 0 ? dbPaymentMethods : ['Cash'];
+  const instruments = useMemo(
+    () => (instrumentsProp && instrumentsProp.length ? instrumentsProp : buildPaymentInstruments([{ name: 'Cash' }], creditCards)),
+    [instrumentsProp, creditCards],
+  );
+  const paymentMethodOptions = instruments.map((i) => i.label);
 
   const [amount, setAmount] = useState(String(entry.amount ?? ''));
   const [localAmount, setLocalAmount] = useState(entry.localAmount != null ? String(entry.localAmount) : '');
@@ -51,9 +64,10 @@ export default function EditEntryRow({
   const [splitType, setSplitType] = useState(entry.splitType || (entry.split ? 'shared' : 'personal'));
   const [owedBy, setOwedBy] = useState(entry.owedBy || members.find((m) => m !== payer) || '');
   const [splitAmong, setSplitAmong] = useState(entry.splitAmong || members);
-  const [paymentMethod, setPaymentMethod] = useState(
-    entry.paymentMethod && paymentMethodsList.includes(entry.paymentMethod) ? entry.paymentMethod : paymentMethodsList[0] || 'Cash',
-  );
+  // Legacy household entries may have no payment method at all - keep that
+  // as-is unless it's changed, rather than silently stamping "Cash" on save.
+  const [paymentMethod, setPaymentMethod] = useState(resolveInstrument(instruments, entry)?.label || entry.paymentMethod || '');
+  const selectedInstrument = instruments.find((i) => i.label === paymentMethod) || null;
   const [date, setDate] = useState(entry.date);
   const [note, setNote] = useState(entry.note || '');
   const [saving, setSaving] = useState(false);
@@ -95,6 +109,42 @@ export default function EditEntryRow({
     });
   }
 
+  // Keeps the card transaction an entry created in step with the entry:
+  // unchanged card -> update its amount/date/note; different or no card ->
+  // drop the old one and, if the new instrument is a card, create its own.
+  // Best-effort like AddEntryForm's link - a failure keeps the previous
+  // link instead of blocking the entry save.
+  async function syncCardLink(parsedAmount) {
+    const oldTxnId = entry.cardTransactionId || null;
+    const oldCardId = resolveInstrument(instruments, entry)?.cardId || null;
+    const newCardId = selectedInstrument?.cardId || null;
+    try {
+      if (oldTxnId && newCardId && oldCardId === newCardId) {
+        const updates = { amount: parsedAmount, date, note: note.trim() };
+        if (category !== entry.category) {
+          const card = creditCards.find((c) => c.id === newCardId);
+          Object.assign(updates, inferCardRewardFields(card, category, resolveStrategyParamsForDate(card?.strategyParamsHistory, date)));
+        }
+        await updateCardTransaction(oldTxnId, updates);
+        return oldTxnId;
+      }
+      if (oldTxnId) await deleteCardTransaction(oldTxnId);
+      if (!newCardId) return null;
+      const card = creditCards.find((c) => c.id === newCardId);
+      return await addCardTransaction({
+        cardId: newCardId,
+        amount: parsedAmount,
+        date,
+        note: note.trim(),
+        linkedEntryId: entry.id,
+        ...inferCardRewardFields(card, category, resolveStrategyParamsForDate(card?.strategyParamsHistory, date)),
+      });
+    } catch (err) {
+      reportError(err, 'Saved the entry, but could not update its linked card transaction');
+      return oldTxnId;
+    }
+  }
+
   async function handleSave() {
     const parsed = parseFloat(amount);
     if (!parsed || parsed <= 0) return;
@@ -106,6 +156,7 @@ export default function EditEntryRow({
       } else {
         const effectiveSplitAmong =
           splitType === 'shared' && splitAmong.length > 0 && splitAmong.length < members.length ? splitAmong : null;
+        const cardTransactionId = await syncCardLink(parsed);
         await updateExpense(entry.id, {
           amount: parsed,
           payer,
@@ -116,7 +167,9 @@ export default function EditEntryRow({
           splitAmong: effectiveSplitAmong,
           note: note.trim(),
           date,
-          paymentMethod: isTravel ? paymentMethod : null,
+          paymentMethod: paymentMethod || null,
+          paymentInstrumentId: selectedInstrument?.id || null,
+          cardTransactionId,
           localAmount: isTravel && localAmount ? parseFloat(localAmount) : null,
           rewardPoints: isTravel && rewardPoints ? parseFloat(rewardPoints) : null,
           isWithdrawal: isTravel ? isWithdrawal : false,
@@ -279,11 +332,9 @@ export default function EditEntryRow({
           <PickerField label="Category" value={category} options={categories} onChange={setCategory} />
         </View>
 
-        {isTravel && (
-          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-            <PickerField label="Payment Method" value={paymentMethod} options={paymentMethodsList} onChange={setPaymentMethod} />
-          </View>
-        )}
+        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+          <PickerField label="Payment Method" value={paymentMethod || 'Not set'} options={paymentMethodOptions} onChange={setPaymentMethod} />
+        </View>
 
         <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>

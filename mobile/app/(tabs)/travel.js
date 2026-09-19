@@ -6,7 +6,6 @@ import {
   subscribeToCashMovements,
   subscribeToCategories,
   subscribeToMembers,
-  subscribeToPaymentMethods,
   subscribeToGuests,
   subscribeToCurrencies,
   subscribeToCreditCards,
@@ -17,6 +16,7 @@ import {
 import { useAuth } from '../../lib/AuthContext';
 import { useJump } from '../../lib/JumpContext';
 import { useUndoDelete } from '../../lib/useUndoDelete';
+import { usePaymentInstruments } from '../../lib/usePaymentInstruments';
 import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger, formatCurrency } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import AppHeader from '../../components/AppHeader';
@@ -37,12 +37,12 @@ export default function Travel() {
   const [cashMovements, setCashMovements] = useState([]);
   const [categories, setCategories] = useState(DEFAULT_TRAVEL_CATEGORIES);
   const [members, setMembers] = useState(DEFAULT_PERSONS);
-  const [paymentMethods, setPaymentMethods] = useState(['Cash']);
   const [guests, setGuests] = useState([]);
   const [guestRawDocs, setGuestRawDocs] = useState([]);
   const [currencies, setCurrencies] = useState([]);
   const [creditCards, setCreditCards] = useState([]);
   const [cardTransactions, setCardTransactions] = useState([]);
+  const instruments = usePaymentInstruments(creditCards);
 
   const [selectedTrip, setSelectedTrip] = useState('');
   const [currentCurrency, setCurrentCurrency] = useState('INR');
@@ -82,13 +82,6 @@ export default function Travel() {
         (data) => data.members?.length && setMembers(data.members),
         (err) => reportError(err, 'Could not load members'),
       ),
-    [],
-  );
-  useEffect(
-    () =>
-      subscribeToPaymentMethods((data) => {
-        if (data.methods?.length) setPaymentMethods(data.methods);
-      }, (err) => reportError(err, 'Could not load payment methods')),
     [],
   );
   useEffect(
@@ -182,7 +175,7 @@ export default function Travel() {
                   dbCategories={categories}
                   dbMembers={activeMembersList}
                   currentCurrency={selectedTripObj.currency}
-                  dbPaymentMethods={paymentMethods}
+                  instruments={instruments}
                   tripEntries={tripEntries}
                   creditCards={creditCards}
                   cardTransactions={cardTransactions}
@@ -195,7 +188,8 @@ export default function Travel() {
                 ledger="travel"
                 categories={categories}
                 members={activeMembersList}
-                dbPaymentMethods={paymentMethods}
+                instruments={instruments}
+                creditCards={creditCards}
                 currentCurrency={selectedTripObj.currency}
                 pendingDeletes={pendingDeletes}
                 onDelete={handleDelete}
@@ -231,7 +225,7 @@ export default function Travel() {
         trips={trips}
         entries={allTravelEntries || []}
         dbCategories={categories}
-        dbPaymentMethods={paymentMethods}
+        instruments={instruments}
         dbMembers={members}
         dbGuests={guests}
         guestRawDocs={guestRawDocs}

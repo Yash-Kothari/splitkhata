@@ -27,6 +27,77 @@ export const DEFAULT_CURRENCIES = ['INR', 'USD', 'EUR', 'GBP', 'TWD', 'JPY', 'AE
 
 export const DEFAULT_PAYMENT_METHODS = ['Cash'];
 
+export const INSTRUMENT_TYPES = [
+  { key: 'cash', label: 'Cash' },
+  { key: 'upi', label: 'UPI' },
+  { key: 'bank', label: 'Bank / debit' },
+  { key: 'other', label: 'Other' },
+];
+
+// Cash and credit cards live in different collections (paymentMethods,
+// creditCards) but are one idea to the person paying: "what did I pay with".
+// This merges them into a single list of instruments with unique display
+// labels - two cards with the same name ("HDFC Diners" for both of you) are
+// told apart by their owner, so the picker never shows two
+// identical rows and never links an entry to the wrong card.
+function inferInstrumentType(name) {
+  const n = String(name || '').trim().toLowerCase();
+  if (n === 'cash') return 'cash';
+  if (n === 'upi' || n.includes('upi')) return 'upi';
+  return 'other';
+}
+
+export function buildPaymentInstruments(paymentMethodDocs = [], creditCards = []) {
+  const drafts = [];
+  paymentMethodDocs.forEach((d) => {
+    if (!d?.name) return;
+    drafts.push({
+      id: `method:${d.id || d.name}`,
+      name: d.name,
+      type: d.type || inferInstrumentType(d.name),
+      owner: d.owner || '',
+      cardId: null,
+    });
+  });
+  creditCards.forEach((c) => {
+    if (!c?.name) return;
+    drafts.push({ id: `card:${c.id}`, name: c.name, type: 'card', owner: c.owner || '', cardId: c.id });
+  });
+
+  const nameCounts = new Map();
+  drafts.forEach((i) => {
+    const key = i.name.trim().toLowerCase();
+    nameCounts.set(key, (nameCounts.get(key) || 0) + 1);
+  });
+
+  const usedLabels = new Set();
+  return drafts.map((i) => {
+    const collides = nameCounts.get(i.name.trim().toLowerCase()) > 1;
+    let label = collides && i.owner ? `${i.name} · ${i.owner}` : i.name;
+    let n = 2;
+    const base = label;
+    while (usedLabels.has(label.toLowerCase())) label = `${base} (${n++})`;
+    usedLabels.add(label.toLowerCase());
+    return { ...i, label };
+  });
+}
+
+// Entries saved before instruments existed only carry a name string, so
+// resolve by id first, then by exact label, then by bare name (first match -
+// the same thing the old name lookup did).
+export function resolveInstrument(instruments, { paymentInstrumentId, paymentMethod } = {}) {
+  if (paymentInstrumentId) {
+    const byId = instruments.find((i) => i.id === paymentInstrumentId);
+    if (byId) return byId;
+  }
+  if (!paymentMethod) return null;
+  return (
+    instruments.find((i) => i.label === paymentMethod) ||
+    instruments.find((i) => i.name === paymentMethod) ||
+    null
+  );
+}
+
 export const CATEGORY_COLORS = [
   '#3D7068',
   '#A63D40',

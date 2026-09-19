@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildPaymentInstruments,
+  resolveInstrument,
   DEFAULT_PERSONS as PERSONS,
   computeBalance,
   computeMemberTotals,
@@ -2014,4 +2016,43 @@ test('buildFullBackupJson wraps the given collections with an export timestamp a
   assert.equal(backup.schemaVersion, 1);
   assert.ok(backup.exportedAt);
   assert.deepEqual(backup.householdEntries, [{ id: 'e1' }]);
+});
+
+test('buildPaymentInstruments merges methods and cards, inferring types for old method docs', () => {
+  const list = buildPaymentInstruments(
+    [{ id: 'a', name: 'Cash' }, { id: 'b', name: 'UPI' }, { id: 'c', name: 'Yash Forex', type: 'bank', owner: 'Yash' }],
+    [{ id: 'k1', name: 'HDFC Diners', owner: 'Yash' }],
+  );
+  assert.deepEqual(list.map((i) => [i.label, i.type]), [
+    ['Cash', 'cash'],
+    ['UPI', 'upi'],
+    ['Yash Forex', 'bank'],
+    ['HDFC Diners', 'card'],
+  ]);
+});
+
+test('buildPaymentInstruments tells same-named cards apart by owner, and only then', () => {
+  const list = buildPaymentInstruments([], [
+    { id: 'k1', name: 'HDFC Diners', owner: 'Yash' },
+    { id: 'k2', name: 'HDFC Diners', owner: 'Kruti' },
+    { id: 'k3', name: 'SBI Cashback', owner: 'Yash' },
+  ]);
+  assert.deepEqual(list.map((i) => i.label), ['HDFC Diners · Yash', 'HDFC Diners · Kruti', 'SBI Cashback']);
+});
+
+test('buildPaymentInstruments keeps labels unique even with no owner to disambiguate', () => {
+  const list = buildPaymentInstruments([{ id: 'a', name: 'Amex' }], [{ id: 'k1', name: 'Amex' }]);
+  assert.deepEqual(list.map((i) => i.label), ['Amex', 'Amex (2)']);
+});
+
+test('resolveInstrument prefers id, then label, then bare name (legacy entries)', () => {
+  const list = buildPaymentInstruments([], [
+    { id: 'k1', name: 'HDFC Diners', owner: 'Yash' },
+    { id: 'k2', name: 'HDFC Diners', owner: 'Kruti' },
+  ]);
+  assert.equal(resolveInstrument(list, { paymentInstrumentId: 'card:k2', paymentMethod: 'HDFC Diners' }).cardId, 'k2');
+  assert.equal(resolveInstrument(list, { paymentMethod: 'HDFC Diners · Kruti' }).cardId, 'k2');
+  assert.equal(resolveInstrument(list, { paymentMethod: 'HDFC Diners' }).cardId, 'k1');
+  assert.equal(resolveInstrument(list, { paymentMethod: 'Gone' }), null);
+  assert.equal(resolveInstrument(list, {}), null);
 });

@@ -6,6 +6,7 @@ import { useAuth } from '../lib/AuthContext';
 import { useLock } from '../lib/LockContext';
 import SettingsModal from './SettingsModal';
 import GlobalSearch from './GlobalSearch';
+import { VERSION_LABEL, BUILD_SHA } from '../lib/version';
 
 // Matches web's <header> in App.jsx: "Splitkhata" + a ledger badge pill
 // (bg-ledger-green/10, border-ledger-green/30, text-ledger-green), plus the
@@ -51,9 +52,15 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
     <SafeAreaView className="bg-paper z-50" edges={['top']} style={{ zIndex: 50 }}>
       <View className="flex-row items-center gap-1.5 px-3 sm:px-4 pt-4 sm:pt-6 pb-4 border-b border-ink/10">
         <View className="flex-row items-center gap-1.5 flex-shrink" style={{ flexShrink: 1 }}>
-          <Text className="font-display text-xl sm:text-2xl text-ink tracking-tight" numberOfLines={1}>
-            Splitkhata
-          </Text>
+          <View>
+            <Text className="font-display text-xl sm:text-2xl text-ink tracking-tight" numberOfLines={1}>
+              Splitkhata
+            </Text>
+            <Text className="font-mono-medium text-[10px] tracking-wider text-muted-text" numberOfLines={1}>
+              {VERSION_LABEL}
+              {BUILD_SHA ? <Text className="text-muted-text/60">{`  ${BUILD_SHA}`}</Text> : null}
+            </Text>
+          </View>
           <View className="px-2.5 sm:px-3.5 py-1.5 rounded-xl border border-ledger-green/30 bg-ledger-green/10 flex-shrink" style={{ flexShrink: 1 }}>
             <Text className="font-body-semibold text-[11px] sm:text-xs tracking-wide text-ledger-green" numberOfLines={1}>
               {badge}

@@ -7,6 +7,7 @@ import Card from './Card';
 import { addExpense, addExpensesBatch, updateExpense, addCardTransaction, generateStructured, extractReceiptFromImage } from '../lib/firebase';
 import { reportError } from '../lib/errorReporting';
 import {
+  buildPaymentInstruments,
   DEFAULT_PERSONS as PERSONS,
   DEFAULT_CATEGORIES,
   DEFAULT_TRAVEL_CATEGORIES,
@@ -56,7 +57,7 @@ export default function AddEntryForm({
   dbCategories,
   dbMembers = [],
   currentCurrency = 'INR',
-  dbPaymentMethods = [],
+  instruments: instrumentsProp,
   tripEntries = [],
   creditCards = [],
   cardTransactions = [],
@@ -66,12 +67,14 @@ export default function AddEntryForm({
   const categories =
     dbCategories && dbCategories.length > 0 ? dbCategories : isTravel ? DEFAULT_TRAVEL_CATEGORIES : DEFAULT_CATEGORIES;
   const membersList = dbMembers && dbMembers.length > 0 ? dbMembers : PERSONS;
-  const paymentMethodsList = dbPaymentMethods && dbPaymentMethods.length > 0 ? dbPaymentMethods : ['Cash'];
-  // A tracked card counts as a payment method too, so picking it here can
-  // link the entry to a card transaction (see handleSubmit) - kept as a
-  // separate list from paymentMethodsList since travel's own FIFO cash
-  // logic and Quick Add schema key off that list not including cards.
-  const paymentMethodOptions = Array.from(new Set([...paymentMethodsList, ...creditCards.map((c) => c.name).filter(Boolean)]));
+  // Cash, UPI, bank accounts and tracked cards as one list (see
+  // buildPaymentInstruments) - picking a card here also links the entry to a
+  // card transaction (see handleSubmit).
+  const instruments = useMemo(
+    () => (instrumentsProp && instrumentsProp.length ? instrumentsProp : buildPaymentInstruments([{ name: 'Cash' }], creditCards)),
+    [instrumentsProp, creditCards],
+  );
+  const paymentMethodOptions = instruments.map((i) => i.label);
 
   const [amount, setAmount] = useState('');
   const [localAmount, setLocalAmount] = useState('');
@@ -81,7 +84,8 @@ export default function AddEntryForm({
   const [splitType, setSplitType] = useState('shared');
   const [owedBy, setOwedBy] = useState(() => membersList.find((p) => p !== (deviceName || membersList[0])) || '');
   const [splitAmong, setSplitAmong] = useState(membersList);
-  const [paymentMethod, setPaymentMethod] = useState(paymentMethodsList[0] || 'Cash');
+  const [paymentMethod, setPaymentMethod] = useState(paymentMethodOptions[0] || 'Cash');
+  const selectedInstrument = instruments.find((i) => i.label === paymentMethod) || null;
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -184,7 +188,7 @@ export default function AddEntryForm({
       const schema = buildQuickAddSchema({
         categories,
         members: membersList,
-        paymentMethods: paymentMethodsList,
+        paymentMethods: paymentMethodOptions,
         isTravel,
       });
       const prompt = buildQuickAddPrompt(text, { members: membersList, today: todayISO() });
@@ -199,7 +203,7 @@ export default function AddEntryForm({
       }
       if (parsed.note) setNote(parsed.note);
       if (/^\d{4}-\d{2}-\d{2}$/.test(parsed.date || '')) setDate(parsed.date);
-      if (isTravel && parsed.paymentMethod && paymentMethodsList.includes(parsed.paymentMethod)) {
+      if (isTravel && parsed.paymentMethod && paymentMethodOptions.includes(parsed.paymentMethod)) {
         setPaymentMethod(parsed.paymentMethod);
       }
 
@@ -307,6 +311,7 @@ export default function AddEntryForm({
           ledger,
           tripName: isTravel ? tripName : '',
           paymentMethod: paymentMethod || null,
+          paymentInstrumentId: selectedInstrument?.id || null,
           localAmount: parsedLocal,
           rewardPoints: parsedPoints,
           deviceName: deviceName || payer,
@@ -317,7 +322,7 @@ export default function AddEntryForm({
         // two records, joined by id - instead of making that a second,
         // separate act of discipline in the Cards tab. Best-effort: a
         // failure here shouldn't undo the expense that already saved fine.
-        const matchedCard = creditCards.find((c) => c.name === paymentMethod);
+        const matchedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
         if (matchedCard) {
           try {
             const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, date);

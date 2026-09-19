@@ -35,7 +35,8 @@ export default function EntryList({
   ledger = 'household',
   categories = [],
   members = [],
-  dbPaymentMethods = [],
+  instruments = [],
+  creditCards = [],
   currentCurrency = 'INR',
   pendingDeletes = {},
   onDelete,
@@ -134,7 +135,8 @@ export default function EntryList({
                   entry={item}
                   categories={categories}
                   members={members}
-                  dbPaymentMethods={dbPaymentMethods}
+                  instruments={instruments}
+                  creditCards={creditCards}
                   ledger={ledger}
                   currentCurrency={currentCurrency}
                   tripEntries={isTravel ? entries : []}

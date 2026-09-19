@@ -15,6 +15,7 @@ import {
 import { useAuth } from '../../lib/AuthContext';
 import { useJump } from '../../lib/JumpContext';
 import { useUndoDelete } from '../../lib/useUndoDelete';
+import { usePaymentInstruments } from '../../lib/usePaymentInstruments';
 import { DEFAULT_PERSONS, DEFAULT_CATEGORIES, todayISO, getMonthKey, getAvailableMonths, formatCurrency } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import AddEntryForm from '../../components/AddEntryForm';
@@ -37,6 +38,7 @@ export default function Household() {
   const [reminderConfig, setReminderConfig] = useState({ enabled: true, amountThreshold: 2000 });
   const [creditCards, setCreditCards] = useState([]);
   const [cardTransactions, setCardTransactions] = useState([]);
+  const instruments = usePaymentInstruments(creditCards);
   const [recurringRules, setRecurringRules] = useState([]);
   const [selectedMonth, setSelectedMonth] = useState(() => getMonthKey(todayISO()));
 
@@ -108,6 +110,7 @@ export default function Household() {
                 ledger="household"
                 dbCategories={categories}
                 dbMembers={members}
+                instruments={instruments}
                 creditCards={creditCards}
                 cardTransactions={cardTransactions}
                 recentEntries={entries || []}
@@ -124,6 +127,8 @@ export default function Household() {
               ledger="household"
               categories={categories}
               members={members}
+              instruments={instruments}
+              creditCards={creditCards}
               pendingDeletes={pendingDeletes}
               onDelete={handleDelete}
               excludePaymentEntries

@@ -50,6 +50,7 @@ import {
   DEFAULT_TRAVEL_CATEGORIES,
   DEFAULT_CURRENCIES,
   DEFAULT_PERSONS,
+  INSTRUMENT_TYPES,
   toCsv,
   buildFullBackupJson,
   getStoredColorScheme,
@@ -130,14 +131,15 @@ const CAP_PERIOD_OPTIONS = [
   { value: 'month', label: 'Per month' },
 ];
 
+const SHARED_OWNER_LABEL = 'Shared / anyone';
+
 const TABS = [
   { key: 'categories', label: 'Categories' },
   { key: 'budgets', label: 'Budgets' },
   { key: 'recurring', label: 'Recurring' },
   { key: 'reminders', label: 'Reminders' },
-  { key: 'cards', label: 'Cards' },
   { key: 'currencies', label: 'Currencies' },
-  { key: 'paymentMethods', label: 'Payment Methods' },
+  { key: 'paymentMethods', label: 'Payment Methods & Cards' },
   { key: 'members', label: 'Members' },
   { key: 'database', label: 'Cloud Status' },
   { key: 'export', label: 'Export' },
@@ -453,13 +455,19 @@ export default function SettingsModal({ visible, onClose }) {
   // trip, not scoped to one - the same reasoning that already put
   // currencies and members here instead of in the trip sheet.
   const [newPaymentMethodName, setNewPaymentMethodName] = useState('');
+  const [showAddMethodForm, setShowAddMethodForm] = useState(false);
+  const [newPaymentMethodType, setNewPaymentMethodType] = useState('upi');
+  const [newPaymentMethodOwner, setNewPaymentMethodOwner] = useState(SHARED_OWNER_LABEL);
   const [addingPaymentMethod, setAddingPaymentMethod] = useState(false);
   async function handleAddPaymentMethod() {
     const trimmed = newPaymentMethodName.trim();
     if (!trimmed) return;
     setAddingPaymentMethod(true);
     try {
-      await addPaymentMethodToDb(trimmed, paymentMethodsData.rawDocs);
+      await addPaymentMethodToDb(trimmed, paymentMethodsData.rawDocs, {
+        type: newPaymentMethodType,
+        owner: newPaymentMethodOwner === SHARED_OWNER_LABEL ? '' : newPaymentMethodOwner,
+      });
       setNewPaymentMethodName('');
     } catch (err) {
       reportError(err, 'Could not add payment method');
@@ -959,7 +967,92 @@ export default function SettingsModal({ visible, onClose }) {
             </View>
           )}
 
-          {activeTab === 'cards' && (
+          {activeTab === 'currencies' && (
+            <View>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Currencies Database</Text>
+              <Text className="font-body text-xs text-muted-text mb-3">Currencies stored in the database are selectable for entries and trips.</Text>
+              <View className="flex-row gap-2 mb-3">
+                <TextInput
+                  value={newCurrencyName}
+                  onChangeText={(v) => setNewCurrencyName(v.toUpperCase())}
+                  placeholder="New Currency Code (e.g. CAD, AUD, CHF)..."
+                  className={`${input} flex-1 mb-0 uppercase`}
+                  autoCapitalize="characters"
+                />
+                <Pressable onPress={handleAddCurrency} disabled={addingCurr || !newCurrencyName.trim()} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                  <Text className="font-body-semibold text-white text-sm">{addingCurr ? 'Saving...' : 'Add Currency'}</Text>
+                </Pressable>
+              </View>
+              <Text className={activeListCaption}>Active Database Currencies ({currencies.currencies.length})</Text>
+              <View className="flex-row flex-wrap">
+                {currencies.currencies.map((c) => (
+                  <Tag key={c} label={c} onRemove={() => handleDeleteCurrency(c)} labelWeight="font-body-semibold" />
+                ))}
+              </View>
+            </View>
+          )}
+
+          {activeTab === 'paymentMethods' && (
+            <View>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Cash, UPI & accounts</Text>
+              <Text className="font-body text-xs text-muted-text mb-3">
+                Everything an expense can be paid with, shared across Household and every trip - so it only needs adding once. Credit cards are added below and appear in the same picker.
+              </Text>
+              <Pressable onPress={() => setShowAddMethodForm((v) => !v)} className="self-start mb-3">
+                <Text className="font-body-semibold text-xs text-ledger-green">{showAddMethodForm ? 'Hide' : '+ Add another method (UPI, forex account...)'}</Text>
+              </Pressable>
+              {showAddMethodForm && (
+                <View>
+              <View className="flex-row gap-2 mb-2">
+                <TextInput
+                  value={newPaymentMethodName}
+                  onChangeText={setNewPaymentMethodName}
+                  placeholder="e.g. UPI, Yash Forex"
+                  className={`${input} flex-1 mb-0`}
+                />
+                <Pressable
+                  onPress={handleAddPaymentMethod}
+                  disabled={addingPaymentMethod || !newPaymentMethodName.trim()}
+                  className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+                >
+                  <Text className="font-body-semibold text-white text-sm">{addingPaymentMethod ? 'Saving...' : 'Add'}</Text>
+                </Pressable>
+              </View>
+              <View className="flex-row flex-wrap mb-3" style={{ gap: 8 }}>
+                <View className="w-full sm:w-[calc(50%-4px)]">
+                  <PickerField
+                    label="Type"
+                    value={INSTRUMENT_TYPES.find((t) => t.key === newPaymentMethodType)?.label || 'Other'}
+                    options={INSTRUMENT_TYPES.map((t) => t.label)}
+                    onChange={(label) => setNewPaymentMethodType(INSTRUMENT_TYPES.find((t) => t.label === label)?.key || 'other')}
+                  />
+                </View>
+                <View className="w-full sm:w-[calc(50%-4px)]">
+                  <PickerField label="Owner" value={newPaymentMethodOwner} options={[SHARED_OWNER_LABEL, ...dbMembers]} onChange={setNewPaymentMethodOwner} />
+                </View>
+              </View>
+                </View>
+              )}
+              <Text className={activeListCaption}>Active Payment Methods ({paymentMethodsData.rawDocs.length || dbPaymentMethods.length})</Text>
+              <View className="flex-row flex-wrap mt-1 mb-5">
+                {(paymentMethodsData.rawDocs.length ? paymentMethodsData.rawDocs : dbPaymentMethods.map((name) => ({ id: name, name }))).map((d) => {
+                  const rawTypeLabel = INSTRUMENT_TYPES.find((t) => t.key === d.type)?.label;
+                  const typeLabel = rawTypeLabel && rawTypeLabel.toLowerCase() !== d.name.toLowerCase() ? rawTypeLabel : null;
+                  const detail = [typeLabel, d.owner].filter(Boolean).join(' · ');
+                  return (
+                    <Tag
+                      key={d.id}
+                      label={detail ? `${d.name} (${detail})` : d.name}
+                      removable={d.name !== 'Cash'}
+                      onRemove={() => handleDeletePaymentMethod(d.name)}
+                    />
+                  );
+                })}
+              </View>
+            </View>
+          )}
+
+          {activeTab === 'paymentMethods' && (
             <View>
               <Text className="font-body-semibold text-sm text-ink mb-0.5">Credit Cards</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
@@ -1237,61 +1330,6 @@ export default function SettingsModal({ visible, onClose }) {
                   );
                 })
               )}
-            </View>
-          )}
-
-          {activeTab === 'currencies' && (
-            <View>
-              <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Currencies Database</Text>
-              <Text className="font-body text-xs text-muted-text mb-3">Currencies stored in the database are selectable for entries and trips.</Text>
-              <View className="flex-row gap-2 mb-3">
-                <TextInput
-                  value={newCurrencyName}
-                  onChangeText={(v) => setNewCurrencyName(v.toUpperCase())}
-                  placeholder="New Currency Code (e.g. CAD, AUD, CHF)..."
-                  className={`${input} flex-1 mb-0 uppercase`}
-                  autoCapitalize="characters"
-                />
-                <Pressable onPress={handleAddCurrency} disabled={addingCurr || !newCurrencyName.trim()} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
-                  <Text className="font-body-semibold text-white text-sm">{addingCurr ? 'Saving...' : 'Add Currency'}</Text>
-                </Pressable>
-              </View>
-              <Text className={activeListCaption}>Active Database Currencies ({currencies.currencies.length})</Text>
-              <View className="flex-row flex-wrap">
-                {currencies.currencies.map((c) => (
-                  <Tag key={c} label={c} onRemove={() => handleDeleteCurrency(c)} labelWeight="font-body-semibold" />
-                ))}
-              </View>
-            </View>
-          )}
-
-          {activeTab === 'paymentMethods' && (
-            <View>
-              <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Payment Methods</Text>
-              <Text className="font-body text-xs text-muted-text mb-3">
-                Which card or account paid for an expense - shared across every trip, so it only needs adding once.
-              </Text>
-              <View className="flex-row gap-2 mb-3">
-                <TextInput
-                  value={newPaymentMethodName}
-                  onChangeText={setNewPaymentMethodName}
-                  placeholder="e.g. Yash Forex, Kruti Diners"
-                  className={`${input} flex-1 mb-0`}
-                />
-                <Pressable
-                  onPress={handleAddPaymentMethod}
-                  disabled={addingPaymentMethod || !newPaymentMethodName.trim()}
-                  className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
-                >
-                  <Text className="font-body-semibold text-white text-sm">{addingPaymentMethod ? 'Saving...' : 'Add'}</Text>
-                </Pressable>
-              </View>
-              <Text className={activeListCaption}>Active Payment Methods ({dbPaymentMethods.length})</Text>
-              <View className="flex-row flex-wrap mt-1">
-                {dbPaymentMethods.map((m) => (
-                  <Tag key={m} label={m} removable={m !== 'Cash'} onRemove={() => handleDeletePaymentMethod(m)} />
-                ))}
-              </View>
             </View>
           )}
 

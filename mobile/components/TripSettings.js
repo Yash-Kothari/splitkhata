@@ -26,7 +26,7 @@ export default function TripSettings({
   trips,
   entries,
   dbCategories,
-  dbPaymentMethods,
+  instruments = [],
   dbMembers,
   dbGuests = [],
   guestRawDocs = [],
@@ -59,7 +59,7 @@ export default function TripSettings({
     setDatesEnd(trip.endDate || '');
     setTripBudgetDrafts({ ...(trip.categoryBudgets || {}) });
     setWithdrawalPayer(dbMembers[0] || '');
-    setWithdrawalPaymentMethod(dbPaymentMethods[0] || 'Cash');
+    setWithdrawalPaymentMethod(instruments[0]?.label || 'Cash');
   }, [trip?.id]);
 
   const tripGuests = trip?.guests || [];
@@ -127,6 +127,7 @@ export default function TripSettings({
         ledger: 'travel',
         tripName: trip.name,
         paymentMethod: withdrawalPaymentMethod,
+        paymentInstrumentId: instruments.find((i) => i.label === withdrawalPaymentMethod)?.id || null,
         isWithdrawal: true,
       });
       setWithdrawalAmount('');
@@ -283,7 +284,7 @@ export default function TripSettings({
                 <PickerField label="Withdrawn By" value={withdrawalPayer} options={dbMembers} onChange={setWithdrawalPayer} />
               </View>
               <View className="w-full sm:w-[calc(50%-6px)]">
-                <PickerField label="Card Used" value={withdrawalPaymentMethod} options={dbPaymentMethods} onChange={setWithdrawalPaymentMethod} />
+                <PickerField label="Card Used" value={withdrawalPaymentMethod} options={instruments.map((i) => i.label)} onChange={setWithdrawalPaymentMethod} />
               </View>
               <View className="w-full">
                 <Text className="font-body text-2xs text-muted-text mb-2">

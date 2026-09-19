@@ -460,12 +460,17 @@ async function seedDefaultPaymentMethods() {
   await batch.commit();
 }
 
-export async function addPaymentMethodToDb(name, existingRawDocs = []) {
+export async function addPaymentMethodToDb(name, existingRawDocs = [], { type, owner } = {}) {
   const trimmed = name.trim();
   if (!trimmed) return;
   const exists = existingRawDocs.some((d) => d.name?.trim().toLowerCase() === trimmed.toLowerCase());
   if (!exists) {
-    await addDoc(paymentMethodsRef, { name: trimmed, createdAt: serverTimestamp() });
+    await addDoc(paymentMethodsRef, {
+      name: trimmed,
+      ...(type ? { type } : {}),
+      ...(owner ? { owner } : {}),
+      createdAt: serverTimestamp(),
+    });
   }
 }
 
