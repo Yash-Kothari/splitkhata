@@ -26,6 +26,7 @@ import {
   addCreditCardToDb,
   updateCreditCardInDb,
   updatePaymentMethodInDb,
+  linkCardsToPaymentMethods,
   deleteCreditCardFromDb,
   isFirebaseConfigured,
   subscribeToTrips,
@@ -52,6 +53,7 @@ import {
   DEFAULT_CURRENCIES,
   DEFAULT_PERSONS,
   INSTRUMENT_TYPES,
+  getUnlinkedCards,
   normalizeInstrumentType,
   toCsv,
   buildFullBackupJson,
@@ -472,6 +474,13 @@ export default function SettingsModal({ visible, onClose }) {
         type: editingMethod.type,
         owner: editingMethod.owner === SHARED_OWNER_LABEL ? '' : editingMethod.owner,
       });
+      const linkedCard = creditCards.find((c) => c.paymentMethodId === editingMethod.id);
+      if (linkedCard) {
+        await updateCreditCardInDb(linkedCard.id, {
+          name: editingMethod.name.trim(),
+          owner: editingMethod.owner === SHARED_OWNER_LABEL ? '' : editingMethod.owner,
+        });
+      }
       setEditingMethod(null);
     } catch (err) {
       reportError(err, 'Could not update payment method');
@@ -497,6 +506,11 @@ export default function SettingsModal({ visible, onClose }) {
     }
   }
   async function handleDeletePaymentMethod(name) {
+    const doc = paymentMethodsData.rawDocs.find((d) => d.name === name);
+    if (doc && creditCards.some((c) => c.paymentMethodId === doc.id)) {
+      Alert.alert('Linked to a card', `"${name}" is linked to a tracked card - delete the card first.`);
+      return;
+    }
     try {
       await deletePaymentMethodFromDb(name, paymentMethodsData.rawDocs);
     } catch (err) {
@@ -537,7 +551,7 @@ export default function SettingsModal({ visible, onClose }) {
 
   // Cards tab
   const [showAddCardForm, setShowAddCardForm] = useState(false);
-  const [newCardName, setNewCardName] = useState('');
+  const [newCardMethodName, setNewCardMethodName] = useState('');
   const [newCardOwner, setNewCardOwner] = useState('');
   const [newCardStrategy, setNewCardStrategy] = useState(CARD_REWARD_STRATEGIES[0].key);
   const [newCardParams, setNewCardParams] = useState(() => ({ ...CARD_STRATEGY_DEFAULTS[CARD_REWARD_STRATEGIES[0].key] }));
@@ -567,16 +581,35 @@ export default function SettingsModal({ visible, onClose }) {
     setNewCardParams({ ...CARD_STRATEGY_DEFAULTS[strategyKey] });
   }
 
+  const unlinkedCards = getUnlinkedCards(paymentMethodsData.rawDocs, creditCards);
+  const linkedMethodIds = new Set(creditCards.map((c) => c.paymentMethodId).filter(Boolean));
+  const linkableMethods = paymentMethodsData.rawDocs.filter(
+    (d) => !linkedMethodIds.has(d.id) && normalizeInstrumentType(d.type, d.name) === 'credit',
+  );
+  const selectedCardMethod = linkableMethods.find((d) => d.name === newCardMethodName) || null;
+  const [linkingCards, setLinkingCards] = useState(false);
+  async function handleLinkExistingCards() {
+    setLinkingCards(true);
+    try {
+      await linkCardsToPaymentMethods(unlinkedCards, paymentMethodsData.rawDocs);
+    } catch (err) {
+      reportError(err, 'Could not link cards to payment methods');
+    } finally {
+      setLinkingCards(false);
+    }
+  }
+
   async function handleAddCard() {
-    const trimmed = newCardName.trim();
-    if (!trimmed) return;
+    if (!selectedCardMethod) return;
+    const trimmed = selectedCardMethod.name.trim();
     setAddingCard(true);
     setCardMessage('');
     try {
       const coercedParams = coerceStrategyParams(newCardStrategy, newCardParams);
       await addCreditCardToDb({
         name: trimmed,
-        owner: newCardOwner,
+        owner: selectedCardMethod.owner || newCardOwner,
+        paymentMethodId: selectedCardMethod.id,
         rewardStrategy: newCardStrategy,
         strategyParamsHistory: [{ effectiveFrom: todayISO(), params: coercedParams }],
         billingCycleDay: Math.min(31, Math.max(1, Math.round(Number(newCardBillingDay)) || 1)),
@@ -588,7 +621,7 @@ export default function SettingsModal({ visible, onClose }) {
           : 0,
         active: true,
       });
-      setNewCardName('');
+      setNewCardMethodName('');
       setCardMessage(`${trimmed} added.`);
       setShowAddCardForm(false);
     } catch (err) {
@@ -615,8 +648,6 @@ export default function SettingsModal({ visible, onClose }) {
       const strategyKey = creditCards.find((c) => c.id === cardId)?.rewardStrategy;
       const isPointsCard = CARD_REWARD_STRATEGIES.find((s) => s.key === strategyKey)?.unit === 'points';
       await updateCreditCardInDb(cardId, {
-        name: editCardDrafts.name.trim(),
-        owner: editCardDrafts.owner,
         billingCycleDay: Math.min(31, Math.max(1, Math.round(Number(editCardDrafts.billingCycleDay)) || 1)),
         dueDateOffsetDays: Math.max(0, Math.round(Number(editCardDrafts.dueDateOffsetDays)) || 0),
         annualMilestoneAnchorMonth: Math.min(12, Math.max(1, Math.round(Number(editCardDrafts.annualMilestoneAnchorMonth)) || 1)),
@@ -1098,7 +1129,7 @@ export default function SettingsModal({ visible, onClose }) {
                   return (
                     <Tag
                       key={d.id}
-                      label={detail ? `${d.name} (${detail})` : d.name}
+                      label={`${creditCards.some((c) => c.paymentMethodId === d.id) ? '💳 ' : ''}${detail ? `${d.name} (${detail})` : d.name}`}
                       removable={d.name !== 'Cash'}
                       onRemove={() => handleDeletePaymentMethod(d.name)}
                       onEdit={
@@ -1125,6 +1156,24 @@ export default function SettingsModal({ visible, onClose }) {
                 Every reward rule below was cross-checked against each bank's current terms, not guessed from a spreadsheet formula - tune the numbers here if a card's real terms change.
               </Text>
 
+              {unlinkedCards.length > 0 && (
+                <View className="rounded-xl border border-mustard/40 bg-mustard/10 p-3 mb-3">
+                  <Text className="font-body-semibold text-xs text-ink mb-1">
+                    {unlinkedCards.length} card{unlinkedCards.length > 1 ? 's' : ''} not linked to a payment method
+                  </Text>
+                  <Text className="font-body text-2xs text-muted-text mb-2">
+                    {unlinkedCards.map((c) => c.name).join(', ')} won't show in the entry pickers until linked. Linking matches by name, or creates the missing Credit payment method.
+                  </Text>
+                  <Pressable
+                    onPress={handleLinkExistingCards}
+                    disabled={linkingCards}
+                    className="self-start min-h-10 px-3.5 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
+                  >
+                    <Text className="font-body-semibold text-xs text-white">{linkingCards ? 'Linking...' : 'Link now'}</Text>
+                  </Pressable>
+                </View>
+              )}
+
               <View className="rounded-xl border border-ink/10 bg-paper-card mb-3 overflow-hidden">
                 <Pressable onPress={() => setShowAddCardForm((v) => !v)} className="flex-row items-center justify-between px-3.5 py-3">
                   <Text className="font-body-semibold text-sm text-ink">💳 Add a card</Text>
@@ -1134,12 +1183,24 @@ export default function SettingsModal({ visible, onClose }) {
                 {showAddCardForm && (
                   <View className="px-3.5 pb-4 pt-1 border-t border-ink/10">
                     <Text className={sectionLabel}>Card details</Text>
-                    <Text className={label}>Card name</Text>
-                    <TextInput value={newCardName} onChangeText={setNewCardName} placeholder="e.g. HDFC Diners Club Black Metal" className={input} />
+                    {linkableMethods.length === 0 ? (
+                      <Text className="font-body text-xs text-stamp-red mb-3">
+                        A card is linked to a payment method - first add one above with type Credit (its name becomes the card's name), then come back here.
+                      </Text>
+                    ) : (
+                      <PickerField
+                        label="Payment method (Credit)"
+                        value={newCardMethodName || 'Select a payment method...'}
+                        options={linkableMethods.map((d) => d.name)}
+                        onChange={setNewCardMethodName}
+                      />
+                    )}
                     <View className="flex-row flex-wrap" style={{ gap: 12 }}>
-                      <View className="w-full sm:w-[calc(50%-6px)]">
-                        <PickerField label="Owner" value={newCardOwner} options={dbMembers} onChange={setNewCardOwner} />
-                      </View>
+                      {!selectedCardMethod?.owner && (
+                        <View className="w-full sm:w-[calc(50%-6px)]">
+                          <PickerField label="Owner" value={newCardOwner} options={dbMembers} onChange={setNewCardOwner} />
+                        </View>
+                      )}
                       <View className="w-full sm:w-[calc(50%-6px)]">
                         <PickerField
                           label="Reward strategy"
@@ -1210,7 +1271,7 @@ export default function SettingsModal({ visible, onClose }) {
                       </View>
                     )}
 
-                    <Pressable onPress={handleAddCard} disabled={addingCard || !newCardName.trim()} className="min-h-10 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                    <Pressable onPress={handleAddCard} disabled={addingCard || !selectedCardMethod} className="min-h-10 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
                       <Text className="font-body-semibold text-white text-sm">{addingCard ? 'Saving...' : 'Add Card'}</Text>
                     </Pressable>
                     {cardMessage ? <Text className="font-body text-xs text-muted-text mt-2">{cardMessage}</Text> : null}
@@ -1230,12 +1291,10 @@ export default function SettingsModal({ visible, onClose }) {
                     <View key={card.id} className="rounded-xl border border-ink/10 bg-paper-card px-3.5 py-3 mb-2">
                       {isEditing ? (
                         <View>
-                          <Text className={label}>Card name</Text>
-                          <TextInput value={editCardDrafts.name} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, name: v }))} className={input} />
+                          <Text className="font-body text-2xs text-muted-text mb-2">
+                            Name and owner are edited on this card's payment method, above.
+                          </Text>
                           <View className="flex-row flex-wrap" style={{ gap: 8 }}>
-                            <View className="w-full sm:w-[calc(33.333%-5.333px)]">
-                              <PickerField label="Owner" value={editCardDrafts.owner} options={dbMembers} onChange={(v) => setEditCardDrafts((p) => ({ ...p, owner: v }))} />
-                            </View>
                             <View className="w-full sm:w-[calc(33.333%-5.333px)]">
                               <Text className={label}>Billing day</Text>
                               <TextInput value={editCardDrafts.billingCycleDay} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, billingCycleDay: v }))} keyboardType="number-pad" className={input} />

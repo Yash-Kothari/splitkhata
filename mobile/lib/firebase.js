@@ -465,12 +465,43 @@ export async function addPaymentMethodToDb(name, existingRawDocs = [], { type, o
   if (!trimmed) return;
   const exists = existingRawDocs.some((d) => d.name?.trim().toLowerCase() === trimmed.toLowerCase());
   if (!exists) {
-    await addDoc(paymentMethodsRef, {
+    const docRef = await addDoc(paymentMethodsRef, {
       name: trimmed,
       ...(type ? { type } : {}),
       ...(owner ? { owner } : {}),
       createdAt: serverTimestamp(),
     });
+    return docRef.id;
+  }
+  return null;
+}
+
+// Links each unlinked card to the payment method with the same name (making
+// it a Credit method), creating the method when none exists yet.
+export async function linkCardsToPaymentMethods(cards, methodDocs) {
+  const claimed = new Set(cards.map((c) => c.paymentMethodId).filter(Boolean));
+  const docs = [...methodDocs];
+  for (const card of cards) {
+    const match = docs.find((d) => !claimed.has(d.id) && d.name?.trim().toLowerCase() === card.name.trim().toLowerCase());
+    let methodId;
+    if (match) {
+      methodId = match.id;
+      await updateDoc(doc(dbInstance, 'paymentMethods', methodId), {
+        type: 'credit',
+        ...(match.owner || !card.owner ? {} : { owner: card.owner }),
+      });
+    } else {
+      const ref = await addDoc(paymentMethodsRef, {
+        name: card.name.trim(),
+        type: 'credit',
+        ...(card.owner ? { owner: card.owner } : {}),
+        createdAt: serverTimestamp(),
+      });
+      methodId = ref.id;
+      docs.push({ id: methodId, name: card.name });
+    }
+    claimed.add(methodId);
+    await updateDoc(doc(dbInstance, 'creditCards', card.id), { paymentMethodId: methodId });
   }
 }
 

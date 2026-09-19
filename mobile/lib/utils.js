@@ -59,20 +59,22 @@ export function normalizeInstrumentType(type, name) {
 }
 
 export function buildPaymentInstruments(paymentMethodDocs = [], creditCards = []) {
+  const cardByMethodId = new Map();
+  creditCards.forEach((c) => {
+    if (c?.paymentMethodId) cardByMethodId.set(c.paymentMethodId, c);
+  });
+
   const drafts = [];
   paymentMethodDocs.forEach((d) => {
     if (!d?.name) return;
+    const card = d.id ? cardByMethodId.get(d.id) : null;
     drafts.push({
       id: `method:${d.id || d.name}`,
       name: d.name,
       type: normalizeInstrumentType(d.type, d.name),
       owner: d.owner || '',
-      cardId: null,
+      cardId: card?.id || null,
     });
-  });
-  creditCards.forEach((c) => {
-    if (!c?.name) return;
-    drafts.push({ id: `card:${c.id}`, name: c.name, type: 'card', owner: c.owner || '', cardId: c.id });
   });
 
   const nameCounts = new Map();
@@ -93,6 +95,14 @@ export function buildPaymentInstruments(paymentMethodDocs = [], creditCards = []
   });
 }
 
+// A tracked card only shows up as a payment option through a payment method
+// entry pointing at it (its paymentMethodId) - cards without one are hidden
+// from the entry pickers until linked.
+export function getUnlinkedCards(paymentMethodDocs = [], creditCards = []) {
+  const methodIds = new Set(paymentMethodDocs.map((d) => d.id));
+  return creditCards.filter((c) => !c.paymentMethodId || !methodIds.has(c.paymentMethodId));
+}
+
 // Entries saved before instruments existed only carry a name string, so
 // resolve by id first, then by exact label, then by bare name (first match -
 // the same thing the old name lookup did).
@@ -100,6 +110,11 @@ export function resolveInstrument(instruments, { paymentInstrumentId, paymentMet
   if (paymentInstrumentId) {
     const byId = instruments.find((i) => i.id === paymentInstrumentId);
     if (byId) return byId;
+    // Entries saved when cards were their own instruments ("card:<id>").
+    if (paymentInstrumentId.startsWith('card:')) {
+      const byCard = instruments.find((i) => i.cardId === paymentInstrumentId.slice(5));
+      if (byCard) return byCard;
+    }
   }
   if (!paymentMethod) return null;
   return (
