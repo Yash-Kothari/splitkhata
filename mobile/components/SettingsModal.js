@@ -52,7 +52,7 @@ import {
   DEFAULT_CURRENCIES,
   DEFAULT_PERSONS,
   INSTRUMENT_TYPES,
-  inferInstrumentType,
+  normalizeInstrumentType,
   toCsv,
   buildFullBackupJson,
   getStoredColorScheme,
@@ -1043,9 +1043,9 @@ export default function SettingsModal({ visible, onClose }) {
                 <View className="w-full sm:w-[calc(50%-4px)]">
                   <PickerField
                     label="Type"
-                    value={INSTRUMENT_TYPES.find((t) => t.key === newPaymentMethodType)?.label || 'Other'}
+                    value={INSTRUMENT_TYPES.find((t) => t.key === newPaymentMethodType)?.label || 'Select type'}
                     options={INSTRUMENT_TYPES.map((t) => t.label)}
-                    onChange={(label) => setNewPaymentMethodType(INSTRUMENT_TYPES.find((t) => t.label === label)?.key || 'other')}
+                    onChange={(label) => setNewPaymentMethodType(INSTRUMENT_TYPES.find((t) => t.label === label)?.key || '')}
                   />
                 </View>
                 <View className="w-full sm:w-[calc(50%-4px)]">
@@ -1057,7 +1057,7 @@ export default function SettingsModal({ visible, onClose }) {
               <Text className={activeListCaption}>Active Payment Methods ({paymentMethodsData.rawDocs.length || dbPaymentMethods.length})</Text>
               <View className="flex-row flex-wrap mt-1 mb-5">
                 {(paymentMethodsData.rawDocs.length ? paymentMethodsData.rawDocs : dbPaymentMethods.map((name) => ({ id: name, name }))).map((d) => {
-                  const rawTypeLabel = INSTRUMENT_TYPES.find((t) => t.key === (d.type || inferInstrumentType(d.name)))?.label;
+                  const rawTypeLabel = INSTRUMENT_TYPES.find((t) => t.key === normalizeInstrumentType(d.type, d.name))?.label;
                   const typeLabel = rawTypeLabel && rawTypeLabel.toLowerCase() !== d.name.toLowerCase() ? rawTypeLabel : null;
                   const detail = [typeLabel, d.owner].filter(Boolean).join(' · ');
                   if (editingMethod?.id === d.id) {
@@ -1072,9 +1072,9 @@ export default function SettingsModal({ visible, onClose }) {
                           <View className="w-full sm:w-[calc(50%-4px)]">
                             <PickerField
                               label="Type"
-                              value={INSTRUMENT_TYPES.find((t) => t.key === editingMethod.type)?.label || 'Other'}
+                              value={INSTRUMENT_TYPES.find((t) => t.key === editingMethod.type)?.label || 'Select type'}
                               options={INSTRUMENT_TYPES.map((t) => t.label)}
-                              onChange={(label) => setEditingMethod((p) => ({ ...p, type: INSTRUMENT_TYPES.find((t) => t.label === label)?.key || 'other' }))}
+                              onChange={(label) => setEditingMethod((p) => ({ ...p, type: INSTRUMENT_TYPES.find((t) => t.label === label)?.key || '' }))}
                             />
                           </View>
                           <View className="w-full sm:w-[calc(50%-4px)]">
@@ -1106,7 +1106,7 @@ export default function SettingsModal({ visible, onClose }) {
                           ? () => setEditingMethod({
                               id: d.id,
                               name: d.name,
-                              type: d.type || inferInstrumentType(d.name),
+                              type: normalizeInstrumentType(d.type, d.name),
                               owner: d.owner || SHARED_OWNER_LABEL,
                             })
                           : undefined

@@ -2020,13 +2020,13 @@ test('buildFullBackupJson wraps the given collections with an export timestamp a
 
 test('buildPaymentInstruments merges methods and cards, inferring types for old method docs', () => {
   const list = buildPaymentInstruments(
-    [{ id: 'a', name: 'Cash' }, { id: 'b', name: 'UPI' }, { id: 'c', name: 'Yash Forex', type: 'bank', owner: 'Yash' }],
+    [{ id: 'a', name: 'Cash' }, { id: 'b', name: 'UPI' }, { id: 'c', name: 'Yash Forex', type: 'forex', owner: 'Yash' }],
     [{ id: 'k1', name: 'HDFC Diners', owner: 'Yash' }],
   );
   assert.deepEqual(list.map((i) => [i.label, i.type]), [
     ['Cash', 'cash'],
     ['UPI', 'upi'],
-    ['Yash Forex', 'bank'],
+    ['Yash Forex', 'forex'],
     ['HDFC Diners', 'card'],
   ]);
 });
@@ -2055,4 +2055,13 @@ test('resolveInstrument prefers id, then label, then bare name (legacy entries)'
   assert.equal(resolveInstrument(list, { paymentMethod: 'HDFC Diners' }).cardId, 'k1');
   assert.equal(resolveInstrument(list, { paymentMethod: 'Gone' }), null);
   assert.equal(resolveInstrument(list, {}), null);
+});
+
+test('legacy payment-method types map onto the current list', () => {
+  const list = buildPaymentInstruments([
+    { id: 'a', name: 'HDFC Savings', type: 'bank' },
+    { id: 'b', name: 'Misc', type: 'other' },
+    { id: 'c', name: 'Kruti Forex' },
+  ]);
+  assert.deepEqual(list.map((i) => i.type), ['debit', '', 'forex']);
 });

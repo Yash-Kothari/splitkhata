@@ -30,8 +30,9 @@ export const DEFAULT_PAYMENT_METHODS = ['Cash'];
 export const INSTRUMENT_TYPES = [
   { key: 'cash', label: 'Cash' },
   { key: 'upi', label: 'UPI' },
-  { key: 'bank', label: 'Bank / debit' },
-  { key: 'other', label: 'Other' },
+  { key: 'credit', label: 'Credit' },
+  { key: 'debit', label: 'Debit' },
+  { key: 'forex', label: 'Forex' },
 ];
 
 // Cash and credit cards live in different collections (paymentMethods,
@@ -43,8 +44,18 @@ export const INSTRUMENT_TYPES = [
 export function inferInstrumentType(name) {
   const n = String(name || '').trim().toLowerCase();
   if (n === 'cash') return 'cash';
-  if (n === 'upi' || n.includes('upi')) return 'upi';
-  return 'other';
+  if (n.includes('upi')) return 'upi';
+  if (n.includes('forex')) return 'forex';
+  if (n.includes('debit')) return 'debit';
+  if (n.includes('credit')) return 'credit';
+  return '';
+}
+
+// Types saved before the list was Cash/UPI/Credit/Debit/Forex.
+export function normalizeInstrumentType(type, name) {
+  if (INSTRUMENT_TYPES.some((t) => t.key === type)) return type;
+  if (type === 'bank') return 'debit';
+  return inferInstrumentType(name);
 }
 
 export function buildPaymentInstruments(paymentMethodDocs = [], creditCards = []) {
@@ -54,7 +65,7 @@ export function buildPaymentInstruments(paymentMethodDocs = [], creditCards = []
     drafts.push({
       id: `method:${d.id || d.name}`,
       name: d.name,
-      type: d.type || inferInstrumentType(d.name),
+      type: normalizeInstrumentType(d.type, d.name),
       owner: d.owner || '',
       cardId: null,
     });
