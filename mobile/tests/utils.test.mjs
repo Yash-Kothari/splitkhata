@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildPaymentInstruments,
+  checkCustomSharesTotal,
+  customSharePortions,
+  parseCustomShares,
   getUnlinkedCards,
   resolveInstrument,
   DEFAULT_PERSONS as PERSONS,
@@ -2089,4 +2092,33 @@ test('legacy payment-method types map onto the current list', () => {
     { id: 'c', name: 'Kruti Forex' },
   ]);
   assert.deepEqual(list.map((i) => i.type), ['debit', '', 'forex']);
+});
+
+test('customSharePortions hands out whole paise by largest remainder and sums exactly', () => {
+  assert.deepEqual(customSharePortions(1500, { Yash: 5, Priya: 10 }, ['Yash', 'Kruti', 'Priya']), { Yash: 500, Priya: 1000 });
+  const thirds = customSharePortions(100, { A: 1, B: 1, C: 1 }, ['A', 'B', 'C']);
+  assert.equal(Object.values(thirds).reduce((a, b) => a + b, 0), 100);
+  assert.deepEqual(customSharePortions(100, { Ghost: 5 }, ['A']), {});
+});
+
+test('checkCustomSharesTotal flags shares that do not add up to the entry total', () => {
+  assert.equal(checkCustomSharesTotal({ Yash: 5, Priya: 10 }, 15).ok, true);
+  const short = checkCustomSharesTotal({ Yash: 5, Priya: 8 }, 15);
+  assert.equal(short.ok, false);
+  assert.equal(short.diff, 2);
+  assert.deepEqual(parseCustomShares({ a: '5', b: '', c: 0, d: 'x' }), { a: 5 });
+});
+
+test('computeBalance and computeSettlements honour a custom split (paid 15, Yash 5 / Priya 10 / Kruti 0)', () => {
+  const members = ['Yash', 'Kruti', 'Priya'];
+  const entries = [
+    { amount: 15, payer: 'Kruti', split: true, splitType: 'custom', splitShares: { Yash: 5, Priya: 10 }, ledger: 'travel' },
+  ];
+  const settlements = computeSettlements(entries, 'travel', members);
+  assert.deepEqual(
+    settlements.map((t) => [t.debtor, t.creditor, t.amount]).sort(),
+    [['Priya', 'Kruti', 10], ['Yash', 'Kruti', 5]].sort(),
+  );
+  const totals = computeMemberTotals(entries, members);
+  assert.deepEqual(totals, { Yash: 5, Kruti: 0, Priya: 10 });
 });

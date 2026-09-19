@@ -4,10 +4,13 @@ import * as ImagePicker from 'expo-image-picker';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import Card from './Card';
+import CustomSplitEditor from './CustomSplitEditor';
 import { addExpense, addExpensesBatch, updateExpense, addCardTransaction, generateStructured, extractReceiptFromImage } from '../lib/firebase';
 import { reportError } from '../lib/errorReporting';
 import {
   buildPaymentInstruments,
+  checkCustomSharesTotal,
+  parseCustomShares,
   DEFAULT_PERSONS as PERSONS,
   DEFAULT_CATEGORIES,
   DEFAULT_TRAVEL_CATEGORIES,
@@ -33,6 +36,7 @@ const SPLIT_TYPE_OPTIONS = [
   { value: 'shared', label: 'Split' },
   { value: 'owed', label: 'Owed' },
   { value: 'personal', label: 'Personal' },
+  { value: 'custom', label: 'Custom amounts' },
 ];
 
 function Chip({ label, selected, onPress }) {
@@ -84,6 +88,9 @@ export default function AddEntryForm({
   const [splitType, setSplitType] = useState('shared');
   const [owedBy, setOwedBy] = useState(() => membersList.find((p) => p !== (deviceName || membersList[0])) || '');
   const [splitAmong, setSplitAmong] = useState(membersList);
+  const [customShares, setCustomShares] = useState({});
+  const customSharesCheck = checkCustomSharesTotal(customShares, parseFloat(amount) || 0);
+  const customSplitInvalid = splitType === 'custom' && !customSharesCheck.ok;
   const [paymentMethod, setPaymentMethod] = useState(paymentMethodOptions[0] || 'Cash');
   const selectedInstrument = instruments.find((i) => i.label === paymentMethod) || null;
   const [date, setDate] = useState(todayISO());
@@ -297,7 +304,8 @@ export default function AddEntryForm({
           split: splitType !== 'personal',
           splitType,
           owedBy: splitType === 'owed' ? owedBy : null,
-          splitAmong: effectiveSplitAmong,
+          splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
+          splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
           note: trimmedNote ? `${trimmedNote} (${i + 1}/${months})` : `Installment ${i + 1}/${months}`,
           date: addMonthsToDateISO(date, i),
           ledger,
@@ -313,7 +321,8 @@ export default function AddEntryForm({
           split: splitType !== 'personal',
           splitType,
           owedBy: splitType === 'owed' ? owedBy : null,
-          splitAmong: effectiveSplitAmong,
+          splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
+          splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
           note: trimmedNote,
           date,
           ledger,
@@ -355,6 +364,7 @@ export default function AddEntryForm({
       setNote('');
       setDate(todayISO());
       setSplitAcrossMonths(false);
+      setCustomShares({});
       setMonthsCount('6');
       setSplitAmong(membersList);
     } catch (err) {
@@ -602,6 +612,10 @@ export default function AddEntryForm({
             </Text>
           )}
 
+          {splitType === 'custom' && (
+            <CustomSplitEditor members={membersList} total={parseFloat(amount) || 0} shares={customShares} onChange={setCustomShares} />
+          )}
+
           {splitType === 'shared' && membersList.length > 2 && (
             <View className="mt-3">
               <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Split Among</Text>
@@ -655,7 +669,7 @@ export default function AddEntryForm({
 
           <Pressable
             onPress={handleSubmit}
-            disabled={saving || !amount}
+            disabled={saving || !amount || customSplitInvalid}
             className="mt-3 min-h-11 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
             style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 }}
           >

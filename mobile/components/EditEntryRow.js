@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, Alert } from 'react-native';
 import PickerField from './PickerField';
 import DateField from './DateField';
+import CustomSplitEditor from './CustomSplitEditor';
 import { cardShadow } from './Card';
 import { updateExpense, addCardTransaction, updateCardTransaction, deleteCardTransaction } from '../lib/firebase';
 import { reportError } from '../lib/errorReporting';
 import {
   buildPaymentInstruments,
+  checkCustomSharesTotal,
+  parseCustomShares,
   computeFifoCashAmount,
   formatFifoBreakdownSummary,
   inferCardRewardFields,
@@ -18,6 +21,7 @@ const SPLIT_TYPE_OPTIONS = [
   { value: 'shared', label: 'Split' },
   { value: 'owed', label: 'Owed' },
   { value: 'personal', label: 'Personal' },
+  { value: 'custom', label: 'Custom amounts' },
 ];
 
 function Chip({ label, selected, onPress }) {
@@ -64,6 +68,11 @@ export default function EditEntryRow({
   const [splitType, setSplitType] = useState(entry.splitType || (entry.split ? 'shared' : 'personal'));
   const [owedBy, setOwedBy] = useState(entry.owedBy || members.find((m) => m !== payer) || '');
   const [splitAmong, setSplitAmong] = useState(entry.splitAmong || members);
+  const [customShares, setCustomShares] = useState(() =>
+    Object.fromEntries(Object.entries(entry.splitShares || {}).map(([k, v]) => [k, String(v)])),
+  );
+  const customSharesCheck = checkCustomSharesTotal(customShares, parseFloat(amount) || 0);
+  const customSplitInvalid = splitType === 'custom' && !customSharesCheck.ok;
   // Legacy household entries may have no payment method at all - keep that
   // as-is unless it's changed, rather than silently stamping "Cash" on save.
   const [paymentMethod, setPaymentMethod] = useState(resolveInstrument(instruments, entry)?.label || entry.paymentMethod || '');
@@ -170,7 +179,8 @@ export default function EditEntryRow({
           split: splitType !== 'personal',
           splitType,
           owedBy: splitType === 'owed' ? owedBy : null,
-          splitAmong: effectiveSplitAmong,
+          splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
+          splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
           note: note.trim(),
           date,
           paymentMethod: paymentMethod || null,
@@ -239,7 +249,7 @@ export default function EditEntryRow({
           </Pressable>
           <Pressable
             onPress={handleSave}
-            disabled={saving || !amount}
+            disabled={saving || !amount || customSplitInvalid}
             className="flex-1 min-h-11 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
           >
             {saving ? (
@@ -323,6 +333,12 @@ export default function EditEntryRow({
           </View>
         )}
 
+        {splitType === 'custom' && (
+          <View className="w-full">
+            <CustomSplitEditor members={members} total={parseFloat(amount) || 0} shares={customShares} onChange={setCustomShares} />
+          </View>
+        )}
+
         {splitType === 'shared' && members.length > 2 && (
           <View className="w-full">
             <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Split Among</Text>
@@ -383,7 +399,7 @@ export default function EditEntryRow({
         </Pressable>
         <Pressable
           onPress={handleSave}
-          disabled={saving || !amount}
+          disabled={saving || !amount || customSplitInvalid}
           className="flex-1 min-h-11 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
         >
           {saving ? (

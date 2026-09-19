@@ -329,6 +329,40 @@ function lcmRange(n) {
   return result;
 }
 
+// Custom splits ("out of 15, 5 is Yash's and 10 is Priya's") are stored as
+// entry.splitShares = { name: amount }, used as proportions rather than
+// absolute money so the same weights also apply to whichever valueField is
+// being totalled (INR amount, local amount, reward points). Whole paise are
+// handed out by largest remainder so a share never creates or loses a paisa
+// and the entry still nets to exactly zero across members.
+export function parseCustomShares(shares) {
+  const out = {};
+  Object.entries(shares || {}).forEach(([name, v]) => {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) out[name] = n;
+  });
+  return out;
+}
+
+export function customSharePortions(valuePaise, shares, members) {
+  const included = members.filter((m) => Number(shares?.[m]) > 0);
+  const weightSum = included.reduce((sum, m) => sum + Number(shares[m]), 0);
+  if (!included.length || !weightSum) return {};
+  const exact = included.map((m) => (valuePaise * Number(shares[m])) / weightSum);
+  const floors = exact.map(Math.floor);
+  let leftover = valuePaise - floors.reduce((a, b) => a + b, 0);
+  const order = exact.map((v, i) => ({ i, frac: v - floors[i] })).sort((a, b) => b.frac - a.frac || a.i - b.i);
+  for (let k = 0; leftover > 0 && k < order.length; k += 1, leftover -= 1) floors[order[k].i] += 1;
+  return Object.fromEntries(included.map((m, i) => [m, floors[i]]));
+}
+
+// Whether a custom split's amounts add up to the entry total (within a paisa).
+export function checkCustomSharesTotal(shares, total) {
+  const sum = Object.values(parseCustomShares(shares)).reduce((a, b) => a + b, 0);
+  const diff = Math.round((Number(total) - sum) * 100) / 100;
+  return { sum, diff, ok: Math.abs(diff) < 0.005 && sum > 0 };
+}
+
 // A shared expense's fair 1/k-per-member paise share (k = however many
 // people it's actually split among - everyone by default, or just a subset
 // via entry.splitAmong, e.g. a trip guest who wasn't in on this particular
@@ -372,6 +406,16 @@ function computeNetByMemberScaled(entries, ledger, members, valueField) {
       const debtor = resolveMember(entry.owedBy);
       if (debtor && debtor !== payer) netByMemberScaled[debtor] -= valuePaise * scale;
       continue;
+    }
+
+    if (entry.splitType === 'custom' && entry.splitShares) {
+      const portions = customSharePortions(valuePaise, entry.splitShares, members);
+      if (Object.keys(portions).length) {
+        Object.entries(portions).forEach(([member, paise]) => {
+          netByMemberScaled[member] -= paise * scale;
+        });
+        continue;
+      }
     }
 
     // splitAmong narrows a shared entry to only some of the members (e.g.
@@ -523,6 +567,10 @@ export function computeMemberTotals(entries, members, valueField = 'amount') {
       if (members.includes(entry.payer)) totalsScaled[entry.payer] += amountPaise * scale;
     } else if (entry.splitType === 'owed' && entry.owedBy) {
       if (members.includes(entry.owedBy)) totalsScaled[entry.owedBy] += amountPaise * scale;
+    } else if (entry.splitType === 'custom' && Object.keys(customSharePortions(amountPaise, entry.splitShares, members)).length) {
+      Object.entries(customSharePortions(amountPaise, entry.splitShares, members)).forEach(([m, paise]) => {
+        totalsScaled[m] += paise * scale;
+      });
     } else {
       const splitSet = entry.splitAmong && entry.splitAmong.length > 0
         ? entry.splitAmong.filter((m) => members.includes(m))
@@ -2466,6 +2514,7 @@ export const LEDGER_CSV_COLUMNS = [
   'splitType',
   'owedBy',
   'splitAmong',
+  'splitShares',
   'paymentMethod',
   'note',
   'rewardPoints',

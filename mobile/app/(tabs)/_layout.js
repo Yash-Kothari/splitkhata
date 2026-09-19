@@ -8,7 +8,6 @@ import { reportError } from '../../lib/errorReporting';
 import { useLock } from '../../lib/LockContext';
 import PinLockScreen from '../../components/PinLockScreen';
 import AskQuestion from '../../components/AskQuestion';
-import TopNavBar from '../../components/TopNavBar';
 
 // A plain color-change on the emoji (the old behavior) is subtle enough
 // that it wasn't reading as "this is the selected tab" - a filled pill
@@ -117,7 +116,6 @@ export default function TabsLayout() {
     <PinGate>
       <View style={{ flex: 1 }}>
         <RecurringRuleRunner />
-        <TopNavBar />
         <Tabs
           screenOptions={{
             headerShown: false,

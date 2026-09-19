@@ -6,6 +6,7 @@ import { useAuth } from '../lib/AuthContext';
 import { useLock } from '../lib/LockContext';
 import SettingsModal from './SettingsModal';
 import GlobalSearch from './GlobalSearch';
+import TopNavBar from './TopNavBar';
 import { VERSION_LABEL, BUILD_SHA } from '../lib/version';
 
 // Matches web's <header> in App.jsx: "Splitkhata" + a ledger badge pill
@@ -49,8 +50,8 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
     // DOM order and covers the dropdown regardless of the dropdown's own
     // z-index, since that only wins stacking fights within its own local
     // context, not against unrelated siblings elsewhere in the tree.
-    <SafeAreaView className="bg-paper z-50" edges={['top']} style={{ zIndex: 50 }}>
-      <View className="flex-row items-center gap-1.5 px-3 sm:px-4 pt-4 sm:pt-6 pb-4 border-b border-ink/10">
+    <SafeAreaView className="bg-paper z-50 border-b border-ink/10" edges={['top']} style={{ zIndex: 50 }}>
+      <View className="flex-row items-center gap-1.5 px-3 sm:px-4 pt-4 sm:pt-6 pb-3">
         <View className="flex-row items-center gap-1.5 flex-shrink" style={{ flexShrink: 1 }}>
           <View>
             <Text className="font-display text-xl sm:text-2xl text-ink tracking-tight" numberOfLines={1}>
@@ -93,6 +94,8 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
           <Text className="font-body-semibold text-xs text-ink" numberOfLines={1}>{deviceName}</Text>
         </Pressable>
       </View>
+
+      <TopNavBar />
 
       {/* A Modal, not the absolutely-positioned sibling View this used to be -
           that shape hit an open, unresolved Fabric/react-native-screens Yoga
