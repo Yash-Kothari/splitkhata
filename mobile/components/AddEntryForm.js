@@ -348,7 +348,7 @@ export default function AddEntryForm({
               cardId: matchedCard.id,
               amount: parsed,
               date,
-              note: trimmedNote,
+              description: trimmedNote || category,
               linkedEntryId: newEntryId,
               ...fields,
             });

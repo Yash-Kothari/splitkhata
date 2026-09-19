@@ -129,7 +129,7 @@ export default function EditEntryRow({
     const newCardId = selectedInstrument?.cardId || null;
     try {
       if (oldTxnId && newCardId && oldCardId === newCardId) {
-        const updates = { amount: parsedAmount, date, note: note.trim() };
+        const updates = { amount: parsedAmount, date, description: note.trim() || category };
         if (category !== entry.category) {
           const card = creditCards.find((c) => c.id === newCardId);
           Object.assign(updates, inferCardRewardFields(card, category, resolveStrategyParamsForDate(card?.strategyParamsHistory, date)));
@@ -144,7 +144,7 @@ export default function EditEntryRow({
         cardId: newCardId,
         amount: parsedAmount,
         date,
-        note: note.trim(),
+        description: note.trim() || category,
         linkedEntryId: entry.id,
         ...inferCardRewardFields(card, category, resolveStrategyParamsForDate(card?.strategyParamsHistory, date)),
       });

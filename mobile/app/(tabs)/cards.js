@@ -118,7 +118,7 @@ export default function Cards() {
     const term = txnSearch.trim().toLowerCase();
     return cardTxns
       .filter((t) => !pendingDeletes[t.id])
-      .filter((t) => !term || t.description?.toLowerCase().includes(term) || String(t.amount).includes(term))
+      .filter((t) => !term || (t.description || t.note)?.toLowerCase().includes(term) || String(t.amount).includes(term))
       .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
   }, [cardTxns, txnSearch, pendingDeletes]);
 
@@ -325,7 +325,7 @@ export default function Cards() {
 
       <UndoToast
         pendingDeleteList={pendingDeleteList}
-        getLabel={(txn) => `Deleted ${txn.description ? `"${txn.description}"` : formatCurrency(txn.amount)}`}
+        getLabel={(txn) => `Deleted ${txn.description || txn.note ? `"${txn.description || txn.note}"` : formatCurrency(txn.amount)}`}
         onUndo={handleUndo}
       />
     </View>

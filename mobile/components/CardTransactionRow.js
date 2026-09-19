@@ -33,7 +33,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
   const [editing, setEditing] = useState(false);
   const [draftAmount, setDraftAmount] = useState(String(txn.amount));
   const [draftDate, setDraftDate] = useState(txn.date);
-  const [draftDescription, setDraftDescription] = useState(txn.description || '');
+  const [draftDescription, setDraftDescription] = useState(txn.description || txn.note || '');
   const [draft, setDraft] = useState({
     category: txn.category ?? null,
     channel: txn.channel ?? null,
@@ -184,7 +184,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
           </Text>
         </View>
         <Text numberOfLines={1} className="mt-1 font-body text-xs text-muted-text">
-          {txn.description || 'No description'}
+          {txn.description || txn.note || 'No description'}
           {isGroceryPosting ? ` · posts ${formatShortDate(nextMonthFirst(txn.date))}` : ''}
         </Text>
       </View>
