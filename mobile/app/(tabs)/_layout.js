@@ -121,6 +121,10 @@ export default function TabsLayout() {
         <Tabs
           screenOptions={{
             headerShown: false,
+            // React Navigation paints each scene with its own light-gray
+            // default, which shows through as a pale band under the top nav
+            // in dark mode - transparent lets the root's bg-paper win.
+            sceneStyle: { backgroundColor: 'transparent' },
             tabBarActiveTintColor: isDark ? '#4FB3A0' : '#3D7068',
             tabBarInactiveTintColor: isDark ? '#93A0B8' : '#5C6478',
             tabBarStyle: {
