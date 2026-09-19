@@ -2,7 +2,7 @@ import '../global.css';
 import { useEffect } from 'react';
 import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { Stack } from 'expo-router';
+import { Stack, ThemeProvider, DefaultTheme, DarkTheme } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts, Fraunces_500Medium, Fraunces_700Bold } from '@expo-google-fonts/fraunces';
@@ -16,6 +16,12 @@ import ConnectionBanner from '../components/ConnectionBanner';
 import { getStoredColorScheme } from '../lib/utils';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// React Navigation paints screens with its own light-gray default
+// (rgb(242,242,242)), which showed through as a pale band behind the top nav
+// in dark mode - these match global.css's --color-paper tokens instead.
+const LIGHT_NAV_THEME = { ...DefaultTheme, colors: { ...DefaultTheme.colors, background: '#F2ECDD', card: '#F2ECDD' } };
+const DARK_NAV_THEME = { ...DarkTheme, colors: { ...DarkTheme.colors, background: '#1A2130', card: '#1A2130' } };
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
@@ -42,6 +48,8 @@ export default function RootLayout() {
   useEffect(() => {
     if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
   }, [fontsLoaded]);
+
+  const navTheme = colorScheme === 'dark' ? DARK_NAV_THEME : LIGHT_NAV_THEME;
 
   if (!fontsLoaded) return null;
 
@@ -71,7 +79,9 @@ export default function RootLayout() {
             <View className="flex-1 bg-paper md:items-center">
               <ConnectionBanner />
               <View className="flex-1 w-full md:max-w-5xl">
-                <Stack screenOptions={{ headerShown: false }} />
+                <ThemeProvider value={navTheme}>
+                  <Stack screenOptions={{ headerShown: false }} />
+                </ThemeProvider>
               </View>
             </View>
           </JumpProvider>
