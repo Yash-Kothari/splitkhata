@@ -40,7 +40,7 @@ export const INSTRUMENT_TYPES = [
 // labels - two cards with the same name ("HDFC Diners" for both of you) are
 // told apart by their owner, so the picker never shows two
 // identical rows and never links an entry to the wrong card.
-function inferInstrumentType(name) {
+export function inferInstrumentType(name) {
   const n = String(name || '').trim().toLowerCase();
   if (n === 'cash') return 'cash';
   if (n === 'upi' || n.includes('upi')) return 'upi';

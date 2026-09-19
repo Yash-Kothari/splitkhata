@@ -145,6 +145,12 @@ export default function EditEntryRow({
     }
   }
 
+  function handlePaymentMethodChange(label) {
+    setPaymentMethod(label);
+    const owner = instruments.find((i) => i.label === label)?.owner;
+    if (owner && members.includes(owner)) setPayer(owner);
+  }
+
   async function handleSave() {
     const parsed = parseFloat(amount);
     if (!parsed || parsed <= 0) return;
@@ -333,7 +339,7 @@ export default function EditEntryRow({
         </View>
 
         <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-          <PickerField label="Payment Method" value={paymentMethod || 'Not set'} options={paymentMethodOptions} onChange={setPaymentMethod} />
+          <PickerField label="Payment Method" value={paymentMethod || 'Not set'} options={paymentMethodOptions} onChange={handlePaymentMethodChange} />
         </View>
 
         <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">

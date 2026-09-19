@@ -268,6 +268,14 @@ export default function AddEntryForm({
     }
   }
 
+  // An owned card/account says who paid most of the time - fill it in, but
+  // leave Who Paid editable (e.g. paying with the other person's card).
+  function handlePaymentMethodChange(label) {
+    setPaymentMethod(label);
+    const owner = instruments.find((i) => i.label === label)?.owner;
+    if (owner && membersList.includes(owner)) setPayer(owner);
+  }
+
   async function handleSubmit() {
     const parsed = parseFloat(amount);
     if (!parsed || parsed <= 0) return;
@@ -557,7 +565,7 @@ export default function AddEntryForm({
             </View>
 
             <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
-              <PickerField label="Payment Method" value={paymentMethod} options={paymentMethodOptions} onChange={setPaymentMethod} />
+              <PickerField label="Payment Method" value={paymentMethod} options={paymentMethodOptions} onChange={handlePaymentMethodChange} />
             </View>
 
             <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">

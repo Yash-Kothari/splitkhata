@@ -474,6 +474,11 @@ export async function addPaymentMethodToDb(name, existingRawDocs = [], { type, o
   }
 }
 
+export async function updatePaymentMethodInDb(id, { name, type, owner }) {
+  if (!id) return;
+  await updateDoc(doc(dbInstance, 'paymentMethods', id), { name: name.trim(), type: type || 'other', owner: owner || '' });
+}
+
 export async function deletePaymentMethodFromDb(name, rawDocs = []) {
   const trimmed = name.trim();
   if (!trimmed) return;

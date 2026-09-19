@@ -25,6 +25,7 @@ import {
   subscribeToCreditCards,
   addCreditCardToDb,
   updateCreditCardInDb,
+  updatePaymentMethodInDb,
   deleteCreditCardFromDb,
   isFirebaseConfigured,
   subscribeToTrips,
@@ -51,6 +52,7 @@ import {
   DEFAULT_CURRENCIES,
   DEFAULT_PERSONS,
   INSTRUMENT_TYPES,
+  inferInstrumentType,
   toCsv,
   buildFullBackupJson,
   getStoredColorScheme,
@@ -147,10 +149,15 @@ const TABS = [
   { key: 'security', label: '🔒 Security PIN' },
 ];
 
-function Tag({ label, onRemove, removable = true, labelWeight = 'font-body-medium' }) {
+function Tag({ label, onRemove, onEdit, removable = true, labelWeight = 'font-body-medium' }) {
   return (
     <View className="flex-row items-center gap-1.5 rounded-xl border border-ink/15 bg-paper px-3 py-1.5 mr-1.5 mb-1.5 shadow-2xs">
       <Text className={`${labelWeight} text-xs text-ink`}>{label}</Text>
+      {onEdit && (
+        <Pressable onPress={onEdit} hitSlop={6}>
+          <Text className="font-body-semibold text-xs text-muted-text">✎</Text>
+        </Pressable>
+      )}
       {removable && (
         <Pressable onPress={onRemove} hitSlop={6}>
           <Text className="font-body-semibold text-xs text-muted-text">✕</Text>
@@ -456,6 +463,20 @@ export default function SettingsModal({ visible, onClose }) {
   // currencies and members here instead of in the trip sheet.
   const [newPaymentMethodName, setNewPaymentMethodName] = useState('');
   const [showAddMethodForm, setShowAddMethodForm] = useState(false);
+  const [editingMethod, setEditingMethod] = useState(null);
+  async function handleSaveEditedMethod() {
+    if (!editingMethod?.name.trim()) return;
+    try {
+      await updatePaymentMethodInDb(editingMethod.id, {
+        name: editingMethod.name,
+        type: editingMethod.type,
+        owner: editingMethod.owner === SHARED_OWNER_LABEL ? '' : editingMethod.owner,
+      });
+      setEditingMethod(null);
+    } catch (err) {
+      reportError(err, 'Could not update payment method');
+    }
+  }
   const [newPaymentMethodType, setNewPaymentMethodType] = useState('upi');
   const [newPaymentMethodOwner, setNewPaymentMethodOwner] = useState(SHARED_OWNER_LABEL);
   const [addingPaymentMethod, setAddingPaymentMethod] = useState(false);
@@ -1036,15 +1057,60 @@ export default function SettingsModal({ visible, onClose }) {
               <Text className={activeListCaption}>Active Payment Methods ({paymentMethodsData.rawDocs.length || dbPaymentMethods.length})</Text>
               <View className="flex-row flex-wrap mt-1 mb-5">
                 {(paymentMethodsData.rawDocs.length ? paymentMethodsData.rawDocs : dbPaymentMethods.map((name) => ({ id: name, name }))).map((d) => {
-                  const rawTypeLabel = INSTRUMENT_TYPES.find((t) => t.key === d.type)?.label;
+                  const rawTypeLabel = INSTRUMENT_TYPES.find((t) => t.key === (d.type || inferInstrumentType(d.name)))?.label;
                   const typeLabel = rawTypeLabel && rawTypeLabel.toLowerCase() !== d.name.toLowerCase() ? rawTypeLabel : null;
                   const detail = [typeLabel, d.owner].filter(Boolean).join(' · ');
+                  if (editingMethod?.id === d.id) {
+                    return (
+                      <View key={d.id} className="w-full rounded-xl border border-ink/15 bg-paper-card p-3 mb-2" style={{ gap: 8 }}>
+                        <TextInput
+                          value={editingMethod.name}
+                          onChangeText={(v) => setEditingMethod((p) => ({ ...p, name: v }))}
+                          className={`${input} mb-0`}
+                        />
+                        <View className="flex-row flex-wrap" style={{ gap: 8 }}>
+                          <View className="w-full sm:w-[calc(50%-4px)]">
+                            <PickerField
+                              label="Type"
+                              value={INSTRUMENT_TYPES.find((t) => t.key === editingMethod.type)?.label || 'Other'}
+                              options={INSTRUMENT_TYPES.map((t) => t.label)}
+                              onChange={(label) => setEditingMethod((p) => ({ ...p, type: INSTRUMENT_TYPES.find((t) => t.label === label)?.key || 'other' }))}
+                            />
+                          </View>
+                          <View className="w-full sm:w-[calc(50%-4px)]">
+                            <PickerField label="Owner" value={editingMethod.owner} options={[SHARED_OWNER_LABEL, ...dbMembers]} onChange={(v) => setEditingMethod((p) => ({ ...p, owner: v }))} />
+                          </View>
+                        </View>
+                        <Text className="font-body text-2xs text-muted-text">
+                          Renaming only affects new entries - older ones keep the name they were saved with.
+                        </Text>
+                        <View className="flex-row gap-2">
+                          <Pressable onPress={() => setEditingMethod(null)} className="flex-1 min-h-10 rounded-lg border border-ink/15 items-center justify-center">
+                            <Text className="font-body-semibold text-xs text-ink">Cancel</Text>
+                          </Pressable>
+                          <Pressable onPress={handleSaveEditedMethod} className="flex-1 min-h-10 rounded-lg bg-ledger-green items-center justify-center">
+                            <Text className="font-body-semibold text-xs text-white">Save</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    );
+                  }
                   return (
                     <Tag
                       key={d.id}
                       label={detail ? `${d.name} (${detail})` : d.name}
                       removable={d.name !== 'Cash'}
                       onRemove={() => handleDeletePaymentMethod(d.name)}
+                      onEdit={
+                        paymentMethodsData.rawDocs.length
+                          ? () => setEditingMethod({
+                              id: d.id,
+                              name: d.name,
+                              type: d.type || inferInstrumentType(d.name),
+                              owner: d.owner || SHARED_OWNER_LABEL,
+                            })
+                          : undefined
+                      }
                     />
                   );
                 })}
