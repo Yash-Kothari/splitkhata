@@ -288,6 +288,28 @@ async function seedDefaultCategories() {
   await batch.commit();
 }
 
+// Lists keep their creation order unless a saved sortOrder says otherwise (see
+// saveSortOrder); anything added later has no sortOrder and lands at the end.
+function sortByOrder(items) {
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      const ao = a.item.sortOrder;
+      const bo = b.item.sortOrder;
+      if (ao == null && bo == null) return a.index - b.index;
+      if (ao == null) return 1;
+      if (bo == null) return -1;
+      return ao - bo || a.index - b.index;
+    })
+    .map(({ item }) => item);
+}
+
+export async function saveSortOrder(collectionName, orderedIds) {
+  const batch = writeBatch(dbInstance);
+  orderedIds.forEach((id, index) => batch.update(doc(dbInstance, collectionName, id), { sortOrder: index }));
+  await batch.commit();
+}
+
 export function subscribeToCategories(onData, onError) {
   const q = query(categoriesRef, orderBy('createdAt', 'asc'));
   return onSnapshot(
@@ -302,8 +324,7 @@ export function subscribeToCategories(onData, onError) {
       const household = [];
       const travel = [];
       const rawDocs = [];
-      snapshot.docs.forEach((docSnap) => {
-        const item = { id: docSnap.id, ...docSnap.data() };
+      sortByOrder(snapshot.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }))).forEach((item) => {
         rawDocs.push(item);
         if (item.ledger === 'travel') {
           if (item.name) travel.push(item.name);
@@ -469,8 +490,7 @@ export function subscribeToPaymentMethods(onData, onError) {
       }
       const methods = [];
       const rawDocs = [];
-      snapshot.docs.forEach((d) => {
-        const item = { id: d.id, ...d.data() };
+      sortByOrder(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))).forEach((item) => {
         rawDocs.push(item);
         if (item.name) methods.push(item.name);
       });

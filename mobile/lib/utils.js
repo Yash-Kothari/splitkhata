@@ -2757,3 +2757,23 @@ export const CARD_TRANSACTION_CSV_COLUMNS = [
 export function buildFullBackupJson(data) {
   return JSON.stringify({ exportedAt: new Date().toISOString(), schemaVersion: 1, ...data }, null, 2);
 }
+
+// One-time "most used first" ordering for the category and payment-method
+// lists: count how often each name was used, then sort by that, keeping the
+// existing order for ties and for names that were never used.
+export function countUsage(entries, keyOf) {
+  const counts = new Map();
+  for (const e of entries) {
+    if (!e || e.splitType === 'settlement' || e.isTripRollup || e.isWithdrawal) continue;
+    const key = keyOf(e);
+    if (key) counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts;
+}
+
+export function rankByUsage(items, counts, keyOfItem) {
+  return items
+    .map((item, index) => ({ ...item, count: counts.get(keyOfItem(item)) || 0, index }))
+    .sort((a, b) => b.count - a.count || a.index - b.index)
+    .map(({ index, ...rest }) => rest);
+}

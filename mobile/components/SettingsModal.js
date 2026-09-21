@@ -27,6 +27,7 @@ import {
   addCreditCardToDb,
   updateCreditCardInDb,
   updatePaymentMethodInDb,
+  saveSortOrder,
   linkCardsToPaymentMethods,
   deleteCreditCardFromDb,
   isFirebaseConfigured,
@@ -54,6 +55,10 @@ import {
   DEFAULT_CURRENCIES,
   DEFAULT_PERSONS,
   INSTRUMENT_TYPES,
+  countUsage,
+  rankByUsage,
+  buildPaymentInstruments,
+  resolveInstrument,
   getQuarterBounds,
   checkCustomSharesTotal,
   parseCustomShares,
@@ -531,6 +536,65 @@ export default function SettingsModal({ visible, onClose }) {
     }
   }
 
+  // One-time "most used first": count real entries, show the ranking, and only
+  // then save it as the display order (see saveSortOrder).
+  const [orderPreview, setOrderPreview] = useState(null);
+  const [applyingOrder, setApplyingOrder] = useState(false);
+  function previewCategoryOrder() {
+    const isTravel = categoryLedger === 'travel';
+    const docs = categories.rawDocs.filter((d) => d.name && (d.ledger === 'travel') === isTravel);
+    const counts = countUsage(isTravel ? travelEntries : householdEntries, (e) => (e.category || '').trim().toLowerCase());
+    const rows = rankByUsage(docs.map((d) => ({ id: d.id, name: d.name })), counts, (r) => r.name.trim().toLowerCase());
+    setOrderPreview({ collection: 'categories', title: `${isTravel ? 'Travel' : 'Household'} categories`, rows });
+  }
+  function previewMethodOrder() {
+    const instruments = buildPaymentInstruments(paymentMethodsData.rawDocs, creditCards);
+    const counts = countUsage([...householdEntries, ...travelEntries], (e) => resolveInstrument(instruments, e)?.id || null);
+    const rows = rankByUsage(
+      paymentMethodsData.rawDocs.filter((d) => d.name).map((d) => ({ id: d.id, name: d.name })),
+      counts,
+      (r) => `method:${r.id}`,
+    );
+    setOrderPreview({ collection: 'paymentMethods', title: 'Payment methods', rows });
+  }
+  async function applyOrder() {
+    if (!orderPreview) return;
+    setApplyingOrder(true);
+    try {
+      await saveSortOrder(orderPreview.collection, orderPreview.rows.map((r) => r.id));
+      setOrderPreview(null);
+    } catch (err) {
+      reportError(err, 'Could not save the new order');
+    } finally {
+      setApplyingOrder(false);
+    }
+  }
+  function renderOrderPreview(collection) {
+    if (!orderPreview || orderPreview.collection !== collection) return null;
+    return (
+      <View className="rounded-xl border border-ink/15 bg-paper-card p-3 mb-3">
+        <Text className="font-body-semibold text-sm text-ink mb-2">Most used first - {orderPreview.title}</Text>
+        {orderPreview.rows.map((r, i) => (
+          <View key={r.id} className="flex-row items-center justify-between py-0.5">
+            <Text className="font-body text-xs text-ink">{i + 1}. {r.name}</Text>
+            <Text className="font-mono text-xs text-muted-text">{r.count} {r.count === 1 ? 'entry' : 'entries'}</Text>
+          </View>
+        ))}
+        <Text className="font-body text-2xs text-muted-text mt-2">
+          Unused ones keep their current order at the end. This is the order every picker will show; anything you add later goes to the end.
+        </Text>
+        <View className="flex-row gap-2 mt-3">
+          <Pressable onPress={() => setOrderPreview(null)} className="flex-1 h-11 rounded-xl border border-ink/15 items-center justify-center">
+            <Text className="font-body-semibold text-sm text-ink">Cancel</Text>
+          </Pressable>
+          <Pressable onPress={applyOrder} disabled={applyingOrder} className={`flex-1 h-11 rounded-xl bg-ledger-green items-center justify-center ${applyingOrder ? 'opacity-40' : ''}`}>
+            <Text className="font-body-semibold text-sm text-white">{applyingOrder ? 'Saving...' : 'Use this order'}</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
   // Members tab
   const [newMemberName, setNewMemberName] = useState('');
   const [addingMember, setAddingMember] = useState(false);
@@ -851,6 +915,12 @@ export default function SettingsModal({ visible, onClose }) {
                 </Pressable>
               </View>
 
+              {renderOrderPreview('categories')}
+              {!orderPreview && (
+                <Pressable onPress={previewCategoryOrder} className="self-start mb-3">
+                  <Text className="font-body-semibold text-xs text-ledger-green">↕ Sort by most used (one-time)</Text>
+                </Pressable>
+              )}
               <Text className={activeListCaption}>Active Database Categories ({categoriesList.length})</Text>
               <View className="flex-row flex-wrap mt-1">
                 {categoriesList.map((cat) => (
@@ -1117,6 +1187,12 @@ export default function SettingsModal({ visible, onClose }) {
                 </View>
               </View>
                 </View>
+              )}
+              {renderOrderPreview('paymentMethods')}
+              {!orderPreview && (
+                <Pressable onPress={previewMethodOrder} className="self-start mb-3">
+                  <Text className="font-body-semibold text-xs text-ledger-green">↕ Sort by most used (one-time)</Text>
+                </Pressable>
               )}
               <Text className={activeListCaption}>Active Payment Methods ({paymentMethodsData.rawDocs.length || dbPaymentMethods.length})</Text>
               <View className="flex-row flex-wrap mt-1 mb-5">

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  countUsage,
+  rankByUsage,
   formatCurrency,
   isStatementOnlyCard,
   computeCardRewardLedger,
@@ -2365,4 +2367,18 @@ test('a statement-only card has no reward maths and is left out of the card rank
   assert.equal(ledger.total, 0);
   assert.equal(computeCardMilestoneProgress(txns, 'm1', '2026-01-01', '2027-01-01', 800000).spent, 42000);
   assert.deepEqual(rankCardsForEntry([card], txns, 1000, 'Groceries', '2026-09-01'), []);
+});
+
+test('rankByUsage sorts most used first, keeping the existing order for ties and unused names', () => {
+  const entries = [
+    { category: 'Groceries' }, { category: 'Groceries' }, { category: 'Groceries' },
+    { category: 'Rent' }, { category: 'Eating Out' }, { category: 'Eating Out' },
+    { category: 'Groceries', splitType: 'settlement' },
+    { category: 'Misc', isWithdrawal: true },
+  ];
+  const counts = countUsage(entries, (e) => e.category);
+  const items = ['Health', 'Rent', 'Eating Out', 'Groceries', 'Travel'].map((name) => ({ name }));
+  assert.deepEqual(rankByUsage(items, counts, (i) => i.name).map((i) => [i.name, i.count]), [
+    ['Groceries', 3], ['Eating Out', 2], ['Rent', 1], ['Health', 0], ['Travel', 0],
+  ]);
 });

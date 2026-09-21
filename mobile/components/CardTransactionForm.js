@@ -96,7 +96,16 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
               <Text className={label}>{statementOnly ? 'Statement amount (₹)' : 'Amount (₹)'}</Text>
               <TextInput
                 value={amount}
-                onChangeText={setAmount}
+                onChangeText={(v) => {
+                  // Typing (or pasting) a minus means a refund: tick the box and
+                  // let it carry the sign, so the two never disagree.
+                  if (!statementOnly && /^\s*-/.test(v)) {
+                    setIsRefund(true);
+                    setAmount(v.replace(/^\s*-+\s*/, ''));
+                  } else {
+                    setAmount(v);
+                  }
+                }}
                 keyboardType="numbers-and-punctuation"
                 placeholder="0.00"
                 className="font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper"
