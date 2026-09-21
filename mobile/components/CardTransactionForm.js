@@ -27,10 +27,10 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
     setDraft((prev) => ({ ...prev, ...patch }));
   }
 
-  // Matches the axis_supermoney_dual_pool default in CardStrategyFields -
+  // Matches the Axis Supermoney and HSBC Live+ defaults in CardStrategyFields (the top rate) -
   // an untouched draft should preview/save the same channel the picker is
   // showing.
-  const bonusEligibleDefault = card.rewardStrategy === 'axis_supermoney_dual_pool';
+  const bonusEligibleDefault = card.rewardStrategy === 'axis_supermoney_dual_pool' || card.rewardStrategy === 'hsbc_tiered_cashback_aggregate';
   const isBonusEligible = draft.isBonusEligible ?? bonusEligibleDefault;
 
   const parsedAmount = parseFloat(amount);

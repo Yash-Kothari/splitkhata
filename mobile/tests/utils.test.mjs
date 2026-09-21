@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  computeCardRewardLedger,
+  getRewardCreditDate,
   buildPaymentInstruments,
   checkCustomSharesTotal,
   customSharePortions,
@@ -545,7 +547,8 @@ test('buildQuickAddSchema constrains category/payer/splitType to real values, an
   });
   assert.deepEqual(householdSchema.properties.category.enum, ['Groceries', 'Rent']);
   assert.deepEqual(householdSchema.properties.payer.enum, ['Yash', 'Kruti']);
-  assert.deepEqual(householdSchema.properties.splitType.enum, ['shared', 'personal', 'owed']);
+  assert.deepEqual(householdSchema.properties.splitType.enum, ['shared', 'personal', 'owed', 'custom']);
+  assert.deepEqual(householdSchema.properties.splitShares.items.properties.person.enum, ['Yash', 'Kruti']);
   assert.equal(householdSchema.properties.paymentMethod, undefined);
 
   const travelSchema = buildQuickAddSchema({
@@ -1750,7 +1753,9 @@ test('inferCardRewardFields (SBI) infers excluded from a keyword, else defaults 
 test('inferCardRewardFields (HSBC Live+) infers the bonus tier and exclusions by keyword', () => {
   assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_tiered_cashback_aggregate' }, 'Dining'), { channel: null, isBonusEligible: true });
   assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_tiered_cashback_aggregate' }, 'Insurance'), { channel: 'excluded', isBonusEligible: false });
-  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_tiered_cashback_aggregate' }, 'Misc'), { channel: null, isBonusEligible: false });
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_tiered_cashback_aggregate' }, 'Misc'), { channel: null, isBonusEligible: true }, '10% is the default tier');
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_tiered_cashback_aggregate' }, 'Flight Tickets'), { channel: null, isBonusEligible: false });
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_tiered_cashback_aggregate' }, 'Amazon Shopping'), { channel: null, isBonusEligible: false });
 });
 
 test('inferCardRewardFields (Axis Supermoney) defaults to the bonus pool unless a keyword excludes it', () => {
@@ -2121,4 +2126,172 @@ test('computeBalance and computeSettlements honour a custom split (paid 15, Yash
   );
   const totals = computeMemberTotals(entries, members);
   assert.deepEqual(totals, { Yash: 5, Kruti: 0, Priya: 10 });
+});
+
+test('recurring rules with a custom split carry their shares onto the generated entry', () => {
+  const rules = [{
+    id: 'r1', active: true, amount: 30000, payer: 'Yash', category: 'Rent', splitType: 'custom',
+    splitShares: { Yash: 10000, Kruti: 20000 }, dayOfMonth: 1, lastGeneratedMonth: null,
+  }];
+  const { toCreate } = computeRecurringEntriesToGenerate(rules, '2026-09');
+  assert.equal(toCreate.length, 1);
+  assert.equal(toCreate[0].splitType, 'custom');
+  assert.equal(toCreate[0].split, true);
+  assert.deepEqual(toCreate[0].splitShares, { Yash: 10000, Kruti: 20000 });
+});
+
+const dinersCard = (extra = {}) => ({
+  id: 'd1',
+  rewardStrategy: 'hdfc_diners_slab_milestone',
+  billingCycleDay: 10,
+  strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone }],
+  ...extra,
+});
+
+test('Diners points stay per-transaction: a spend under a slab earns nothing, no slab carry', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { totalReward } = computeDinersCycleReward(params, [
+    { id: 'a', date: '2026-08-11', amount: 100, category: 'regular' },
+    { id: 'b', date: '2026-08-12', amount: 100, category: 'regular' },
+  ]);
+  assert.equal(totalReward, 0);
+});
+
+test('Diners statements round to the rupee and carry the difference into the next statement', () => {
+  const card = dinersCard();
+  const txns = [
+    { id: 'a', cardId: 'd1', date: '2026-07-15', amount: 9900.1, category: 'regular' },
+    { id: 'b', cardId: 'd1', date: '2026-08-15', amount: 5000, category: 'regular' },
+    { id: 'c', cardId: 'd1', date: '2026-09-15', amount: 2000.9, category: 'regular' },
+  ];
+  const { cycleBills } = computeCardRewardLedger(card, txns, '2026-12-31');
+  assert.deepEqual(cycleBills['2026-07-10'], { rawTotal: 9900.1, carryIn: 0, statement: 9900, carryOut: 0.1 });
+  // 5000 + the 0.10 carried in = 5000.10 -> 5000, and 0.10 carries on again.
+  assert.deepEqual(cycleBills['2026-08-10'], { rawTotal: 5000.1, carryIn: 0.1, statement: 5000, carryOut: 0.1 });
+  // 2000.90 + 0.10 = 2001.00 exactly.
+  assert.deepEqual(cycleBills['2026-09-10'], { rawTotal: 2001, carryIn: 0.1, statement: 2001, carryOut: 0 });
+});
+
+test('a statement that rounds up carries a negative fraction forward', () => {
+  const card = dinersCard();
+  const txns = [
+    { id: 'a', cardId: 'd1', date: '2026-07-15', amount: 9900.9, category: 'regular' },
+    { id: 'b', cardId: 'd1', date: '2026-08-15', amount: 1000, category: 'regular' },
+  ];
+  const { cycleBills } = computeCardRewardLedger(card, txns, '2026-12-31');
+  assert.deepEqual(cycleBills['2026-07-10'], { rawTotal: 9900.9, carryIn: 0, statement: 9901, carryOut: -0.1 });
+  assert.equal(cycleBills['2026-08-10'].rawTotal, 999.9);
+  assert.equal(cycleBills['2026-08-10'].statement, 1000);
+});
+
+test('cards whose statements are not rounded keep their exact paise total', () => {
+  const card = {
+    id: 's1', rewardStrategy: 'sbi_two_channel_cashback', billingCycleDay: 10,
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }],
+  };
+  const { cycleBills } = computeCardRewardLedger(card, [{ id: 'a', cardId: 's1', date: '2026-08-15', amount: 250.75, channel: 'online' }], '2026-12-31');
+  assert.deepEqual(cycleBills['2026-08-10'], { rawTotal: 250.75, carryIn: 0, statement: 250.75, carryOut: 0 });
+});
+
+test('Diners insurance is capped at 5,000 points a month', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { perTransaction, totalReward } = computeDinersCycleReward(params, [
+    { id: 'a', date: '2026-08-11', amount: 120000, category: 'insurance' }, // 4,000 pts
+    { id: 'b', date: '2026-08-12', amount: 90000, category: 'insurance' }, // 3,000 pts raw, only 1,000 left this month
+    { id: 'c', date: '2026-08-13', amount: 30000, category: 'insurance' }, // month cap already used
+    { id: 'd', date: '2026-09-02', amount: 30000, category: 'insurance' }, // a new month starts fresh: 1,000 pts
+  ]);
+  assert.deepEqual(perTransaction.map((p) => p.earned), [4000, 1000, 0, 1000]);
+  assert.equal(totalReward, 6000);
+});
+
+test('a category can carry a daily cap and a separate monthly cap at once', () => {
+  const params = {
+    ...CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone,
+    categories: [
+      { key: 'regular', label: 'Regular', multiplier: 1, capAmount: null, capPeriod: null },
+      { key: 'x', label: 'X', multiplier: 1, capAmount: 1000, capPeriod: 'day', monthlyCapAmount: 1500 },
+    ],
+  };
+  const { perTransaction } = computeDinersCycleReward(params, [
+    { id: 'a', date: '2026-08-11', amount: 60000, category: 'x' }, // 2,000 raw -> 1,000 (daily)
+    { id: 'b', date: '2026-08-12', amount: 60000, category: 'x' }, // daily allows 1,000, monthly only 500 left
+    { id: 'c', date: '2026-08-13', amount: 60000, category: 'x' }, // monthly used
+  ]);
+  assert.deepEqual(perTransaction.map((p) => p.earned), [1000, 500, 0]);
+});
+
+test('a Diners rule set saved with the old per-day insurance cap is treated as monthly from 1 Jul 2025', () => {
+  const legacy = dinersCard({
+    strategyParamsHistory: [{
+      effectiveFrom: '2026-01-01',
+      params: {
+        ...CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone,
+        categories: CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone.categories.map((c) =>
+          c.key === 'insurance' ? { ...c, capPeriod: 'day' } : c),
+      },
+    }],
+  });
+  const { totalReward } = computeCardCycleReward(legacy, [
+    { id: 'a', date: '2026-08-11', amount: 120000, category: 'insurance' },
+    { id: 'b', date: '2026-08-12', amount: 90000, category: 'insurance' },
+  ], '2026-08-10');
+  assert.equal(totalReward, 5000, 'a 5,000/day cap would have allowed 7,000');
+});
+
+test('an older stored Diners rule set still gets the insurance monthly cap and grocery credit timing', () => {
+  const legacy = dinersCard({
+    strategyParamsHistory: [{
+      effectiveFrom: '2026-01-01',
+      params: {
+        ...CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone,
+        categories: CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone.categories.map(({ monthlyCapAmount, creditOn, ...rest }) => rest),
+      },
+    }],
+  });
+  const ledger = computeCardRewardLedger(legacy, [{ id: 'g', cardId: 'd1', date: '2026-08-15', amount: 1500, category: 'grocery' }], '2026-09-05');
+  assert.equal(ledger.credited, 50, 'grocery points for August land on 2026-09-01');
+});
+
+test('credit dates: Diners statement day, HSBC Live+ +2 days, Axis 2 days before the next statement', () => {
+  assert.equal(getRewardCreditDate({ rewardStrategy: 'hdfc_diners_slab_milestone', billingCycleDay: 10 }, '2026-09-10'), '2026-09-10');
+  assert.equal(getRewardCreditDate({ rewardStrategy: 'hsbc_tiered_cashback_aggregate', billingCycleDay: 10 }, '2026-09-10'), '2026-09-12');
+  assert.equal(getRewardCreditDate({ rewardStrategy: 'axis_supermoney_dual_pool', billingCycleDay: 10 }, '2026-09-10'), '2026-10-08');
+});
+
+test('Diners grocery points credit together on the 1st of the next month, the rest on the statement date', () => {
+  const card = dinersCard();
+  const txns = [
+    { id: 'g', cardId: 'd1', date: '2026-08-15', amount: 1500, category: 'grocery' }, // 50 pts
+    { id: 'r', cardId: 'd1', date: '2026-08-16', amount: 1500, category: 'regular' }, // 50 pts
+  ];
+  const before = computeCardRewardLedger(card, txns, '2026-08-31');
+  assert.equal(before.credited, 0);
+  assert.deepEqual(before.pending, [{ date: '2026-09-01', amount: 50 }, { date: '2026-09-10', amount: 50 }]);
+  const mid = computeCardRewardLedger(card, txns, '2026-09-01');
+  assert.equal(mid.credited, 50, 'only the grocery points on the 1st');
+  const after = computeCardRewardLedger(card, txns, '2026-09-10');
+  assert.equal(after.credited, 100);
+  assert.deepEqual(after.pending, []);
+});
+
+test('reward ledger applies caps per statement, not across the card lifetime', () => {
+  const card = {
+    id: 's1', rewardStrategy: 'sbi_two_channel_cashback', billingCycleDay: 10,
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }],
+  };
+  // ₹2,000 online cap per cycle: 5% of 50,000 = 2,500 raw each cycle -> 2,000 in each of two cycles.
+  const txns = [
+    { id: 'a', cardId: 's1', date: '2026-07-15', amount: 50000, channel: 'online' },
+    { id: 'b', cardId: 's1', date: '2026-08-15', amount: 50000, channel: 'online' },
+  ];
+  assert.equal(computeCardRewardLedger(card, txns, '2026-12-31').total, 4000);
+});
+
+test('quarterly milestone counts spend made before the card was tracked, for that quarter only', () => {
+  const starting = { spend: 390000, quarterStart: '2026-07-01' };
+  const txns = [{ cardId: 'd1', date: '2026-08-05', amount: 20000 }];
+  assert.equal(computeQuarterlyMilestoneBonusEarned(txns, 'd1', 400000, 10000, '2026-09-20', starting), 10000);
+  assert.equal(computeQuarterlyMilestoneBonusEarned(txns, 'd1', 400000, 10000, '2026-09-20'), 0);
+  assert.equal(computeQuarterlyMilestoneBonusEarned(txns, 'd1', 400000, 10000, '2026-09-20', { spend: 390000, quarterStart: '2026-04-01' }), 0);
 });

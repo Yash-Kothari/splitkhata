@@ -3,6 +3,7 @@ import { View, Text, TextInput, Pressable, Modal, ScrollView, Alert, Switch, use
 import { useColorScheme } from 'nativewind';
 import PickerField from './PickerField';
 import DateField from './DateField';
+import CustomSplitEditor from './CustomSplitEditor';
 import {
   subscribeToExpenses,
   subscribeToCategories,
@@ -53,6 +54,9 @@ import {
   DEFAULT_CURRENCIES,
   DEFAULT_PERSONS,
   INSTRUMENT_TYPES,
+  getQuarterBounds,
+  checkCustomSharesTotal,
+  parseCustomShares,
   getUnlinkedCards,
   normalizeInstrumentType,
   toCsv,
@@ -128,6 +132,7 @@ const RULE_SPLIT_TYPE_OPTIONS = [
   { value: 'shared', label: 'Split' },
   { value: 'owed', label: 'Owed in full' },
   { value: 'personal', label: 'Personal' },
+  { value: 'custom', label: 'Custom amounts' },
 ];
 const CAP_PERIOD_OPTIONS = [
   { value: '', label: 'No cap' },
@@ -362,6 +367,8 @@ export default function SettingsModal({ visible, onClose }) {
   const [newRulePayer, setNewRulePayer] = useState('');
   const [newRuleSplitType, setNewRuleSplitType] = useState('shared');
   const [newRuleOwedBy, setNewRuleOwedBy] = useState('');
+  const [newRuleShares, setNewRuleShares] = useState({});
+  const newRuleSharesInvalid = newRuleSplitType === 'custom' && !checkCustomSharesTotal(newRuleShares, Number(newRuleAmount) || 0).ok;
   const [newRuleNote, setNewRuleNote] = useState('');
   const [addingRule, setAddingRule] = useState(false);
   const [ruleMessage, setRuleMessage] = useState('');
@@ -383,6 +390,7 @@ export default function SettingsModal({ visible, onClose }) {
         payer: newRulePayer || dbMembers[0] || '',
         splitType: newRuleSplitType,
         owedBy: newRuleSplitType === 'owed' ? newRuleOwedBy : null,
+        splitShares: newRuleSplitType === 'custom' ? parseCustomShares(newRuleShares) : null,
         note: newRuleNote.trim(),
         dayOfMonth: Math.min(Math.max(1, Math.round(Number(newRuleDay)) || 1), 31),
         active: true,
@@ -394,6 +402,7 @@ export default function SettingsModal({ visible, onClose }) {
       setNewRuleAmount('');
       setNewRuleDay('1');
       setNewRuleNote('');
+      setNewRuleShares({});
       setRuleMessage(`Added - this month's ${rule.category} entry will be created automatically.`);
     } catch (err) {
       setRuleMessage(`Failed to save: ${err?.message || err}`);
@@ -559,6 +568,7 @@ export default function SettingsModal({ visible, onClose }) {
   const [newCardDueOffset, setNewCardDueOffset] = useState('20');
   const [newCardAnnualAnchorMonth, setNewCardAnnualAnchorMonth] = useState('1');
   const [newCardAnnualStartingSpend, setNewCardAnnualStartingSpend] = useState('0');
+  const [newCardQuarterlyStartingSpend, setNewCardQuarterlyStartingSpend] = useState('0');
   const [newCardStartingPoints, setNewCardStartingPoints] = useState('0');
   const [addingCard, setAddingCard] = useState(false);
   const [cardMessage, setCardMessage] = useState('');
@@ -616,12 +626,19 @@ export default function SettingsModal({ visible, onClose }) {
         dueDateOffsetDays: Math.max(0, Math.round(Number(newCardDueOffset)) || 0),
         annualMilestoneAnchorMonth: Math.min(12, Math.max(1, Math.round(Number(newCardAnnualAnchorMonth)) || 1)),
         annualMilestoneStartingSpend: Math.max(0, Number(newCardAnnualStartingSpend) || 0),
+        ...(CARD_STRATEGY_DEFAULTS[newCardStrategy]?.quarterlyMilestoneTarget
+          ? {
+              quarterlyMilestoneStartingSpend: Math.max(0, Number(newCardQuarterlyStartingSpend) || 0),
+              quarterlyMilestoneStartingQuarter: getQuarterBounds(todayISO()).quarterStart,
+            }
+          : {}),
         startingRewardPoints: CARD_REWARD_STRATEGIES.find((s) => s.key === newCardStrategy)?.unit === 'points'
           ? Math.max(0, Number(newCardStartingPoints) || 0)
           : 0,
         active: true,
       });
       setNewCardMethodName('');
+      setNewCardQuarterlyStartingSpend('0');
       setCardMessage(`${trimmed} added.`);
       setShowAddCardForm(false);
     } catch (err) {
@@ -640,6 +657,9 @@ export default function SettingsModal({ visible, onClose }) {
       dueDateOffsetDays: String(card.dueDateOffsetDays ?? 20),
       annualMilestoneAnchorMonth: String(card.annualMilestoneAnchorMonth ?? 1),
       annualMilestoneStartingSpend: String(card.annualMilestoneStartingSpend ?? 0),
+      quarterlyMilestoneStartingSpend: String(
+        card.quarterlyMilestoneStartingQuarter === getQuarterBounds(todayISO()).quarterStart ? card.quarterlyMilestoneStartingSpend ?? 0 : 0,
+      ),
       startingRewardPoints: String(card.startingRewardPoints ?? 0),
     });
   }
@@ -652,6 +672,12 @@ export default function SettingsModal({ visible, onClose }) {
         dueDateOffsetDays: Math.max(0, Math.round(Number(editCardDrafts.dueDateOffsetDays)) || 0),
         annualMilestoneAnchorMonth: Math.min(12, Math.max(1, Math.round(Number(editCardDrafts.annualMilestoneAnchorMonth)) || 1)),
         annualMilestoneStartingSpend: Math.max(0, Number(editCardDrafts.annualMilestoneStartingSpend) || 0),
+        ...(CARD_STRATEGY_DEFAULTS[strategyKey]?.quarterlyMilestoneTarget
+          ? {
+              quarterlyMilestoneStartingSpend: Math.max(0, Number(editCardDrafts.quarterlyMilestoneStartingSpend) || 0),
+              quarterlyMilestoneStartingQuarter: getQuarterBounds(todayISO()).quarterStart,
+            }
+          : {}),
         startingRewardPoints: isPointsCard ? Math.max(0, Number(editCardDrafts.startingRewardPoints) || 0) : 0,
       });
       setEditingCardId(null);
@@ -816,8 +842,8 @@ export default function SettingsModal({ visible, onClose }) {
                   placeholder={`New ${categoryLedger} category name...`}
                   className={`${input} flex-1 mb-0`}
                 />
-                <Pressable onPress={handleAddCategory} disabled={addingCat || !newCatName.trim()} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
-                  <Text className="font-body-semibold text-white text-sm">{addingCat ? 'Saving...' : 'Add'}</Text>
+                <Pressable onPress={handleAddCategory} disabled={addingCat || !newCatName.trim()} className="min-h-12 px-6 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                  <Text className="font-body-semibold text-white text-base">{addingCat ? 'Saving...' : 'Add'}</Text>
                 </Pressable>
               </View>
 
@@ -854,9 +880,9 @@ export default function SettingsModal({ visible, onClose }) {
                     <Pressable
                       onPress={handleAddBudget}
                       disabled={!newBudgetCategory || !newBudgetAmount || savingBudgetCat === newBudgetCategory}
-                      className="px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+                      className="min-h-12 px-6 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
                     >
-                      <Text className="font-body-semibold text-white text-sm">Add</Text>
+                      <Text className="font-body-semibold text-white text-base">Add</Text>
                     </Pressable>
                   </View>
                 </>
@@ -948,12 +974,15 @@ export default function SettingsModal({ visible, onClose }) {
                     <PickerField label="Owed by" value={newRuleOwedBy || 'Owed by...'} options={dbMembers.filter((m) => m !== newRulePayer)} onChange={setNewRuleOwedBy} />
                   </View>
                 )}
+                {newRuleSplitType === 'custom' && (
+                  <CustomSplitEditor members={dbMembers} total={Number(newRuleAmount) || 0} shares={newRuleShares} onChange={setNewRuleShares} />
+                )}
                 <View className="mt-3">
                   <Text className={label}>Note (optional)</Text>
                   <TextInput value={newRuleNote} onChangeText={setNewRuleNote} placeholder="e.g. Rent" className={input} />
                 </View>
 
-                <Pressable onPress={handleAddRule} disabled={addingRule || !newRuleCategory || !newRuleAmount} className="mt-3 min-h-10 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                <Pressable onPress={handleAddRule} disabled={addingRule || !newRuleCategory || !newRuleAmount || newRuleSharesInvalid} className="mt-3 min-h-10 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
                   <Text className="font-body-semibold text-white text-sm">{addingRule ? 'Saving...' : 'Add Recurring Rule'}</Text>
                 </Pressable>
                 {ruleMessage ? <Text className="font-body text-xs text-muted-text mt-3">{ruleMessage}</Text> : null}
@@ -1031,8 +1060,8 @@ export default function SettingsModal({ visible, onClose }) {
                   className={`${input} flex-1 mb-0 uppercase`}
                   autoCapitalize="characters"
                 />
-                <Pressable onPress={handleAddCurrency} disabled={addingCurr || !newCurrencyName.trim()} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
-                  <Text className="font-body-semibold text-white text-sm">{addingCurr ? 'Saving...' : 'Add Currency'}</Text>
+                <Pressable onPress={handleAddCurrency} disabled={addingCurr || !newCurrencyName.trim()} className="min-h-12 px-6 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                  <Text className="font-body-semibold text-white text-base">{addingCurr ? 'Saving...' : 'Add Currency'}</Text>
                 </Pressable>
               </View>
               <Text className={activeListCaption}>Active Database Currencies ({currencies.currencies.length})</Text>
@@ -1065,9 +1094,9 @@ export default function SettingsModal({ visible, onClose }) {
                 <Pressable
                   onPress={handleAddPaymentMethod}
                   disabled={addingPaymentMethod || !newPaymentMethodName.trim()}
-                  className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+                  className="min-h-12 px-6 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
                 >
-                  <Text className="font-body-semibold text-white text-sm">{addingPaymentMethod ? 'Saving...' : 'Add'}</Text>
+                  <Text className="font-body-semibold text-white text-base">{addingPaymentMethod ? 'Saving...' : 'Add'}</Text>
                 </Pressable>
               </View>
               <View className="flex-row flex-wrap mb-3" style={{ gap: 8 }}>
@@ -1237,6 +1266,12 @@ export default function SettingsModal({ visible, onClose }) {
                         <Text className={label}>Spend already counted this period (₹)</Text>
                         <TextInput value={newCardAnnualStartingSpend} onChangeText={setNewCardAnnualStartingSpend} keyboardType="decimal-pad" placeholder="0" className={input} />
                       </View>
+                      {CARD_STRATEGY_DEFAULTS[newCardStrategy]?.quarterlyMilestoneTarget ? (
+                        <View className="w-full sm:w-[calc(50%-6px)]">
+                          <Text className={label}>Spend already counted this quarter (₹)</Text>
+                          <TextInput value={newCardQuarterlyStartingSpend} onChangeText={setNewCardQuarterlyStartingSpend} keyboardType="decimal-pad" placeholder="0" className={input} />
+                        </View>
+                      ) : null}
                       {CARD_REWARD_STRATEGIES.find((s) => s.key === newCardStrategy)?.unit === 'points' && (
                         <View className="w-full sm:w-[calc(50%-6px)]">
                           <Text className={label}>Starting reward points balance</Text>
@@ -1312,6 +1347,12 @@ export default function SettingsModal({ visible, onClose }) {
                               <Text className={label}>Spend counted so far (₹)</Text>
                               <TextInput value={editCardDrafts.annualMilestoneStartingSpend} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, annualMilestoneStartingSpend: v }))} keyboardType="decimal-pad" className={input} />
                             </View>
+                            {CARD_STRATEGY_DEFAULTS[card.rewardStrategy]?.quarterlyMilestoneTarget ? (
+                              <View className="w-full sm:w-[calc(33.333%-5.333px)]">
+                                <Text className={label}>Quarter spend counted so far (₹)</Text>
+                                <TextInput value={editCardDrafts.quarterlyMilestoneStartingSpend} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, quarterlyMilestoneStartingSpend: v }))} keyboardType="decimal-pad" className={input} />
+                              </View>
+                            ) : null}
                             {strategyMeta?.unit === 'points' && (
                               <View className="w-full sm:w-[calc(33.333%-5.333px)]">
                                 <Text className={label}>Starting points balance</Text>
@@ -1464,8 +1505,8 @@ export default function SettingsModal({ visible, onClose }) {
               <Text className="font-body text-xs text-muted-text mb-3">Persons/Partners in your household ledger. Stored dynamically in database.</Text>
               <View className="flex-row gap-2 mb-3">
                 <TextInput value={newMemberName} onChangeText={setNewMemberName} placeholder="New Member Name..." className={`${input} flex-1 mb-0`} />
-                <Pressable onPress={handleAddMember} disabled={addingMember || !newMemberName.trim()} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
-                  <Text className="font-body-semibold text-white text-sm">{addingMember ? 'Saving...' : 'Add Member'}</Text>
+                <Pressable onPress={handleAddMember} disabled={addingMember || !newMemberName.trim()} className="min-h-12 px-6 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                  <Text className="font-body-semibold text-white text-base">{addingMember ? 'Saving...' : 'Add Member'}</Text>
                 </Pressable>
               </View>
               <Text className={activeListCaption}>Active Database Members ({dbMembers.length})</Text>
@@ -1593,7 +1634,12 @@ export default function SettingsModal({ visible, onClose }) {
                   <Switch
                     value={pinConfig.enabled}
                     onValueChange={(v) => handleSavePinConfig(v)}
-                    trackColor={{ true: colorScheme === 'dark' ? '#4FB3A0' : '#3D7068' }}
+                    trackColor={{
+                      false: colorScheme === 'dark' ? '#5A6885' : '#C9C5B8',
+                      true: colorScheme === 'dark' ? '#4FB3A0' : '#3D7068',
+                    }}
+                    thumbColor={colorScheme === 'dark' ? '#EDE6D3' : '#FFFFFF'}
+                    ios_backgroundColor={colorScheme === 'dark' ? '#5A6885' : '#C9C5B8'}
                   />
                 </View>
 
@@ -1607,9 +1653,10 @@ export default function SettingsModal({ visible, onClose }) {
                       keyboardType="number-pad"
                       secureTextEntry
                       maxLength={4}
-                      className="flex-1 font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3.5 py-2.5 bg-paper tracking-widest"
+                      className="flex-1 min-w-0 font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3.5 py-2.5 bg-paper tracking-widest"
+                      style={{ minWidth: 0 }}
                     />
-                    <Pressable onPress={() => handleSavePinConfig()} disabled={newPin.length !== 4} className="min-h-11 px-5 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                    <Pressable onPress={() => handleSavePinConfig()} disabled={newPin.length !== 4} className="min-h-12 px-5 shrink-0 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
                       <Text className="font-body-semibold text-white text-sm">Save PIN</Text>
                     </Pressable>
                   </View>

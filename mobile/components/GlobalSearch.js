@@ -66,6 +66,7 @@ export default function GlobalSearch({ visible, onClose }) {
               placeholder="Search all entries - any ledger, any trip..."
               autoFocus
               className="flex-1 font-body text-sm text-ink"
+              style={{ outlineStyle: 'none' }}
             />
             <Pressable onPress={onClose} hitSlop={8} className="w-8 h-8 rounded-full border border-ink/15 bg-paper items-center justify-center shrink-0">
               <Text className="font-body-semibold text-ink">✕</Text>

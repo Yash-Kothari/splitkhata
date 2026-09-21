@@ -205,6 +205,13 @@ export default function AddEntryForm({
       if (parsed.category && categories.includes(parsed.category)) setCategory(parsed.category);
       if (parsed.payer && membersList.includes(parsed.payer)) setPayer(parsed.payer);
       if (parsed.splitType) setSplitType(parsed.splitType);
+      if (parsed.splitType === 'custom' && Array.isArray(parsed.splitShares)) {
+        setCustomShares(
+          Object.fromEntries(
+            parsed.splitShares.filter((s) => membersList.includes(s.person) && Number(s.amount) > 0).map((s) => [s.person, String(s.amount)]),
+          ),
+        );
+      }
       if (parsed.splitType === 'owed' && parsed.owedBy && membersList.includes(parsed.owedBy)) {
         setOwedBy(parsed.owedBy);
       }

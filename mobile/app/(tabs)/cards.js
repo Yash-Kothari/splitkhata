@@ -11,13 +11,12 @@ import {
   formatCurrency,
   getCardCycleForDate,
   getTransactionsInCycle,
-  computeCardCycleReward,
-  resolveStrategyParamsForDate,
+  computeCardRewardLedger,
+  resolveCardParams,
   computeCardMilestoneProgress,
   computeQuarterlyMilestoneBonusEarned,
   getAnnualMilestoneWindow,
   computeCardCapStatus,
-  applyRewardOverrides,
   getQuarterBounds,
 } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
@@ -75,24 +74,30 @@ export default function Cards() {
   const today = todayISO();
   const currentCycle = selectedCard ? getCardCycleForDate(today, selectedCard.billingCycleDay ?? 1) : null;
   const currentCycleTxns = currentCycle ? getTransactionsInCycle(cardTxns, selectedCard.id, currentCycle.cycleStart, currentCycle.cycleEnd) : [];
-  const currentCycleReward = selectedCard
-    ? applyRewardOverrides(computeCardCycleReward(selectedCard, currentCycleTxns, currentCycle.cycleStart), currentCycleTxns, selectedCard, currentCycle.cycleStart)
-    : { totalReward: 0, unit: 'inr' };
+  // Everything is computed statement by statement (caps and the Diners slab
+  // remainder carry per cycle), with each reward placed on the day it is
+  // actually credited - see computeCardRewardLedger.
+  const ledger = selectedCard
+    ? computeCardRewardLedger(selectedCard, cardTxns, today)
+    : { total: 0, credited: 0, pending: [], cycleRewards: {}, unit: 'inr' };
+  const currentCycleReward = ledger.cycleRewards[currentCycle?.cycleStart] || { totalReward: 0, unit: ledger.unit, perTransaction: [] };
   const currentCycleSpend = currentCycleTxns.reduce((s, t) => s + t.amount, 0);
-  const lifetimeReward = selectedCard
-    ? applyRewardOverrides(computeCardCycleReward(selectedCard, cardTxns, today), cardTxns, selectedCard, today)
-    : { totalReward: 0, unit: 'inr' };
   const lifetimePointsRedeemed = cardTxns.reduce((s, t) => s + (t.pointsRedeemed || 0), 0);
-  const params = selectedCard ? resolveStrategyParamsForDate(selectedCard.strategyParamsHistory, today) : {};
+  const params = selectedCard ? resolveCardParams(selectedCard, today) : {};
   // Quarterly milestone bonuses (e.g. Diners' 10,000 pts at ₹4L/quarter) are
   // a separate lump sum on top of computeCardCycleReward's per-cycle math -
   // see computeQuarterlyMilestoneBonusEarned for why they can't live inside
   // that function.
+  const quarterlyStarting = {
+    spend: selectedCard?.quarterlyMilestoneStartingSpend || 0,
+    quarterStart: selectedCard?.quarterlyMilestoneStartingQuarter || null,
+  };
   const quarterlyBonusEarned = selectedCard
-    ? computeQuarterlyMilestoneBonusEarned(cardTxns, selectedCard.id, params.quarterlyMilestoneTarget, params.quarterlyMilestoneBonus, today)
+    ? computeQuarterlyMilestoneBonusEarned(cardTxns, selectedCard.id, params.quarterlyMilestoneTarget, params.quarterlyMilestoneBonus, today, quarterlyStarting)
     : 0;
+  // Only rewards already credited count as "in account"; the rest is shown as pending with its date.
   const lifetimeRewardTotal =
-    (selectedCard?.startingRewardPoints || 0) + lifetimeReward.totalReward + quarterlyBonusEarned - lifetimePointsRedeemed;
+    (selectedCard?.startingRewardPoints || 0) + ledger.credited + quarterlyBonusEarned - lifetimePointsRedeemed;
 
   const { quarterStart, quarterEnd } = getQuarterBounds(today);
   const { periodStart: annualPeriodStart, periodEnd: annualPeriodEnd } = getAnnualMilestoneWindow(
@@ -100,7 +105,14 @@ export default function Cards() {
     today,
   );
   const quarterlyMilestone = params.quarterlyMilestoneTarget
-    ? computeCardMilestoneProgress(cardTxns, selectedCard.id, quarterStart, quarterEnd, params.quarterlyMilestoneTarget)
+    ? computeCardMilestoneProgress(
+        cardTxns,
+        selectedCard.id,
+        quarterStart,
+        quarterEnd,
+        params.quarterlyMilestoneTarget,
+        quarterlyStarting.quarterStart === quarterStart ? quarterlyStarting.spend : 0,
+      )
     : null;
   const annualMilestone = params.annualMilestoneTarget
     ? computeCardMilestoneProgress(
@@ -191,7 +203,7 @@ export default function Cards() {
                       txn={txn}
                       card={selectedCard}
                       cardTxns={cardTxns}
-                      cycleReward={txn.date >= currentCycle.cycleStart && txn.date < currentCycle.cycleEnd ? currentCycleReward : null}
+                      cycleReward={ledger.cycleRewards[getCardCycleForDate(txn.date, selectedCard.billingCycleDay ?? 1).cycleStart] || null}
                       onDelete={handleDelete}
                       isLast={i === filteredTxns.length - 1}
                     />
@@ -223,12 +235,25 @@ export default function Cards() {
                 </View>
                 <View className="rounded-xl bg-ledger-green/10 px-3.5 py-2.5 mb-3">
                   <Text className="font-body-semibold text-2xs text-ledger-green uppercase tracking-wider">
-                    Total reward points in account
+                    {currentCycleReward.unit === 'points' ? 'Total reward points in account' : 'Total cashback in account'}
                   </Text>
                   <Text className="font-mono-bold text-ledger-green text-2xl">
                     {formatReward(lifetimeRewardTotal, currentCycleReward.unit)}
                   </Text>
                 </View>
+                {ledger.pending.length > 0 && (
+                  <View className="rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5 mb-3">
+                    <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider mb-1">Still to be credited</Text>
+                    {ledger.pending.map((p) => (
+                      <View key={p.date} className="flex-row items-center justify-between">
+                        <Text className="font-body text-xs text-muted-text">
+                          {new Date(`${p.date}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                        </Text>
+                        <Text className="font-mono-bold text-xs text-ink">{formatReward(p.amount, ledger.unit)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
                 <View className="flex-row gap-3">
                   <View className="flex-1">
                     <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Spent so far</Text>

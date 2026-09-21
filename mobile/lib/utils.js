@@ -679,8 +679,17 @@ export function buildQuickAddSchema({ categories, members, paymentMethods = [], 
     amount: { type: 'number', description: 'The expense amount as a plain number, no currency symbol.' },
     category: { type: 'string', enum: categories },
     payer: { type: 'string', enum: members },
-    splitType: { type: 'string', enum: ['shared', 'personal', 'owed'] },
+    splitType: { type: 'string', enum: ['shared', 'personal', 'owed', 'custom'] },
     owedBy: { type: 'string', enum: members },
+    splitShares: {
+      type: 'array',
+      description: 'Only for splitType "custom": each person and the amount of the total that is theirs.',
+      items: {
+        type: 'object',
+        properties: { person: { type: 'string', enum: members }, amount: { type: 'number' } },
+        required: ['person', 'amount'],
+      },
+    },
     note: { type: 'string' },
     date: { type: 'string', description: 'ISO date YYYY-MM-DD, resolved from any relative date mentioned (e.g. yesterday).' },
   };
@@ -702,6 +711,7 @@ Rules:
 - payer: who paid, from the allowed list of people (${members.join(', ')}). If not mentioned, default to ${members[0]}.
 - splitType: "shared" if the cost is split between everyone (the default for most expenses), "personal" if it's explicitly just for the payer alone, "owed" if one specific other person owes the full amount back.
 - owedBy: only set this when splitType is "owed" - who owes the money back. Must be different from payer.
+- "custom" is for when the text gives each person's own amount (e.g. "15 total, 5 mine and 10 Priya's") - then set splitType to "custom" and list every person's amount in splitShares, adding up to the total. Otherwise leave splitShares out.
 - date: resolve any relative date mentioned (e.g. "yesterday", "last Monday") against today's date, in YYYY-MM-DD format. Default to today if no date is mentioned.
 - note: a short cleaned-up description of what the expense was for.`;
 }
@@ -1492,6 +1502,7 @@ export function computeRecurringEntriesToGenerate(rules, currentMonthKey) {
         splitType: rule.splitType,
         owedBy: rule.splitType === 'owed' ? rule.owedBy : null,
         splitAmong: null,
+        splitShares: rule.splitType === 'custom' ? rule.splitShares || null : null,
         note: rule.note || '',
         date: buildRecurringEntryDate(monthKey, rule.dayOfMonth),
         ledger: 'household',
@@ -1692,9 +1703,11 @@ export const CARD_STRATEGY_DEFAULTS = {
       { key: 'regular', label: 'Regular', multiplier: 1, capAmount: null, capPeriod: null },
       { key: 'weekend_dining', label: 'Weekend Dining', multiplier: 2, capAmount: 1000, capPeriod: 'day' },
       { key: 'smartbuy_hotel', label: 'Smartbuy Booking', multiplier: 10, capAmount: 10000, capPeriod: 'month' },
-      { key: 'grocery', label: 'Grocery', multiplier: 1, capAmount: 2000, capPeriod: 'month' },
+      // creditOn: this category's points for a whole calendar month land together on the 1st of the next month, not with the statement.
+      { key: 'grocery', label: 'Grocery', multiplier: 1, capAmount: 2000, capPeriod: 'month', creditOn: 'first_of_next_month' },
       { key: 'utility', label: 'Utility', multiplier: 1, capAmount: 2000, capPeriod: 'month' },
-      { key: 'insurance', label: 'Insurance', multiplier: 1, capAmount: 5000, capPeriod: 'day' },
+      // Since 1 July 2025 HDFC caps insurance points at 5,000 a month (it used to be a per-day cap).
+      { key: 'insurance', label: 'Insurance', multiplier: 1, capAmount: 5000, capPeriod: 'month' },
       { key: 'excluded', label: 'Excluded (Fuel / EMI / Rent / Govt / Cash Advance / Card Fee / Wallet)', multiplier: 0, capAmount: null, capPeriod: null },
     ],
     cycleCap: 75000,
@@ -1734,6 +1747,21 @@ export const CARD_STRATEGY_DEFAULTS = {
     annualMilestoneTarget: null,
     annualMilestoneLabel: '',
   },
+};
+
+// When each card's reward actually lands in the account, relative to the
+// statement date (the day a billing cycle closes): "statement" + offset, or
+// "next_statement" + offset for a card that credits against the following
+// month's statement. Not editable params - these are fixed by each bank's
+// terms, and a numeric-only params form has no place for a basis string.
+export const CARD_CREDIT_TIMING = {
+  hdfc_diners_slab_milestone: { basis: 'statement', offsetDays: 0 },
+  sbi_two_channel_cashback: { basis: 'statement', offsetDays: 0 },
+  // HSBC Live+ cashback posts on the 2nd day after the statement is generated.
+  hsbc_tiered_cashback_aggregate: { basis: 'statement', offsetDays: 2 },
+  // Axis cashback posts 2 days before the next month's statement is generated.
+  axis_supermoney_dual_pool: { basis: 'next_statement', offsetDays: -2 },
+  hsbc_premier_flat_capped: { basis: 'statement', offsetDays: 0 },
 };
 
 function daysInMonth(year, month) {
@@ -1835,27 +1863,44 @@ export function computeDinersCycleReward(params, transactions) {
   const regularCategory = categoriesByKey.regular || categories[0] || fallbackCategory;
   const dayTotals = {};
   const monthTotals = {};
+  const monthlyExtraTotals = {};
   let cycleTotal = 0;
   const perTransaction = [];
 
   const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
   for (const txn of sorted) {
     const category = categoriesByKey[txn.category] || regularCategory;
-    const basePoints = Math.floor(txn.amount / params.unitAmount) * params.pointsPerUnit;
     // SmartBuy's real accelerated rate varies by what's actually booked
     // (hotels earn more than flights, for example), so a transaction can
     // carry its own multiplier instead of always using the category's
     // default - falls back to the category's fixed rate when not set, so
     // existing transactions are unaffected.
     const effectiveMultiplier = txn.travelMultiplier != null ? txn.travelMultiplier : category.multiplier;
+    const basePoints = Math.floor(txn.amount / params.unitAmount) * params.pointsPerUnit;
     let earned = basePoints * effectiveMultiplier;
 
+    // A category can carry a primary cap (per day or per month) and, on top,
+    // a separate monthly cap (insurance: 5,000 a day AND 5,000 a month).
+    // Both have to allow the points, and each bucket is charged only what
+    // was actually earned after every limit was applied.
+    let allowed = Infinity;
+    let dayOrMonthBucket = null;
     if (category.capAmount != null) {
       const bucketKey = category.capPeriod === 'day' ? `${category.key}|${txn.date}` : `${category.key}|${getMonthKey(txn.date)}`;
       const bucketTotals = category.capPeriod === 'day' ? dayTotals : monthTotals;
-      const already = bucketTotals[bucketKey] || 0;
-      earned = applyCycleCap(earned, already, category.capAmount);
-      bucketTotals[bucketKey] = already + earned;
+      dayOrMonthBucket = { bucketKey, bucketTotals };
+      allowed = Math.min(allowed, category.capAmount - (bucketTotals[bucketKey] || 0));
+    }
+    const extraKey = `${category.key}|${getMonthKey(txn.date)}`;
+    if (category.monthlyCapAmount != null) {
+      allowed = Math.min(allowed, category.monthlyCapAmount - (monthlyExtraTotals[extraKey] || 0));
+    }
+    earned = Math.max(0, Math.min(earned, allowed));
+    if (dayOrMonthBucket) {
+      dayOrMonthBucket.bucketTotals[dayOrMonthBucket.bucketKey] = (dayOrMonthBucket.bucketTotals[dayOrMonthBucket.bucketKey] || 0) + earned;
+    }
+    if (category.monthlyCapAmount != null) {
+      monthlyExtraTotals[extraKey] = (monthlyExtraTotals[extraKey] || 0) + earned;
     }
 
     earned = applyCycleCap(earned, cycleTotal, params.cycleCap);
@@ -2065,6 +2110,31 @@ export function resolveStrategyParamsForDate(strategyParamsHistory, date) {
   return active.params || {};
 }
 
+// A card's stored rule versions predate newer fields (Diners' insurance
+// monthly cap, grocery credit timing), so fill any category field a stored
+// version never set from the current defaults - never overriding a value the
+// version does have.
+export function resolveCardParams(card, date) {
+  const params = resolveStrategyParamsForDate(card?.strategyParamsHistory, date);
+  const defaults = CARD_STRATEGY_DEFAULTS[card?.rewardStrategy];
+  if (!defaults?.categories || !params.categories) return params;
+  const defaultByKey = Object.fromEntries(defaults.categories.map((c) => [c.key, c]));
+  return {
+    ...params,
+    categories: params.categories.map((c) => {
+      const d = defaultByKey[c.key] || {};
+      // A rule set saved before HDFC moved insurance to a monthly cap.
+      const legacyInsurance = c.key === 'insurance' && c.capPeriod === 'day' && date >= '2025-07-01';
+      return {
+        ...c,
+        ...(legacyInsurance ? { capPeriod: 'month' } : {}),
+        ...(c.monthlyCapAmount === undefined && d.monthlyCapAmount !== undefined ? { monthlyCapAmount: d.monthlyCapAmount } : {}),
+        ...(c.creditOn === undefined && d.creditOn !== undefined ? { creditOn: d.creditOn } : {}),
+      };
+    }),
+  };
+}
+
 // Single entry point the UI calls - dispatches on the card's chosen
 // strategy so callers never need a switch of their own. `asOfDate` picks
 // which dated rule version applies (defaults to today); callers computing a
@@ -2072,7 +2142,7 @@ export function resolveStrategyParamsForDate(strategyParamsHistory, date) {
 // cycle is evaluated under the one rule that was active when it opened,
 // even if the card's rules have since been revised.
 export function computeCardCycleReward(card, cycleTransactions, asOfDate) {
-  const params = resolveStrategyParamsForDate(card?.strategyParamsHistory, asOfDate ?? todayISO());
+  const params = resolveCardParams(card, asOfDate ?? todayISO());
   switch (card?.rewardStrategy) {
     case 'hdfc_diners_slab_milestone':
       return computeDinersCycleReward(params, cycleTransactions);
@@ -2117,6 +2187,7 @@ const DINERS_CATEGORY_KEYWORDS = {
 };
 const SBI_EXCLUDED_KEYWORDS = ['fuel', 'gaming', 'toll', 'government', 'govt', 'wallet', 'rent', 'jewellery', 'jewelry', 'education', 'utility', 'insurance', 'gift', 'railway', 'emi'];
 const HSBC_LIVE_EXCLUDED_KEYWORDS = ['rent', 'fuel', 'insurance', 'education', 'government', 'govt', 'wallet', 'financial institution', 'money transfer', 'jewellery', 'jewelry', 'toll', 'gambling', 'hospital', 'wholesale', 'international', 'forex', 'emi'];
+const HSBC_LIVE_NON_BONUS_KEYWORDS = ['amazon', 'flipkart', 'myntra', 'travel', 'flight', 'hotel', 'airline'];
 const HSBC_LIVE_BONUS_KEYWORDS = ['dining', 'eating out', 'restaurant', 'food delivery', 'grocery', 'groceries', 'shopping', 'utility', 'utilities'];
 const AXIS_EXCLUDED_KEYWORDS = ['repayment', 'utility', 'utilities', 'fuel', 'jewellery', 'jewelry', 'cash withdrawal', 'wallet', 'insurance', 'education', 'government', 'govt', 'financial institution', 'rent', 'emi', 'telecom', 'mobile bill', 'phone bill'];
 const HSBC_PREMIER_FUEL_KEYWORDS = ['fuel', 'petrol', 'diesel'];
@@ -2147,7 +2218,9 @@ export function inferCardRewardFields(card, householdCategory, params) {
       return { channel: categoryNameMatches(name, SBI_EXCLUDED_KEYWORDS) ? 'excluded' : 'online' };
     case 'hsbc_tiered_cashback_aggregate':
       if (categoryNameMatches(name, HSBC_LIVE_EXCLUDED_KEYWORDS)) return { channel: 'excluded', isBonusEligible: false };
-      return { channel: null, isBonusEligible: categoryNameMatches(name, HSBC_LIVE_BONUS_KEYWORDS) };
+      // 10% is the default - only a category that's clearly outside the bonus
+      // tier (travel, or the marketplaces HSBC carves out) falls to 1.5%.
+      return { channel: null, isBonusEligible: !categoryNameMatches(name, HSBC_LIVE_NON_BONUS_KEYWORDS) };
     case 'axis_supermoney_dual_pool':
       if (categoryNameMatches(name, AXIS_EXCLUDED_KEYWORDS)) return { channel: 'excluded', isBonusEligible: false };
       return { channel: null, isBonusEligible: true };
@@ -2242,17 +2315,25 @@ export function computeCardMilestoneProgress(transactions, cardId, periodStart, 
 // folding it into computeDinersCycleReward. Was previously rendered as text
 // next to the progress bar and never added to any total - the bank pays it,
 // the app just wasn't counting it.
-export function computeQuarterlyMilestoneBonusEarned(transactions, cardId, target, bonus, asOfDate) {
+export function computeQuarterlyMilestoneBonusEarned(transactions, cardId, target, bonus, asOfDate, starting = {}) {
   if (!target || !bonus) return 0;
   const cardTxns = transactions.filter((t) => t.cardId === cardId);
-  if (cardTxns.length === 0) return 0;
-  const firstDate = cardTxns.reduce((min, t) => (t.date < min ? t.date : min), cardTxns[0].date);
+  // Spend made in the current quarter before this app started tracking the
+  // card only counts for that one quarter (starting.quarterStart).
+  const startingSpend = starting.spend || 0;
+  if (cardTxns.length === 0 && !(startingSpend > 0 && starting.quarterStart)) return 0;
+  const dates = cardTxns.map((t) => t.date);
+  if (startingSpend > 0 && starting.quarterStart) dates.push(starting.quarterStart);
+  const firstDate = dates.reduce((min, d) => (d < min ? d : min), dates[0]);
   let total = 0;
   let cursor = firstDate;
   let guard = 0;
   while (cursor <= asOfDate && guard < 400) {
     const { quarterStart, quarterEnd } = getQuarterBounds(cursor);
-    const progress = computeCardMilestoneProgress(transactions, cardId, quarterStart, quarterEnd, target);
+    const progress = computeCardMilestoneProgress(
+      transactions, cardId, quarterStart, quarterEnd, target,
+      starting.quarterStart === quarterStart ? startingSpend : 0,
+    );
     if (progress.spent >= target) total += bonus;
     cursor = quarterEnd;
     guard += 1;
@@ -2278,23 +2359,29 @@ export function getAnnualMilestoneWindow(anchorMonth, dateStr) {
 // this month" directly, instead of the cap only being visible indirectly
 // when a transaction unexpectedly earns less than its raw rate would give.
 function computeDinersCapStatus(params, cardTransactions, today) {
-  const categories = (params.categories || []).filter((c) => c.capAmount != null);
-  return categories.map((c) => {
-    const periodTxns = cardTransactions.filter((t) =>
-      c.capPeriod === 'day' ? t.date === today : getMonthKey(t.date) === getMonthKey(today),
-    );
-    const { perTransaction } = computeDinersCycleReward(params, periodTxns);
-    const earned = perTransaction.filter((p) => p.categoryKey === c.key).reduce((s, p) => s + p.earned, 0);
-    return {
-      key: c.key,
-      label: c.label,
-      capAmount: c.capAmount,
-      capPeriod: c.capPeriod,
-      earned,
-      remaining: Math.max(0, c.capAmount - earned),
-      unit: 'points',
-    };
-  });
+  const results = [];
+  for (const c of params.categories || []) {
+    const limits = [];
+    if (c.capAmount != null) limits.push({ amount: c.capAmount, period: c.capPeriod === 'day' ? 'day' : 'month' });
+    if (c.monthlyCapAmount != null) limits.push({ amount: c.monthlyCapAmount, period: 'month' });
+    for (const [index, limit] of limits.entries()) {
+      const periodTxns = cardTransactions.filter((t) =>
+        limit.period === 'day' ? t.date === today : getMonthKey(t.date) === getMonthKey(today),
+      );
+      const { perTransaction } = computeDinersCycleReward(params, periodTxns);
+      const earned = perTransaction.filter((p) => p.categoryKey === c.key).reduce((s, p) => s + p.earned, 0);
+      results.push({
+        key: index === 0 ? c.key : `${c.key}-monthly`,
+        label: c.label,
+        capAmount: limit.amount,
+        capPeriod: limit.period,
+        earned,
+        remaining: Math.max(0, limit.amount - earned),
+        unit: 'points',
+      });
+    }
+  }
+  return results;
 }
 
 function computeHsbcLiveCapStatus(params, cardTransactions, today) {
@@ -2362,7 +2449,7 @@ function computeHsbcPremierCapStatus(params, cardTransactions, today) {
 // (e.g. SuperMoney's bonus pool, which is capped by the base pool itself
 // rather than a fixed ceiling).
 export function computeCardCapStatus(card, cardTransactions, currentCycleTxns, today) {
-  const params = resolveStrategyParamsForDate(card?.strategyParamsHistory, today);
+  const params = resolveCardParams(card, today);
   switch (card?.rewardStrategy) {
     case 'hdfc_diners_slab_milestone':
       return computeDinersCapStatus(params, cardTransactions, today);
@@ -2420,6 +2507,101 @@ export function applyRewardOverrides(cycleReward, transactions, card, asOfDate) 
     return override != null ? { ...p, earned: value, overridden: true } : p;
   });
   return { ...cycleReward, perTransaction, totalReward };
+}
+
+function addDaysISO(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d + days);
+  return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
+}
+
+function firstOfNextMonth(monthKey) {
+  const [y, m] = monthKey.split('-').map(Number);
+  const dt = new Date(y, m, 1);
+  return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-01`;
+}
+
+// The day a closed billing cycle's reward lands in the account - see
+// CARD_CREDIT_TIMING for each card's rule.
+export function getRewardCreditDate(card, cycleEnd) {
+  const timing = CARD_CREDIT_TIMING[card?.rewardStrategy] || { basis: 'statement', offsetDays: 0 };
+  const base = timing.basis === 'next_statement' ? getCardCycleForDate(cycleEnd, card?.billingCycleDay ?? 1).cycleEnd : cycleEnd;
+  return addDaysISO(base, timing.offsetDays);
+}
+
+// Cards whose statement total is rounded to a whole rupee: the sub-rupee
+// difference (+0.10 when 9,900.10 becomes 9,900; -0.10 when 9,900.90
+// becomes 9,901) carries into the next statement rather than disappearing.
+const CARD_STATEMENT_ROUNDED = new Set(['hdfc_diners_slab_milestone']);
+
+// Everything a card has earned, split into what has actually been credited
+// by `today` and what is still pending (with the date it will land). Works
+// cycle by cycle - never pooling a whole history into one cycle's caps -
+// and works out each statement's (possibly rounded) bill.
+// Most rewards land on a card-specific day around the statement; Diners'
+// grocery points are the exception: a calendar month's worth lands together
+// on the 1st of the next month, whichever statement they were spent in.
+export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
+  const billingDay = card?.billingCycleDay ?? 1;
+  const byCycle = new Map();
+  for (const t of cardTxns) {
+    const { cycleStart, cycleEnd } = getCardCycleForDate(t.date, billingDay);
+    if (!byCycle.has(cycleStart)) byCycle.set(cycleStart, { cycleStart, cycleEnd, txns: [] });
+    byCycle.get(cycleStart).txns.push(t);
+  }
+
+  const cycleRewards = {};
+  const cycleBills = {};
+  const lumps = [];
+  let billCarry = 0;
+  let total = 0;
+  let unit = 'inr';
+  for (const cycle of [...byCycle.values()].sort((a, b) => a.cycleStart.localeCompare(b.cycleStart))) {
+    const raw = computeCardCycleReward(card, cycle.txns, cycle.cycleStart);
+    const adjusted = applyRewardOverrides(raw, cycle.txns, card, cycle.cycleStart);
+    cycleRewards[cycle.cycleStart] = adjusted;
+    // The statement total, carrying the sub-rupee difference forward if this
+    // card's statements are rounded to whole rupees.
+    const rawTotal = Math.round((cycle.txns.reduce((sum, t) => sum + t.amount, 0) + billCarry) * 100) / 100;
+    if (CARD_STATEMENT_ROUNDED.has(card?.rewardStrategy)) {
+      const statement = Math.round(rawTotal);
+      cycleBills[cycle.cycleStart] = { rawTotal, carryIn: billCarry, statement, carryOut: Math.round((rawTotal - statement) * 100) / 100 };
+      billCarry = cycleBills[cycle.cycleStart].carryOut;
+    } else {
+      cycleBills[cycle.cycleStart] = { rawTotal, carryIn: 0, statement: rawTotal, carryOut: 0 };
+    }
+    unit = adjusted.unit || unit;
+    total += adjusted.totalReward;
+
+    let separate = 0;
+    if (card?.rewardStrategy === 'hdfc_diners_slab_milestone') {
+      const params = resolveCardParams(card, cycle.cycleStart);
+      const monthlyCredit = new Set((params.categories || []).filter((c) => c.creditOn === 'first_of_next_month').map((c) => c.key));
+      const byMonth = {};
+      for (const p of adjusted.perTransaction) {
+        if (p.overridden || !monthlyCredit.has(p.categoryKey)) continue;
+        const txn = cycle.txns.find((t) => t.id === p.id);
+        if (!txn) continue;
+        byMonth[getMonthKey(txn.date)] = (byMonth[getMonthKey(txn.date)] || 0) + p.earned;
+      }
+      for (const [monthKey, amount] of Object.entries(byMonth)) {
+        if (amount > 0) lumps.push({ date: firstOfNextMonth(monthKey), amount });
+        separate += amount;
+      }
+    }
+    lumps.push({ date: getRewardCreditDate(card, cycle.cycleEnd), amount: adjusted.totalReward - separate });
+  }
+
+  const credited = lumps.filter((l) => l.date <= today).reduce((sum, l) => sum + l.amount, 0);
+  const pendingByDate = {};
+  for (const l of lumps) {
+    if (l.date > today && l.amount > 0) pendingByDate[l.date] = (pendingByDate[l.date] || 0) + l.amount;
+  }
+  const pending = Object.entries(pendingByDate)
+    .map(([date, amount]) => ({ date, amount }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return { total, credited, pending, cycleRewards, cycleBills, unit };
 }
 
 export const CREDIT_CARDS_KEY = 'splitkhata_credit_cards';

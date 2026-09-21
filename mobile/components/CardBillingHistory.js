@@ -7,8 +7,7 @@ import {
   formatCurrency,
   listRecentCardCycles,
   getTransactionsInCycle,
-  computeCardCycleReward,
-  applyRewardOverrides,
+  computeCardRewardLedger,
   getCardBillingCycleKey,
 } from '../lib/utils';
 
@@ -28,19 +27,22 @@ function formatCycleMonthLabel(cycle) {
 }
 
 // RN port of web's BillingCycleRow (inside CardsManager.jsx).
-function BillingCycleRow({ card, cycle, transactions, cycleRecord, onSaveError }) {
+function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSaveError }) {
   const [billDraft, setBillDraft] = useState('');
   const [pointsDraft, setPointsDraft] = useState('');
   const [saving, setSaving] = useState(false);
 
   const cycleTxns = getTransactionsInCycle(transactions, card.id, cycle.cycleStart, cycle.cycleEnd);
-  const expectedBill = cycleTxns.reduce((s, t) => s + t.amount, 0);
-  const { totalReward: expectedReward, unit: rewardUnit } = applyRewardOverrides(
-    computeCardCycleReward(card, cycleTxns, cycle.cycleStart),
-    cycleTxns,
-    card,
-    cycle.cycleStart,
-  );
+  // Some banks round the statement to the rupee and carry the paise into the
+  // next one (see computeCardRewardLedger's cycleBills).
+  const bill = ledger.cycleBills[cycle.cycleStart];
+  const expectedBill = bill ? bill.statement : cycleTxns.reduce((s, t) => s + t.amount, 0);
+  const signedRupees = (n) => `${n > 0 ? '+' : '-'}₹${Math.abs(n).toFixed(2)}`;
+  // From the card's whole reward ledger, so a Diners slab remainder carried
+  // in from the previous statement is counted in this one.
+  const cycleResult = ledger.cycleRewards[cycle.cycleStart];
+  const expectedReward = cycleResult?.totalReward ?? 0;
+  const rewardUnit = cycleResult?.unit ?? ledger.unit;
 
   const billConfirmed = cycleRecord?.billConfirmedAt != null;
   const pointsConfirmed = cycleRecord?.pointsConfirmedAt != null;
@@ -88,6 +90,14 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, onSaveError }
         <View className="flex-1">
           <Text className="font-body text-xs text-muted-text">Bill</Text>
           <Text className="font-mono text-xs text-ink">Expected {formatCurrency(expectedBill)}</Text>
+          {bill && bill.carryIn !== 0 ? (
+            <Text className="font-body text-2xs text-muted-text">{signedRupees(bill.carryIn)} carried in from last statement</Text>
+          ) : null}
+          {bill && bill.carryOut !== 0 ? (
+            <Text className="font-body text-2xs text-muted-text">
+              {formatCurrency(bill.rawTotal)} rounded; {signedRupees(bill.carryOut)} goes to next statement
+            </Text>
+          ) : null}
           {billConfirmed ? (
             <Text className={`text-xs mt-0.5 ${amountMismatch !== 0 ? 'font-mono-bold text-stamp-red' : 'font-mono text-ledger-green'}`}>
               Actual {formatCurrency(cycleRecord.actualBillAmount)}
@@ -140,6 +150,7 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, onSaveError }
 export default function CardBillingHistory({ card, cardTxns, cardBillingCycles, today, onSaveError }) {
   const [historyYear, setHistoryYear] = useState(null);
   const [historyCycleKey, setHistoryCycleKey] = useState(null);
+  const ledger = computeCardRewardLedger(card, cardTxns, today);
 
   const earliestTxnDate = cardTxns.length > 0 ? cardTxns.reduce((min, t) => (t.date < min ? t.date : min), cardTxns[0].date) : null;
   const pastCycles = earliestTxnDate
@@ -196,6 +207,7 @@ export default function CardBillingHistory({ card, cardTxns, cardBillingCycles, 
           cycle={selectedHistoryCycle}
           transactions={cardTxns}
           cycleRecord={cycleRecordFor(selectedHistoryCycle)}
+          ledger={ledger}
           onSaveError={onSaveError}
         />
       )}

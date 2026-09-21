@@ -27,7 +27,7 @@ export default function CustomSplitEditor({ members, total, shares, onChange }) 
       </View>
       <View className="flex-row flex-wrap" style={{ gap: 8 }}>
         {members.map((m) => (
-          <View key={m} className="w-full sm:w-[calc(50%-4px)] flex-row items-center" style={{ gap: 8 }}>
+          <View key={m} className="w-full flex-row items-center" style={{ gap: 8 }}>
             <Text className="font-body-medium text-sm text-ink w-24" numberOfLines={1}>{m}</Text>
             <TextInput
               value={shares[m] ?? ''}

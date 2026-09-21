@@ -18,6 +18,11 @@ function Tag({ label, onRemove, removable = true }) {
   );
 }
 
+const fieldLabel = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
+const inputBox = 'font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs';
+const dateBox = 'font-body-medium text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs w-full';
+const sectionTitle = 'font-body-semibold text-sm text-ink mb-2';
+
 // RN full-screen Modal port of TravelManager.jsx's Trip Settings overlay.
 export default function TripSettings({
   visible,
@@ -202,120 +207,106 @@ export default function TripSettings({
         </View>
 
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-          <Text className="font-body-semibold text-xs text-ink mb-2">Trip Dates</Text>
+          <Text className={sectionTitle}>Trip Dates</Text>
           <View className="flex-row flex-wrap" style={{ gap: 12 }}>
-            <View className="w-full sm:w-[calc(33.333%-8px)]">
-              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Start Date</Text>
-              <DateField
-                value={datesStart}
-                onChange={setDatesStart}
-                className="font-body-medium text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
-              />
+            <View className="w-full sm:w-[calc(50%-6px)]">
+              <Text className={fieldLabel}>Start Date</Text>
+              <DateField value={datesStart} onChange={setDatesStart} className={dateBox} />
             </View>
-            <View className="w-full sm:w-[calc(33.333%-8px)]">
-              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">End Date</Text>
-              <DateField
-                value={datesEnd}
-                onChange={setDatesEnd}
-                className="font-body-medium text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
-              />
+            <View className="w-full sm:w-[calc(50%-6px)]">
+              <Text className={fieldLabel}>End Date</Text>
+              <DateField value={datesEnd} onChange={setDatesEnd} className={dateBox} />
             </View>
-            <View className="w-full sm:w-[calc(33.333%-8px)] sm:justify-end">
-              <Pressable onPress={handleSaveDates} className="min-h-10 rounded-lg border border-ink/15 items-center justify-center">
-                <Text className="font-body-semibold text-sm text-ink">Save Dates</Text>
-              </Pressable>
-            </View>
+            <Pressable onPress={handleSaveDates} className="w-full min-h-11 rounded-lg border border-ink/15 items-center justify-center">
+              <Text className="font-body-semibold text-sm text-ink">Save Dates</Text>
+            </Pressable>
             <Text className="w-full font-body text-2xs text-muted-text">
               Sets when {trip.name} counts as your active trip, so it surfaces automatically without searching.
             </Text>
           </View>
 
           <View className="border-t border-ink/10 pt-4 mt-5 mb-5">
-            <Text className="font-body-semibold text-xs text-ink mb-2">Starting Cash</Text>
-            <View className="flex-row flex-wrap" style={{ gap: 12 }}>
-              <View className="w-full sm:w-[calc(50%-6px)]">
-                <TextInput
-                  value={openingCash}
-                  onChangeText={setOpeningCash}
-                  keyboardType="decimal-pad"
-                  placeholder="0"
-                  className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
-                />
-              </View>
-              <View className="w-full sm:w-[calc(50%-6px)] sm:justify-end">
-                <Pressable onPress={handleSaveCash} className="min-h-10 rounded-lg bg-ledger-green items-center justify-center">
-                  <Text className="font-body-semibold text-sm text-white">Save Starting Cash</Text>
-                </Pressable>
-              </View>
+            <Text className={sectionTitle}>Starting Cash</Text>
+            <Text className={fieldLabel}>Amount ({currentCurrency || 'Local'})</Text>
+            <View className="flex-row items-center" style={{ gap: 12 }}>
+              <TextInput
+                value={openingCash}
+                onChangeText={setOpeningCash}
+                keyboardType="decimal-pad"
+                placeholder="0"
+                className={`flex-1 min-w-0 ${inputBox}`}
+                style={{ minWidth: 0 }}
+              />
+              <Pressable onPress={handleSaveCash} className="min-h-11 px-5 shrink-0 rounded-lg bg-ledger-green items-center justify-center">
+                <Text className="font-body-semibold text-sm text-white">Save Starting Cash</Text>
+              </Pressable>
             </View>
           </View>
 
           <View className="border-t border-ink/10 pt-4 mb-5">
-            <Text className="font-body-semibold text-xs text-ink mb-1">ATM Cash Withdrawal ({currentCurrency || 'Local'})</Text>
-            <View className="flex-row flex-wrap mt-2" style={{ gap: 12 }}>
+            <Text className={sectionTitle}>ATM Cash Withdrawal</Text>
+            <View className="flex-row flex-wrap" style={{ gap: 12 }}>
               <View className="w-full sm:w-[calc(50%-6px)]">
+                <Text className={fieldLabel}>Amount withdrawn ({currentCurrency || 'Local'})</Text>
                 <TextInput
                   value={withdrawalAmount}
                   onChangeText={setWithdrawalAmount}
                   keyboardType="decimal-pad"
                   placeholder="0"
-                  className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
+                  className={inputBox}
                 />
               </View>
               <View className="w-full sm:w-[calc(50%-6px)]">
-                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">INR Cost (required)</Text>
+                <Text className={fieldLabel}>INR cost (required)</Text>
                 <TextInput
                   value={withdrawalInr}
                   onChangeText={setWithdrawalInr}
                   keyboardType="decimal-pad"
-                  placeholder="From card/forex statement"
-                  className="font-mono text-base text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
+                  placeholder="0"
+                  className={inputBox}
                 />
               </View>
               <View className="w-full sm:w-[calc(50%-6px)]">
-                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
-                <TextInput
-                  value={withdrawalDate}
-                  onChangeText={setWithdrawalDate}
-                  className="font-body-medium text-sm text-ink border border-ink/15 rounded-lg px-3 py-2.5 bg-paper shadow-2xs"
-                />
+                <Text className={fieldLabel}>Date</Text>
+                <DateField value={withdrawalDate} onChange={setWithdrawalDate} className={dateBox} />
               </View>
               <View className="w-full sm:w-[calc(50%-6px)]">
                 <PickerField label="Withdrawn By" value={withdrawalPayer} options={dbMembers} onChange={setWithdrawalPayer} />
               </View>
-              <View className="w-full sm:w-[calc(50%-6px)]">
-                <PickerField label="Card Used" value={withdrawalPaymentMethod} options={instruments.map((i) => i.label)} onChange={setWithdrawalPaymentMethod} />
-              </View>
               <View className="w-full">
-                <Text className="font-body text-2xs text-muted-text mb-2">
-                  This is the only place to record an ATM withdrawal. The INR cost is required - it's what registers the joint
-                  debt above and gives every "Cash" purchase you add afterward its rate, so nothing needs pricing by hand.
-                </Text>
-                <Pressable onPress={handleAddWithdrawal} className="min-h-10 rounded-lg border border-ink/15 items-center justify-center">
-                  <Text className="font-body-semibold text-sm text-ink">Record Withdrawal</Text>
-                </Pressable>
+                <PickerField label="Card / method used" value={withdrawalPaymentMethod} options={instruments.map((i) => i.label)} onChange={setWithdrawalPaymentMethod} />
               </View>
+              <Text className="w-full font-body text-2xs text-muted-text">
+                This is the only place to record an ATM withdrawal. The INR cost is required - it's what registers the joint
+                debt above and gives every "Cash" purchase you add afterward its rate, so nothing needs pricing by hand.
+              </Text>
+              <Pressable onPress={handleAddWithdrawal} className="w-full min-h-11 rounded-lg border border-ink/15 items-center justify-center">
+                <Text className="font-body-semibold text-sm text-ink">Record Withdrawal</Text>
+              </Pressable>
             </View>
           </View>
 
           <View className="border-t border-ink/10 pt-4 mb-5">
-            <Text className="font-body-semibold text-xs text-ink mb-1">Category Budgets (this trip)</Text>
+            <Text className={sectionTitle}>Category Budgets (this trip)</Text>
             <Text className="font-body text-2xs text-muted-text mb-2">
               Pick a category and set a limit for the whole trip, not per month. Nothing is flagged until you set one. Warns at 80% of the limit, alerts once it's exceeded.
               Manage the travel category list itself from Settings, since it's shared across every trip.
             </Text>
             {unbudgetedCategories.length > 0 && (
-              <View className="flex-row gap-2 mb-2">
-                <View className="flex-1">
-                  <PickerField label="" value={newBudgetCategory} options={unbudgetedCategories} onChange={setNewBudgetCategory} />
+              <View className="flex-row items-end mb-3" style={{ gap: 8 }}>
+                <View className="flex-1 min-w-0">
+                  <PickerField label="Category" value={newBudgetCategory || 'Select...'} options={unbudgetedCategories} onChange={setNewBudgetCategory} />
                 </View>
-                <TextInput
-                  value={newBudgetAmount}
-                  onChangeText={setNewBudgetAmount}
-                  keyboardType="decimal-pad"
-                  placeholder="₹ limit"
-                  className="w-24 font-mono text-sm text-ink border border-ink/15 rounded-lg px-2 py-2 bg-paper shadow-2xs"
-                />
+                <View className="w-28">
+                  <Text className={fieldLabel}>Limit (₹)</Text>
+                  <TextInput
+                    value={newBudgetAmount}
+                    onChangeText={setNewBudgetAmount}
+                    keyboardType="decimal-pad"
+                    placeholder="0"
+                    className={inputBox}
+                  />
+                </View>
                 <Pressable
                   onPress={() => {
                     const amt = Number(newBudgetAmount);
@@ -324,9 +315,9 @@ export default function TripSettings({
                     setNewBudgetCategory('');
                     setNewBudgetAmount('');
                   }}
-                  className="px-3.5 rounded-lg border border-ink/15 items-center justify-center"
+                  className="min-h-11 px-5 shrink-0 rounded-lg bg-ledger-green items-center justify-center"
                 >
-                  <Text className="font-body-semibold text-xs text-ink">Add</Text>
+                  <Text className="font-body-semibold text-sm text-white">Add</Text>
                 </Pressable>
               </View>
             )}
@@ -358,7 +349,7 @@ export default function TripSettings({
           </View>
 
           <View className="border-t border-ink/10 pt-4 mb-5">
-            <Text className="font-body-semibold text-xs text-ink mb-1">Guests (this trip only)</Text>
+            <Text className={sectionTitle}>Guests (this trip only)</Text>
             <Text className="font-body text-2xs text-muted-text mb-2">
               Someone who joined just this trip - they can be picked as a payer or split target on {trip.name}'s
               entries, but never anywhere on the household ledger or Payments tab, and this trip won't get an
@@ -372,8 +363,8 @@ export default function TripSettings({
                 placeholder="e.g. Priya"
                 className="flex-1 font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2 bg-paper shadow-2xs"
               />
-              <Pressable onPress={handleAddGuest} className="px-3.5 rounded-lg border border-ink/15 items-center justify-center">
-                <Text className="font-body-semibold text-xs text-ink">Add Guest</Text>
+              <Pressable onPress={handleAddGuest} className="min-h-11 px-5 shrink-0 rounded-lg bg-ledger-green items-center justify-center">
+                <Text className="font-body-semibold text-sm text-white">Add Guest</Text>
               </Pressable>
             </View>
             {knownGuestSuggestions.length > 0 && (

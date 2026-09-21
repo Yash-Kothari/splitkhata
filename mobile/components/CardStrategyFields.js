@@ -75,7 +75,8 @@ export default function CardStrategyFields({ card, draft, onChange, gap = 14 }) 
   }
 
   if (strategy === 'hsbc_tiered_cashback_aggregate') {
-    const value = draft.channel === 'excluded' ? 'excluded' : draft.isBonusEligible ? 'eligible' : 'base';
+    // 10% is the default for a fresh transaction; an explicit false (picked "everything else") still sticks.
+    const value = draft.channel === 'excluded' ? 'excluded' : (draft.isBonusEligible ?? true) ? 'eligible' : 'base';
     return (
       <View className={halfWidth}>
         <PickerField
