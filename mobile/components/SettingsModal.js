@@ -557,6 +557,10 @@ export default function SettingsModal({ visible, onClose }) {
     );
     setOrderPreview({ collection: 'paymentMethods', title: 'Payment methods', rows });
   }
+  // A half-finished preview shouldn't follow you to another tab or ledger.
+  useEffect(() => {
+    setOrderPreview(null);
+  }, [activeTab, categoryLedger]);
   async function applyOrder() {
     if (!orderPreview) return;
     setApplyingOrder(true);
@@ -916,7 +920,7 @@ export default function SettingsModal({ visible, onClose }) {
               </View>
 
               {renderOrderPreview('categories')}
-              {!orderPreview && (
+              {orderPreview?.collection !== 'categories' && (
                 <Pressable onPress={previewCategoryOrder} className="self-start mb-3">
                   <Text className="font-body-semibold text-xs text-ledger-green">↕ Sort by most used (one-time)</Text>
                 </Pressable>
@@ -1189,7 +1193,7 @@ export default function SettingsModal({ visible, onClose }) {
                 </View>
               )}
               {renderOrderPreview('paymentMethods')}
-              {!orderPreview && (
+              {orderPreview?.collection !== 'paymentMethods' && (
                 <Pressable onPress={previewMethodOrder} className="self-start mb-3">
                   <Text className="font-body-semibold text-xs text-ledger-green">↕ Sort by most used (one-time)</Text>
                 </Pressable>
