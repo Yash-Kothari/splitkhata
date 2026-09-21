@@ -10,6 +10,7 @@ import { reportError } from '../lib/errorReporting';
 import {
   buildPaymentInstruments,
   checkCustomSharesTotal,
+  isStatementOnlyCard,
   parseCustomShares,
   DEFAULT_PERSONS as PERSONS,
   DEFAULT_CATEGORIES,
@@ -346,7 +347,9 @@ export default function AddEntryForm({
         // two records, joined by id - instead of making that a second,
         // separate act of discipline in the Cards tab. Best-effort: a
         // failure here shouldn't undo the expense that already saved fine.
-        const matchedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
+        // A statement-only card tracks just its statement amounts - copying every entry would double-count them.
+        const linkedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
+        const matchedCard = isStatementOnlyCard(linkedCard) ? null : linkedCard;
         if (matchedCard) {
           try {
             const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, date);
@@ -677,7 +680,7 @@ export default function AddEntryForm({
           <Pressable
             onPress={handleSubmit}
             disabled={saving || !amount || customSplitInvalid}
-            className="mt-3 min-h-11 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+            className={`mt-3 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && (!amount || customSplitInvalid) ? 'opacity-40' : ''}`}
             style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 }}
           >
             {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-sm text-white">Add to Ledger</Text>}

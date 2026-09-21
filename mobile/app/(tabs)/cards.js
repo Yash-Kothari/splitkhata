@@ -12,6 +12,7 @@ import {
   getCardCycleForDate,
   getTransactionsInCycle,
   computeCardRewardLedger,
+  isStatementOnlyCard,
   resolveCardParams,
   computeCardMilestoneProgress,
   computeQuarterlyMilestoneBonusEarned,
@@ -64,6 +65,7 @@ export default function Cards() {
   useEffect(() => subscribeToCardBillingCycles(setCardBillingCycles, (err) => reportError(err, 'Could not load billing cycles')), []);
 
   const selectedCard = creditCards.find((c) => c.id === selectedCardId) || creditCards[0] || null;
+  const statementOnly = isStatementOnlyCard(selectedCard);
   const cardNameCounts = creditCards.reduce((acc, c) => ({ ...acc, [c.name]: (acc[c.name] || 0) + 1 }), {});
 
   const cardTxns = useMemo(
@@ -233,6 +235,7 @@ export default function Cards() {
                     </Text>
                   </View>
                 </View>
+                {!statementOnly && (
                 <View className="rounded-xl bg-ledger-green/10 px-3.5 py-2.5 mb-3">
                   <Text className="font-body-semibold text-2xs text-ledger-green uppercase tracking-wider">
                     {currentCycleReward.unit === 'points' ? 'Total reward points in account' : 'Total cashback in account'}
@@ -241,7 +244,8 @@ export default function Cards() {
                     {formatReward(lifetimeRewardTotal, currentCycleReward.unit)}
                   </Text>
                 </View>
-                {ledger.pending.length > 0 && (
+                )}
+                {!statementOnly && ledger.pending.length > 0 && (
                   <View className="rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5 mb-3">
                     <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider mb-1">Still to be credited</Text>
                     {ledger.pending.map((p) => (
@@ -259,12 +263,14 @@ export default function Cards() {
                     <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Spent so far</Text>
                     <Text className="font-mono-bold text-ink text-lg">{formatCurrency(currentCycleSpend)}</Text>
                   </View>
+                  {!statementOnly && (
                   <View className="flex-1">
                     <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Estimated reward</Text>
                     <Text className="font-mono-bold text-ink text-lg">
                       {formatReward(currentCycleReward.totalReward, currentCycleReward.unit)}
                     </Text>
                   </View>
+                  )}
                 </View>
               </Card>
 

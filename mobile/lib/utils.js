@@ -184,12 +184,13 @@ export const CURRENCY_SYMBOLS = {
 };
 
 export function formatCurrency(amount, currencyCode = 'INR') {
-  const formattedNum = Number(amount || 0).toLocaleString('en-IN', {
+  const value = Number(amount || 0);
+  const formattedNum = Math.abs(value).toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
   const symbol = CURRENCY_SYMBOLS[currencyCode] || `${currencyCode} `;
-  return `${symbol}${formattedNum}`;
+  return `${value < 0 ? '-' : ''}${symbol}${formattedNum}`;
 }
 
 export function normalizeLedger(ledger) {
@@ -1688,7 +1689,13 @@ export const CARD_REWARD_STRATEGIES = [
   { key: 'hsbc_tiered_cashback_aggregate', label: 'HSBC Live+', unit: 'inr' },
   { key: 'axis_supermoney_dual_pool', label: 'Axis Supermoney', unit: 'inr' },
   { key: 'hsbc_premier_flat_capped', label: 'HSBC Premier', unit: 'points' },
+  // No reward maths at all - just the statement amount each cycle, counted toward the annual milestone.
+  { key: 'annual_milestone_only', label: 'Annual milestone only (enter statement amounts)', unit: 'inr' },
 ];
+
+export function isStatementOnlyCard(card) {
+  return card?.rewardStrategy === 'annual_milestone_only';
+}
 
 // Sensible starting params for each strategy, straight from the verified
 // terms - a new card of that strategy starts here and can be tuned per-card
@@ -1740,6 +1747,10 @@ export const CARD_STRATEGY_DEFAULTS = {
     annualMilestoneTarget: null,
     annualMilestoneLabel: '',
   },
+  annual_milestone_only: {
+    annualMilestoneTarget: 800000,
+    annualMilestoneLabel: 'Annual fee waived',
+  },
   hsbc_premier_flat_capped: {
     baseRate: 3,
     categoryMonthlyCap: 100000,
@@ -1762,6 +1773,7 @@ export const CARD_CREDIT_TIMING = {
   // Axis cashback posts 2 days before the next month's statement is generated.
   axis_supermoney_dual_pool: { basis: 'next_statement', offsetDays: -2 },
   hsbc_premier_flat_capped: { basis: 'statement', offsetDays: 0 },
+  annual_milestone_only: { basis: 'statement', offsetDays: 0 },
 };
 
 function daysInMonth(year, month) {
@@ -1876,7 +1888,8 @@ export function computeDinersCycleReward(params, transactions) {
     // default - falls back to the category's fixed rate when not set, so
     // existing transactions are unaffected.
     const effectiveMultiplier = txn.travelMultiplier != null ? txn.travelMultiplier : category.multiplier;
-    const basePoints = Math.floor(txn.amount / params.unitAmount) * params.pointsPerUnit;
+    // A refund (negative amount) reverses points at the same rate, rounded toward zero.
+    const basePoints = Math.trunc(txn.amount / params.unitAmount) * params.pointsPerUnit;
     let earned = basePoints * effectiveMultiplier;
 
     // A category can carry a primary cap (per day or per month) and, on top,
@@ -1895,15 +1908,18 @@ export function computeDinersCycleReward(params, transactions) {
     if (category.monthlyCapAmount != null) {
       allowed = Math.min(allowed, category.monthlyCapAmount - (monthlyExtraTotals[extraKey] || 0));
     }
-    earned = Math.max(0, Math.min(earned, allowed));
+    if (earned >= 0) {
+      earned = Math.max(0, Math.min(earned, allowed));
+    }
+    // A reversal isn't held to any cap, and it frees the room it used.
     if (dayOrMonthBucket) {
-      dayOrMonthBucket.bucketTotals[dayOrMonthBucket.bucketKey] = (dayOrMonthBucket.bucketTotals[dayOrMonthBucket.bucketKey] || 0) + earned;
+      dayOrMonthBucket.bucketTotals[dayOrMonthBucket.bucketKey] = Math.max(0, (dayOrMonthBucket.bucketTotals[dayOrMonthBucket.bucketKey] || 0) + earned);
     }
     if (category.monthlyCapAmount != null) {
-      monthlyExtraTotals[extraKey] = (monthlyExtraTotals[extraKey] || 0) + earned;
+      monthlyExtraTotals[extraKey] = Math.max(0, (monthlyExtraTotals[extraKey] || 0) + earned);
     }
 
-    earned = applyCycleCap(earned, cycleTotal, params.cycleCap);
+    earned = earned < 0 ? earned : applyCycleCap(earned, cycleTotal, params.cycleCap);
     cycleTotal += earned;
     perTransaction.push({ id: txn.id, basePoints, categoryKey: category.key, multiplier: effectiveMultiplier, earned });
   }
@@ -1927,17 +1943,19 @@ export function computeSbiCycleReward(params, transactions) {
 
   for (const txn of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
     let earned = 0;
-    if (txn.amount < minTransaction) {
+    // A refund (negative amount) reverses cashback at the same rate, unchecked by the cap.
+    const isRefund = txn.amount < 0;
+    if (Math.abs(txn.amount) < minTransaction) {
       perTransaction.push({ id: txn.id, earned: 0, channel: txn.channel });
       continue;
     }
     if (txn.channel === 'online') {
-      const raw = Math.floor((txn.amount * params.onlineRate) / 100);
-      earned = applyCycleCap(raw, onlineTotal, params.onlineCycleCap);
+      const raw = isRefund ? Math.trunc((txn.amount * params.onlineRate) / 100) : Math.floor((txn.amount * params.onlineRate) / 100);
+      earned = isRefund ? raw : applyCycleCap(raw, onlineTotal, params.onlineCycleCap);
       onlineTotal += earned;
     } else if (txn.channel === 'offline') {
-      const raw = Math.floor((txn.amount * params.offlineRate) / 100);
-      earned = applyCycleCap(raw, offlineTotal, params.offlineCycleCap);
+      const raw = isRefund ? Math.trunc((txn.amount * params.offlineRate) / 100) : Math.floor((txn.amount * params.offlineRate) / 100);
+      earned = isRefund ? raw : applyCycleCap(raw, offlineTotal, params.offlineCycleCap);
       offlineTotal += earned;
     }
     perTransaction.push({ id: txn.id, earned, channel: txn.channel });
@@ -1978,7 +1996,7 @@ export function computeHsbcCycleReward(params, transactions) {
     // cap field is treated as "uncapped," not "capped at zero" - Math.min(x,
     // null) coerces null to 0 in JS, which would silently wipe out every
     // bonus-tier reward if someone cleared this field while adding a card.
-    bonusEarned += applyCycleCap(bonusRaw, 0, params.bonusMonthlyCap);
+    bonusEarned += bonusRaw < 0 ? bonusRaw : applyCycleCap(bonusRaw, 0, params.bonusMonthlyCap);
     baseEarned += Math.round((base * params.baseRate) / 100);
   }
 
@@ -2016,16 +2034,18 @@ export function computeSuperMoneyCycleReward(params, transactions) {
   const bonusFloor = params.bonusFloor ?? 0;
 
   for (const txn of transactions) {
-    if (txn.channel === 'excluded' || txn.amount < minTransaction) {
+    if (txn.channel === 'excluded' || Math.abs(txn.amount) < minTransaction) {
       perTransaction.push({ id: txn.id, earned: 0, pool: null });
       continue;
     }
+    // A refund reverses cashback from the pool it was earned in, rounded toward zero.
+    const round = txn.amount < 0 ? Math.trunc : Math.floor;
     if (txn.isBonusEligible) {
-      const earned = Math.floor((txn.amount * params.bonusRate) / 100);
+      const earned = round((txn.amount * params.bonusRate) / 100);
       bonusRawTotal += earned;
       perTransaction.push({ id: txn.id, earned, pool: 'bonus' });
     } else {
-      const earned = Math.floor((txn.amount * params.baseRate) / 100);
+      const earned = round((txn.amount * params.baseRate) / 100);
       baseTotal += earned;
       perTransaction.push({ id: txn.id, earned, pool: 'base' });
     }
@@ -2061,6 +2081,12 @@ export function computeHsbcPremierCycleReward(params, transactions) {
     let points = 0;
     if (txn.category === 'fuel_excluded') {
       points = 0;
+    } else if (txn.amount < 0) {
+      // A refund reverses points at the base rate (rounded toward zero), skipping the carry pool.
+      const rate = txn.category === 'travel_bonus' ? params.baseRate * (txn.travelMultiplier || 1) : params.baseRate;
+      points = Math.trunc(txn.amount / 100) * rate;
+      if (txn.category === 'travel_bonus') travelBonusEarned += points;
+      if (txn.category === 'capped_category') cappedCategorySpend += txn.amount;
     } else if (txn.category === 'travel_bonus') {
       const multiplier = txn.travelMultiplier || 1;
       const raw = Math.floor((txn.amount * params.baseRate) / 100) * multiplier;
@@ -2243,6 +2269,7 @@ export function inferCardRewardFields(card, householdCategory, params) {
 export function rankCardsForEntry(cards, cardTransactions, amount, householdCategory, date) {
   if (!amount || !date || !cards?.length) return [];
   return cards
+    .filter((card) => !isStatementOnlyCard(card))
     .map((card) => {
       const params = resolveStrategyParamsForDate(card.strategyParamsHistory, date);
       const fields = inferCardRewardFields(card, householdCategory, params);
@@ -2595,7 +2622,7 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
   const credited = lumps.filter((l) => l.date <= today).reduce((sum, l) => sum + l.amount, 0);
   const pendingByDate = {};
   for (const l of lumps) {
-    if (l.date > today && l.amount > 0) pendingByDate[l.date] = (pendingByDate[l.date] || 0) + l.amount;
+    if (l.date > today && l.amount !== 0) pendingByDate[l.date] = (pendingByDate[l.date] || 0) + l.amount;
   }
   const pending = Object.entries(pendingByDate)
     .map(([date, amount]) => ({ date, amount }))

@@ -9,6 +9,7 @@ import {
   getTransactionsInCycle,
   computeCardRewardLedger,
   getCardBillingCycleKey,
+  isStatementOnlyCard,
 } from '../lib/utils';
 
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
@@ -118,6 +119,7 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
             </View>
           )}
         </View>
+        {!isStatementOnlyCard(card) && (
         <View className="flex-1">
           <Text className="font-body text-xs text-muted-text">Reward</Text>
           <Text className="font-mono text-xs text-ink">Expected {formatReward(expectedReward, rewardUnit)}</Text>
@@ -141,6 +143,7 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
             </View>
           )}
         </View>
+        )}
       </View>
     </View>
   );

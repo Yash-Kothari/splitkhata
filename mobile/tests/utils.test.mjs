@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  formatCurrency,
+  isStatementOnlyCard,
   computeCardRewardLedger,
   getRewardCreditDate,
   buildPaymentInstruments,
@@ -2294,4 +2296,72 @@ test('quarterly milestone counts spend made before the card was tracked, for tha
   assert.equal(computeQuarterlyMilestoneBonusEarned(txns, 'd1', 400000, 10000, '2026-09-20', starting), 10000);
   assert.equal(computeQuarterlyMilestoneBonusEarned(txns, 'd1', 400000, 10000, '2026-09-20'), 0);
   assert.equal(computeQuarterlyMilestoneBonusEarned(txns, 'd1', 400000, 10000, '2026-09-20', { spend: 390000, quarterStart: '2026-04-01' }), 0);
+});
+
+test('formatCurrency puts the minus sign before the currency symbol', () => {
+  assert.equal(formatCurrency(-1234.5), '-\u20B91,234.50');
+  assert.equal(formatCurrency(1234.5), '\u20B91,234.50');
+});
+
+test('a Diners refund reverses points at the same rate and frees cap room', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { perTransaction, totalReward } = computeDinersCycleReward(params, [
+    { id: 'a', date: '2026-08-11', amount: 1500, category: 'grocery' }, // 50 pts
+    { id: 'b', date: '2026-08-12', amount: -450, category: 'grocery' }, // partial refund: -3 slabs = -15 pts
+  ]);
+  assert.deepEqual(perTransaction.map((p) => p.earned), [50, -15]);
+  assert.equal(totalReward, 35);
+});
+
+test('SBI, Axis and Premier refunds reverse what the purchase earned', () => {
+  const sbi = computeSbiCycleReward(CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback, [
+    { id: 'a', date: '2026-08-11', amount: 1000, channel: 'online' }, // 5% = 50
+    { id: 'b', date: '2026-08-12', amount: -400, channel: 'online' }, // -20
+  ]);
+  assert.equal(sbi.totalReward, 30);
+  const axis = computeSuperMoneyCycleReward(CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool, [
+    { id: 'a', amount: 2000, isBonusEligible: false }, // base 1% = 20
+    { id: 'b', amount: -500, isBonusEligible: false }, // -5
+  ]);
+  assert.equal(axis.baseTotal, 15);
+  const premier = computeHsbcPremierCycleReward(CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped, [
+    { id: 'a', date: '2026-08-11', amount: 1000, category: 'regular' }, // 30 pts
+    { id: 'b', date: '2026-08-12', amount: -300, category: 'regular' }, // -9
+  ]);
+  assert.equal(premier.totalReward, 21);
+});
+
+test('HSBC Live+ refunds reduce the month aggregate, and a refund bigger than the month goes negative', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate;
+  const partial = computeHsbcCycleReward(params, [
+    { id: 'a', date: '2026-08-11', amount: 10000, isBonusEligible: true },
+    { id: 'b', date: '2026-08-12', amount: -4000, isBonusEligible: true },
+  ]);
+  assert.equal(partial.totalReward, 600, '10% of the 6,000 still net');
+  const overhang = computeHsbcCycleReward(params, [{ id: 'c', date: '2026-09-02', amount: -1000, isBonusEligible: true }]);
+  assert.equal(overhang.totalReward, -100);
+});
+
+test('a refund shows in the statement bill and the milestone spend as a negative', () => {
+  const card = dinersCard();
+  const txns = [
+    { id: 'a', cardId: 'd1', date: '2026-08-15', amount: 5000, category: 'regular' },
+    { id: 'b', cardId: 'd1', date: '2026-08-20', amount: -1200, category: 'regular' },
+  ];
+  assert.equal(computeCardRewardLedger(card, txns, '2026-12-31').cycleBills['2026-08-10'].statement, 3800);
+  assert.equal(computeCardMilestoneProgress(txns, 'd1', '2026-01-01', '2027-01-01', 800000).spent, 3800);
+});
+
+test('a statement-only card has no reward maths and is left out of the card ranking', () => {
+  const card = {
+    id: 'm1', rewardStrategy: 'annual_milestone_only', billingCycleDay: 10,
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.annual_milestone_only }],
+  };
+  assert.equal(isStatementOnlyCard(card), true);
+  assert.equal(isStatementOnlyCard(dinersCard()), false);
+  const txns = [{ id: 's', cardId: 'm1', date: '2026-08-10', amount: 42000, description: 'Statement' }];
+  const ledger = computeCardRewardLedger(card, txns, '2026-12-31');
+  assert.equal(ledger.total, 0);
+  assert.equal(computeCardMilestoneProgress(txns, 'm1', '2026-01-01', '2027-01-01', 800000).spent, 42000);
+  assert.deepEqual(rankCardsForEntry([card], txns, 1000, 'Groceries', '2026-09-01'), []);
 });

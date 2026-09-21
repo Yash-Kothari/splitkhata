@@ -13,6 +13,7 @@ import {
   computeFifoCashAmount,
   formatFifoBreakdownSummary,
   inferCardRewardFields,
+  isStatementOnlyCard,
   resolveInstrument,
   resolveStrategyParamsForDate,
 } from '../lib/utils';
@@ -125,8 +126,9 @@ export default function EditEntryRow({
   // link instead of blocking the entry save.
   async function syncCardLink(parsedAmount) {
     const oldTxnId = entry.cardTransactionId || null;
-    const oldCardId = resolveInstrument(instruments, entry)?.cardId || null;
-    const newCardId = selectedInstrument?.cardId || null;
+    const trackedCardId = (id) => (id && !isStatementOnlyCard(creditCards.find((c) => c.id === id)) ? id : null);
+    const oldCardId = trackedCardId(resolveInstrument(instruments, entry)?.cardId || null);
+    const newCardId = trackedCardId(selectedInstrument?.cardId || null);
     try {
       if (oldTxnId && newCardId && oldCardId === newCardId) {
         const updates = { amount: parsedAmount, date, description: note.trim() || category };
@@ -250,7 +252,7 @@ export default function EditEntryRow({
           <Pressable
             onPress={handleSave}
             disabled={saving || !amount || customSplitInvalid}
-            className="flex-1 min-h-11 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+            className={`flex-1 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && (!amount || customSplitInvalid) ? 'opacity-40' : ''}`}
           >
             {saving ? (
               <Text className="font-body-semibold text-sm text-white">{slowSave ? 'Still saving…' : 'Saving...'}</Text>
@@ -400,7 +402,7 @@ export default function EditEntryRow({
         <Pressable
           onPress={handleSave}
           disabled={saving || !amount || customSplitInvalid}
-          className="flex-1 min-h-11 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+          className={`flex-1 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && (!amount || customSplitInvalid) ? 'opacity-40' : ''}`}
         >
           {saving ? (
             <Text className="font-body-semibold text-sm text-white">{slowSave ? 'Still saving…' : 'Saving...'}</Text>

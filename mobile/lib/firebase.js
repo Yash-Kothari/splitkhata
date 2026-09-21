@@ -133,6 +133,23 @@ export function isAiConfigured() {
   return isFirebaseConfigured();
 }
 
+// The Gemini service regularly answers "high demand" (HTTP 500/503) for a few
+// seconds at a time - retry a couple of times before giving up, and say so in
+// plain words instead of surfacing the raw API error.
+async function withAiRetry(call) {
+  const delays = [1500, 3500];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await call();
+    } catch (err) {
+      const busy = /\b(500|503)\b|high demand|overloaded|unavailable/i.test(err?.message || '');
+      if (!busy) throw err;
+      if (attempt >= delays.length) throw new Error('The AI service is busy right now - try again in a moment.');
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    }
+  }
+}
+
 let aiInitPromise = null;
 function ensureAi() {
   if (!isAiConfigured()) return Promise.resolve(null);
@@ -153,7 +170,7 @@ function ensureAi() {
 export async function generateDigest(prompt) {
   const ctx = await ensureAi();
   if (!ctx) throw new Error('AI Logic is not configured.');
-  const result = await ctx.model.generateContent(prompt);
+  const result = await withAiRetry(() => ctx.model.generateContent(prompt));
   return result.response.text();
 }
 
@@ -168,7 +185,7 @@ export async function generateStructured(prompt, schema) {
     model: 'gemini-flash-latest',
     generationConfig: { responseMimeType: 'application/json', responseSchema: schema },
   });
-  const result = await jsonModel.generateContent(prompt);
+  const result = await withAiRetry(() => jsonModel.generateContent(prompt));
   return JSON.parse(result.response.text());
 }
 
@@ -182,10 +199,12 @@ export async function extractReceiptFromImage(base64Data, mimeType, prompt, sche
     model: 'gemini-flash-latest',
     generationConfig: { responseMimeType: 'application/json', responseSchema: schema },
   });
-  const result = await jsonModel.generateContent([
-    { text: prompt },
-    { inlineData: { data: base64Data, mimeType } },
-  ]);
+  const result = await withAiRetry(() =>
+    jsonModel.generateContent([
+      { text: prompt },
+      { inlineData: { data: base64Data, mimeType } },
+    ]),
+  );
   return JSON.parse(result.response.text());
 }
 

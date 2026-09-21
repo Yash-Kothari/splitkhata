@@ -13,7 +13,17 @@ import { TextInput, Platform } from 'react-native';
 // exactly, so no conversion is needed either way.
 export default function DateField({ value, onChange, className, placeholder }) {
   if (Platform.OS === 'web') {
-    return <input type="date" value={value || ''} onChange={(e) => onChange(e.target.value)} className={className} />;
+    // iPhone Safari sizes a date input from its content and ignores width:100%,
+    // so it runs past its container - pin the box model explicitly.
+    return (
+      <input
+        type="date"
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        className={className}
+        style={{ display: 'block', width: '100%', minWidth: 0, maxWidth: '100%', boxSizing: 'border-box', minHeight: 44, WebkitAppearance: 'none', appearance: 'none' }}
+      />
+    );
   }
   return <TextInput value={value} onChangeText={onChange} placeholder={placeholder || '2026-08-24'} className={className} />;
 }

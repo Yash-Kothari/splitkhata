@@ -106,6 +106,10 @@ const CARD_PARAM_FIELDS = {
     { key: 'minTransaction', label: 'Minimum transaction to earn (₹)' },
     { key: 'bonusFloor', label: 'Minimum bonus cashback, even if capped (₹)' },
   ],
+  annual_milestone_only: [
+    { key: 'annualMilestoneTarget', label: 'Annual milestone spend (₹)' },
+    { key: 'annualMilestoneLabel', label: 'Annual milestone reward', isText: true },
+  ],
   hsbc_premier_flat_capped: [
     { key: 'baseRate', label: 'Base rate (%)' },
     { key: 'categoryMonthlyCap', label: 'Max capped-category spend per month (₹)' },
@@ -840,10 +844,10 @@ export default function SettingsModal({ visible, onClose }) {
                   value={newCatName}
                   onChangeText={setNewCatName}
                   placeholder={`New ${categoryLedger} category name...`}
-                  className={`${input} flex-1 mb-0`}
+                  className={`${input} flex-1 mb-0 h-11`}
                 />
-                <Pressable onPress={handleAddCategory} disabled={addingCat || !newCatName.trim()} className="min-h-12 px-6 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
-                  <Text className="font-body-semibold text-white text-base">{addingCat ? 'Saving...' : 'Add'}</Text>
+                <Pressable onPress={handleAddCategory} disabled={addingCat || !newCatName.trim()} className="h-11 px-5 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                  <Text className="font-body-semibold text-white text-sm">{addingCat ? 'Saving...' : 'Add'}</Text>
                 </Pressable>
               </View>
 
@@ -875,14 +879,14 @@ export default function SettingsModal({ visible, onClose }) {
                       onChangeText={setNewBudgetAmount}
                       keyboardType="decimal-pad"
                       placeholder="Limit (₹)"
-                      className={`${input} flex-1 mb-0`}
+                      className={`${input} flex-1 mb-0 h-11`}
                     />
                     <Pressable
                       onPress={handleAddBudget}
                       disabled={!newBudgetCategory || !newBudgetAmount || savingBudgetCat === newBudgetCategory}
-                      className="min-h-12 px-6 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+                      className="h-11 px-5 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
                     >
-                      <Text className="font-body-semibold text-white text-base">Add</Text>
+                      <Text className="font-body-semibold text-white text-sm">Add</Text>
                     </Pressable>
                   </View>
                 </>
@@ -1057,11 +1061,11 @@ export default function SettingsModal({ visible, onClose }) {
                   value={newCurrencyName}
                   onChangeText={(v) => setNewCurrencyName(v.toUpperCase())}
                   placeholder="New Currency Code (e.g. CAD, AUD, CHF)..."
-                  className={`${input} flex-1 mb-0 uppercase`}
+                  className={`${input} flex-1 mb-0 h-11 uppercase`}
                   autoCapitalize="characters"
                 />
-                <Pressable onPress={handleAddCurrency} disabled={addingCurr || !newCurrencyName.trim()} className="min-h-12 px-6 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
-                  <Text className="font-body-semibold text-white text-base">{addingCurr ? 'Saving...' : 'Add Currency'}</Text>
+                <Pressable onPress={handleAddCurrency} disabled={addingCurr || !newCurrencyName.trim()} className="h-11 px-5 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                  <Text className="font-body-semibold text-white text-sm">{addingCurr ? 'Saving...' : 'Add Currency'}</Text>
                 </Pressable>
               </View>
               <Text className={activeListCaption}>Active Database Currencies ({currencies.currencies.length})</Text>
@@ -1089,14 +1093,14 @@ export default function SettingsModal({ visible, onClose }) {
                   value={newPaymentMethodName}
                   onChangeText={setNewPaymentMethodName}
                   placeholder="e.g. UPI, Yash Forex"
-                  className={`${input} flex-1 mb-0`}
+                  className={`${input} flex-1 mb-0 h-11`}
                 />
                 <Pressable
                   onPress={handleAddPaymentMethod}
                   disabled={addingPaymentMethod || !newPaymentMethodName.trim()}
-                  className="min-h-12 px-6 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
+                  className="h-11 px-5 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50"
                 >
-                  <Text className="font-body-semibold text-white text-base">{addingPaymentMethod ? 'Saving...' : 'Add'}</Text>
+                  <Text className="font-body-semibold text-white text-sm">{addingPaymentMethod ? 'Saving...' : 'Add'}</Text>
                 </Pressable>
               </View>
               <View className="flex-row flex-wrap mb-3" style={{ gap: 8 }}>
@@ -1504,9 +1508,9 @@ export default function SettingsModal({ visible, onClose }) {
               <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Members Database</Text>
               <Text className="font-body text-xs text-muted-text mb-3">Persons/Partners in your household ledger. Stored dynamically in database.</Text>
               <View className="flex-row gap-2 mb-3">
-                <TextInput value={newMemberName} onChangeText={setNewMemberName} placeholder="New Member Name..." className={`${input} flex-1 mb-0`} />
-                <Pressable onPress={handleAddMember} disabled={addingMember || !newMemberName.trim()} className="min-h-12 px-6 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
-                  <Text className="font-body-semibold text-white text-base">{addingMember ? 'Saving...' : 'Add Member'}</Text>
+                <TextInput value={newMemberName} onChangeText={setNewMemberName} placeholder="New Member Name..." className={`${input} flex-1 mb-0 h-11`} />
+                <Pressable onPress={handleAddMember} disabled={addingMember || !newMemberName.trim()} className="h-11 px-5 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                  <Text className="font-body-semibold text-white text-sm">{addingMember ? 'Saving...' : 'Add Member'}</Text>
                 </Pressable>
               </View>
               <Text className={activeListCaption}>Active Database Members ({dbMembers.length})</Text>
@@ -1656,7 +1660,7 @@ export default function SettingsModal({ visible, onClose }) {
                       className="flex-1 min-w-0 font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3.5 py-2.5 bg-paper tracking-widest"
                       style={{ minWidth: 0 }}
                     />
-                    <Pressable onPress={() => handleSavePinConfig()} disabled={newPin.length !== 4} className="min-h-12 px-5 shrink-0 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                    <Pressable onPress={() => handleSavePinConfig()} disabled={newPin.length !== 4} className="min-h-11 px-5 shrink-0 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
                       <Text className="font-body-semibold text-white text-sm">Save PIN</Text>
                     </Pressable>
                   </View>

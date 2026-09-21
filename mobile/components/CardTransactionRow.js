@@ -3,7 +3,7 @@ import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-nativ
 import CardStrategyFields from './CardStrategyFields';
 import DateField from './DateField';
 import { updateCardTransaction } from '../lib/firebase';
-import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward } from '../lib/utils';
+import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward, isStatementOnlyCard } from '../lib/utils';
 import { reportError } from '../lib/errorReporting';
 
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
@@ -98,7 +98,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
             <TextInput
               value={draftAmount}
               onChangeText={setDraftAmount}
-              keyboardType="decimal-pad"
+              keyboardType="numbers-and-punctuation"
               className="font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper"
             />
           </View>
@@ -157,7 +157,10 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
       <View className="flex-1 min-w-0">
         <View className="flex-row items-baseline justify-between gap-2">
           <View className="flex-row items-baseline flex-wrap gap-1.5 flex-1">
-            <Text className="font-mono-bold text-base text-ink">{formatCurrency(txn.amount)}</Text>
+            <Text className={`font-mono-bold text-base ${txn.amount < 0 ? 'text-ledger-green' : 'text-ink'}`}>{formatCurrency(txn.amount)}</Text>
+            {txn.amount < 0 && !isStatementOnlyCard(card) && (
+              <Text className="font-body-semibold text-2xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">Refund</Text>
+            )}
             {perTxn && perTxn.overridden && (
               <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
                 💳 {formatReward(perTxn.earned, cycleReward.unit)} (edited)
@@ -165,7 +168,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
             )}
             {perTxn && !perTxn.overridden && !isAggregate && (
               <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
-                💳 +{formatReward(perTxn.earned, cycleReward.unit)}
+                💳 {perTxn.earned >= 0 ? '+' : ''}{formatReward(perTxn.earned, cycleReward.unit)}
               </Text>
             )}
             {perTxn && !perTxn.overridden && isAggregate && perTxn.estimated > 0 && (
