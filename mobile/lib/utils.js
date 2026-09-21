@@ -1762,16 +1762,16 @@ export const CARD_STRATEGY_DEFAULTS = {
 
 // When each card's reward actually lands in the account, relative to the
 // statement date (the day a billing cycle closes): "statement" + offset, or
-// "next_statement" + offset for a card that credits against the following
-// month's statement. Not editable params - these are fixed by each bank's
-// terms, and a numeric-only params form has no place for a basis string.
+// a fixed day of the month after the statement ("day_of_next_month"). Not
+// editable params - these are fixed by each bank's terms, and a numeric-only
+// params form has no place for a basis string.
 export const CARD_CREDIT_TIMING = {
   hdfc_diners_slab_milestone: { basis: 'statement', offsetDays: 0 },
   sbi_two_channel_cashback: { basis: 'statement', offsetDays: 0 },
   // HSBC Live+ cashback posts on the 2nd day after the statement is generated.
   hsbc_tiered_cashback_aggregate: { basis: 'statement', offsetDays: 2 },
-  // Axis cashback posts 2 days before the next month's statement is generated.
-  axis_supermoney_dual_pool: { basis: 'next_statement', offsetDays: -2 },
+  // Axis cashback posts on the 10th of the month after the statement.
+  axis_supermoney_dual_pool: { basis: 'day_of_next_month', day: 10 },
   hsbc_premier_flat_capped: { basis: 'statement', offsetDays: 0 },
   annual_milestone_only: { basis: 'statement', offsetDays: 0 },
 };
@@ -2552,8 +2552,13 @@ function firstOfNextMonth(monthKey) {
 // CARD_CREDIT_TIMING for each card's rule.
 export function getRewardCreditDate(card, cycleEnd) {
   const timing = CARD_CREDIT_TIMING[card?.rewardStrategy] || { basis: 'statement', offsetDays: 0 };
+  if (timing.basis === 'day_of_next_month') {
+    const [y, m] = cycleEnd.split('-').map(Number);
+    const nextMonth = new Date(y, m, 1);
+    return `${nextMonth.getFullYear()}-${pad2(nextMonth.getMonth() + 1)}-${pad2(timing.day)}`;
+  }
   const base = timing.basis === 'next_statement' ? getCardCycleForDate(cycleEnd, card?.billingCycleDay ?? 1).cycleEnd : cycleEnd;
-  return addDaysISO(base, timing.offsetDays);
+  return addDaysISO(base, timing.offsetDays || 0);
 }
 
 // Cards whose statement total is rounded to a whole rupee: the sub-rupee

@@ -2255,10 +2255,11 @@ test('an older stored Diners rule set still gets the insurance monthly cap and g
   assert.equal(ledger.credited, 50, 'grocery points for August land on 2026-09-01');
 });
 
-test('credit dates: Diners statement day, HSBC Live+ +2 days, Axis 2 days before the next statement', () => {
+test('credit dates: Diners statement day, HSBC Live+ +2 days, Axis the 10th of the next month', () => {
   assert.equal(getRewardCreditDate({ rewardStrategy: 'hdfc_diners_slab_milestone', billingCycleDay: 10 }, '2026-09-10'), '2026-09-10');
   assert.equal(getRewardCreditDate({ rewardStrategy: 'hsbc_tiered_cashback_aggregate', billingCycleDay: 10 }, '2026-09-10'), '2026-09-12');
-  assert.equal(getRewardCreditDate({ rewardStrategy: 'axis_supermoney_dual_pool', billingCycleDay: 10 }, '2026-09-10'), '2026-10-08');
+  assert.equal(getRewardCreditDate({ rewardStrategy: 'axis_supermoney_dual_pool', billingCycleDay: 10 }, '2026-09-10'), '2026-10-10');
+  assert.equal(getRewardCreditDate({ rewardStrategy: 'axis_supermoney_dual_pool', billingCycleDay: 25 }, '2026-12-25'), '2027-01-10', 'rolls into the next year');
 });
 
 test('Diners grocery points credit together on the 1st of the next month, the rest on the statement date', () => {

@@ -3,7 +3,7 @@
     "name": "Splitkhata",
     "slug": "splitkhata",
     "scheme": "splitkhata",
-    "version": "1.6.0",
+    "version": "1.6.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
