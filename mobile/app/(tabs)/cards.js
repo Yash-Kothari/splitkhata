@@ -15,7 +15,6 @@ import {
   isStatementOnlyCard,
   resolveCardParams,
   computeCardMilestoneProgress,
-  computeQuarterlyMilestoneBonusEarned,
   getAnnualMilestoneWindow,
   computeCardCapStatus,
   getQuarterBounds,
@@ -88,18 +87,17 @@ export default function Cards() {
   const params = selectedCard ? resolveCardParams(selectedCard, today) : {};
   // Quarterly milestone bonuses (e.g. Diners' 10,000 pts at ₹4L/quarter) are
   // a separate lump sum on top of computeCardCycleReward's per-cycle math -
-  // see computeQuarterlyMilestoneBonusEarned for why they can't live inside
-  // that function.
+  // computeCardRewardLedger folds them in as their own dated lumps, so
+  // ledger.credited/pending already reflect them; see
+  // computeQuarterlyMilestoneLumps for why they can't live inside
+  // computeCardCycleReward and for the credit-date assumption.
   const quarterlyStarting = {
     spend: selectedCard?.quarterlyMilestoneStartingSpend || 0,
     quarterStart: selectedCard?.quarterlyMilestoneStartingQuarter || null,
   };
-  const quarterlyBonusEarned = selectedCard
-    ? computeQuarterlyMilestoneBonusEarned(cardTxns, selectedCard.id, params.quarterlyMilestoneTarget, params.quarterlyMilestoneBonus, today, quarterlyStarting)
-    : 0;
   // Only rewards already credited count as "in account"; the rest is shown as pending with its date.
   const lifetimeRewardTotal =
-    (selectedCard?.startingRewardPoints || 0) + ledger.credited + quarterlyBonusEarned - lifetimePointsRedeemed;
+    (selectedCard?.startingRewardPoints || 0) + ledger.credited - lifetimePointsRedeemed;
 
   const { quarterStart, quarterEnd } = getQuarterBounds(today);
   const { periodStart: annualPeriodStart, periodEnd: annualPeriodEnd } = getAnnualMilestoneWindow(
@@ -294,7 +292,9 @@ export default function Cards() {
                           <Text className="font-body text-2xs text-muted-text mt-1">
                             {formatCurrency(quarterlyMilestone.spent)} of {formatCurrency(quarterlyMilestone.target)} -{' '}
                             {quarterlyMilestone.pctUsed >= 1
-                              ? `${params.quarterlyMilestoneBonus?.toLocaleString('en-IN')} bonus points earned, included above`
+                              ? quarterEnd <= today
+                                ? `${params.quarterlyMilestoneBonus?.toLocaleString('en-IN')} bonus points earned, included above`
+                                : `Target reached - ${params.quarterlyMilestoneBonus?.toLocaleString('en-IN')} bonus points pending, credits ${new Date(`${quarterEnd}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`
                               : `${params.quarterlyMilestoneBonus?.toLocaleString('en-IN')} bonus points at target`}
                           </Text>
                         </View>

@@ -2337,22 +2337,37 @@ export function computeCardMilestoneProgress(transactions, cardId, periodStart, 
 // default) is a lump sum credited once a calendar quarter's spend crosses
 // the target - unlike every other reward path in this file, it isn't part
 // of any single billing cycle's earn calculation (a quarter rarely lines up
-// with one cycle), so a lifetime reward total has to sweep every quarter the
-// card has transactions in and credit each one that hit target, rather than
-// folding it into computeDinersCycleReward. Was previously rendered as text
-// next to the progress bar and never added to any total - the bank pays it,
-// the app just wasn't counting it.
-export function computeQuarterlyMilestoneBonusEarned(transactions, cardId, target, bonus, asOfDate, starting = {}) {
-  if (!target || !bonus) return 0;
+// with one cycle), so this has to sweep every quarter the card has
+// transactions in and flag each one that hit target, rather than folding it
+// into computeDinersCycleReward.
+//
+// Each hit quarter becomes a lump dated at its credit date, exactly like
+// computeCardRewardLedger's per-cycle lumps, so it can flow through the same
+// pending/credited split as every other reward instead of counting as
+// in-account the instant the target is crossed. HDFC doesn't publish an
+// exact credit date for this benefit; absent that, this assumes the 1st of
+// the month right after the quarter ends - the same lag already used for
+// Diners' own grocery points (creditOn: 'first_of_next_month') and Axis's
+// cashback (day_of_next_month), so it's a reasonable, consistent default
+// rather than a guess pulled from nowhere. `getQuarterBounds`'s `quarterEnd`
+// already *is* that date (e.g. Q1 Jan-Mar -> 2026-04-01), so it's reused
+// directly as the credit date.
+//
+// Recomputed from scratch every call, never persisted - so if a refund later
+// drops a quarter's spend back under target, that quarter simply stops
+// producing a lump the next time this runs, withdrawing the bonus whether it
+// was still pending or already counted as credited.
+export function computeQuarterlyMilestoneLumps(transactions, cardId, target, bonus, asOfDate, starting = {}) {
+  if (!target || !bonus) return [];
   const cardTxns = transactions.filter((t) => t.cardId === cardId);
   // Spend made in the current quarter before this app started tracking the
   // card only counts for that one quarter (starting.quarterStart).
   const startingSpend = starting.spend || 0;
-  if (cardTxns.length === 0 && !(startingSpend > 0 && starting.quarterStart)) return 0;
+  if (cardTxns.length === 0 && !(startingSpend > 0 && starting.quarterStart)) return [];
   const dates = cardTxns.map((t) => t.date);
   if (startingSpend > 0 && starting.quarterStart) dates.push(starting.quarterStart);
   const firstDate = dates.reduce((min, d) => (d < min ? d : min), dates[0]);
-  let total = 0;
+  const lumps = [];
   let cursor = firstDate;
   let guard = 0;
   while (cursor <= asOfDate && guard < 400) {
@@ -2361,11 +2376,21 @@ export function computeQuarterlyMilestoneBonusEarned(transactions, cardId, targe
       transactions, cardId, quarterStart, quarterEnd, target,
       starting.quarterStart === quarterStart ? startingSpend : 0,
     );
-    if (progress.spent >= target) total += bonus;
+    if (progress.spent >= target) lumps.push({ date: quarterEnd, amount: bonus, quarterStart, quarterEnd });
     cursor = quarterEnd;
     guard += 1;
   }
-  return total;
+  return lumps;
+}
+
+// Total milestone bonus earned across every quarter that crossed target, up
+// to `asOfDate` - regardless of whether each one's credit date has actually
+// arrived yet (see computeQuarterlyMilestoneLumps for that split). Kept as
+// its own function since callers that just want "has this been earned"
+// (e.g. the milestone progress bar) shouldn't have to sum lumps themselves.
+export function computeQuarterlyMilestoneBonusEarned(transactions, cardId, target, bonus, asOfDate, starting = {}) {
+  return computeQuarterlyMilestoneLumps(transactions, cardId, target, bonus, asOfDate, starting)
+    .reduce((sum, l) => sum + l.amount, 0);
 }
 
 // The annual fee-waiver/bonus milestone runs on the card's own 12-month
@@ -2622,6 +2647,26 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
       }
     }
     lumps.push({ date: getRewardCreditDate(card, cycle.cycleEnd), amount: adjusted.totalReward - separate });
+  }
+
+  // Quarterly milestone bonuses (e.g. Diners' 10,000 pts at ₹4L/quarter)
+  // aren't tied to any one billing cycle, so they're swept in as their own
+  // lumps here rather than inside the cycle loop above - see
+  // computeQuarterlyMilestoneLumps for the credit-date assumption.
+  const milestoneParams = resolveCardParams(card, today);
+  if (milestoneParams.quarterlyMilestoneTarget && milestoneParams.quarterlyMilestoneBonus) {
+    const starting = {
+      spend: card?.quarterlyMilestoneStartingSpend || 0,
+      quarterStart: card?.quarterlyMilestoneStartingQuarter || null,
+    };
+    const milestoneLumps = computeQuarterlyMilestoneLumps(
+      cardTxns, card.id, milestoneParams.quarterlyMilestoneTarget, milestoneParams.quarterlyMilestoneBonus, today, starting,
+    );
+    for (const m of milestoneLumps) {
+      lumps.push({ date: m.date, amount: m.amount });
+      total += m.amount;
+      unit = unit || 'points';
+    }
   }
 
   const credited = lumps.filter((l) => l.date <= today).reduce((sum, l) => sum + l.amount, 0);
