@@ -15,6 +15,7 @@ import {
   isStatementOnlyCard,
   resolveCardParams,
   computeCardMilestoneProgress,
+  getQuarterlyMilestoneCreditDate,
   getAnnualMilestoneWindow,
   computeCardCapStatus,
   getQuarterBounds,
@@ -90,7 +91,8 @@ export default function Cards() {
   // computeCardRewardLedger folds them in as their own dated lumps, so
   // ledger.credited/pending already reflect them; see
   // computeQuarterlyMilestoneLumps for why they can't live inside
-  // computeCardCycleReward and for the credit-date assumption.
+  // computeCardCycleReward and getQuarterlyMilestoneCreditDate for how their
+  // date is worked out.
   const quarterlyStarting = {
     spend: selectedCard?.quarterlyMilestoneStartingSpend || 0,
     quarterStart: selectedCard?.quarterlyMilestoneStartingQuarter || null,
@@ -100,6 +102,9 @@ export default function Cards() {
     (selectedCard?.startingRewardPoints || 0) + ledger.credited - lifetimePointsRedeemed;
 
   const { quarterStart, quarterEnd } = getQuarterBounds(today);
+  const quarterlyMilestoneCreditDate = selectedCard && params.quarterlyMilestoneTarget
+    ? getQuarterlyMilestoneCreditDate(selectedCard, quarterEnd)
+    : null;
   const { periodStart: annualPeriodStart, periodEnd: annualPeriodEnd } = getAnnualMilestoneWindow(
     selectedCard?.annualMilestoneAnchorMonth,
     today,
@@ -292,9 +297,9 @@ export default function Cards() {
                           <Text className="font-body text-2xs text-muted-text mt-1">
                             {formatCurrency(quarterlyMilestone.spent)} of {formatCurrency(quarterlyMilestone.target)} -{' '}
                             {quarterlyMilestone.pctUsed >= 1
-                              ? quarterEnd <= today
+                              ? quarterlyMilestoneCreditDate <= today
                                 ? `${params.quarterlyMilestoneBonus?.toLocaleString('en-IN')} bonus points earned, included above`
-                                : `Target reached - ${params.quarterlyMilestoneBonus?.toLocaleString('en-IN')} bonus points pending, credits ${new Date(`${quarterEnd}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`
+                                : `Target reached - ${params.quarterlyMilestoneBonus?.toLocaleString('en-IN')} bonus points pending, credits ${new Date(`${quarterlyMilestoneCreditDate}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`
                               : `${params.quarterlyMilestoneBonus?.toLocaleString('en-IN')} bonus points at target`}
                           </Text>
                         </View>

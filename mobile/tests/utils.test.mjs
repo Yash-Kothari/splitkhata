@@ -74,6 +74,7 @@ import {
   computeCardMilestoneProgress,
   computeQuarterlyMilestoneBonusEarned,
   computeQuarterlyMilestoneLumps,
+  getQuarterlyMilestoneCreditDate,
   getAnnualMilestoneWindow,
   computeCardCapStatus,
   applyRewardOverrides,
@@ -2303,36 +2304,38 @@ test('quarterly milestone counts spend made before the card was tracked, for tha
 });
 
 // --- Quarterly milestone bonus flows through the reward ledger's pending/credited split ---
-// (rather than counting as "in account" the instant the target is crossed - see
-// computeQuarterlyMilestoneLumps for the assumed credit date.)
+// (rather than counting as "in account" the instant the target is crossed - it lands with
+// the statement that closes right after the quarter ends, see computeQuarterlyMilestoneLumps.)
 
-test('computeQuarterlyMilestoneLumps dates each crossed quarter\'s bonus at the 1st of the next month', () => {
+test('computeQuarterlyMilestoneLumps dates each crossed quarter\'s bonus at the next statement after the quarter ends', () => {
+  const card = dinersCard(); // billingCycleDay: 10
   const txns = [
-    { cardId: 'c1', date: '2026-02-01', amount: 500000, category: 'regular' }, // Q1 (Jan-Mar): crosses target
-    { cardId: 'c1', date: '2026-05-01', amount: 500000, category: 'regular' }, // Q2 (Apr-Jun): crosses target
-    { cardId: 'c1', date: '2026-08-01', amount: 100000, category: 'regular' }, // Q3: under target, no lump
+    { cardId: 'd1', date: '2026-02-01', amount: 500000, category: 'regular' }, // Q1 (Jan-Mar): crosses target
+    { cardId: 'd1', date: '2026-05-01', amount: 500000, category: 'regular' }, // Q2 (Apr-Jun): crosses target
+    { cardId: 'd1', date: '2026-08-01', amount: 100000, category: 'regular' }, // Q3: under target, no lump
   ];
-  const lumps = computeQuarterlyMilestoneLumps(txns, 'c1', 400000, 10000, '2026-12-31');
+  const lumps = computeQuarterlyMilestoneLumps(card, txns, 400000, 10000, '2026-12-31');
   assert.deepEqual(lumps, [
-    { date: '2026-04-01', amount: 10000, quarterStart: '2026-01-01', quarterEnd: '2026-04-01' },
-    { date: '2026-07-01', amount: 10000, quarterStart: '2026-04-01', quarterEnd: '2026-07-01' },
+    // Q1 ends 2026-04-01; the first statement on/after that (billing day 10) closes 2026-04-10.
+    { date: '2026-04-10', amount: 10000, quarterStart: '2026-01-01', quarterEnd: '2026-04-01' },
+    { date: '2026-07-10', amount: 10000, quarterStart: '2026-04-01', quarterEnd: '2026-07-01' },
   ]);
 });
 
 test('quarterly milestone bonus sits in "pending" until its credit date, not in the credited total', () => {
   const card = dinersCard();
   const txns = [{ id: 'a', cardId: 'd1', date: '2026-02-15', amount: 500000, category: 'regular' }]; // crosses Q1's 400000 target
-  const ledger = computeCardRewardLedger(card, txns, '2026-03-31'); // one day before Q1's 2026-04-01 credit date
-  assert.deepEqual(ledger.pending.find((p) => p.date === '2026-04-01'), { date: '2026-04-01', amount: 10000 });
+  const ledger = computeCardRewardLedger(card, txns, '2026-04-09'); // one day before Q1's 2026-04-10 credit date
+  assert.deepEqual(ledger.pending.find((p) => p.date === '2026-04-10'), { date: '2026-04-10', amount: 10000 });
 });
 
 test('quarterly milestone bonus moves into the credited total once its credit date arrives', () => {
   const card = dinersCard();
   const txns = [{ id: 'a', cardId: 'd1', date: '2026-02-15', amount: 500000, category: 'regular' }];
-  const before = computeCardRewardLedger(card, txns, '2026-03-31');
-  const onDate = computeCardRewardLedger(card, txns, '2026-04-01');
+  const before = computeCardRewardLedger(card, txns, '2026-04-09');
+  const onDate = computeCardRewardLedger(card, txns, '2026-04-10');
   assert.equal(onDate.credited - before.credited, 10000, 'nothing else changes between these two dates except the milestone bonus landing');
-  assert.equal(onDate.pending.find((p) => p.date === '2026-04-01'), undefined, 'no longer pending once its date has passed');
+  assert.equal(onDate.pending.find((p) => p.date === '2026-04-10'), undefined, 'no longer pending once its date has passed');
 });
 
 test('a refund that drops a quarter back under target withdraws a bonus that would already show as credited', () => {
@@ -2341,11 +2344,17 @@ test('a refund that drops a quarter back under target withdraws a bonus that wou
   const spendOnly = [{ id: 'a', cardId: 'd1', date: '2026-02-10', amount: 420000, category: 'regular' }];
   // The refund reverses 1,000 pts at the same slab rate, and drops the quarter's spend to 390,000 - under target.
   const withRefund = [...spendOnly, { id: 'b', cardId: 'd1', date: '2026-02-20', amount: -30000, category: 'regular' }];
-  const asOf = '2026-12-31'; // long after the quarter's 2026-04-01 credit date, so the bonus would already read as credited
+  const asOf = '2026-12-31'; // long after the quarter's 2026-04-10 credit date, so the bonus would already read as credited
   const before = computeCardRewardLedger(card, spendOnly, asOf);
   const after = computeCardRewardLedger(card, withRefund, asOf);
   assert.equal(before.credited - after.credited, 11000, '10,000 milestone bonus withdrawn + 1,000 pts the refund itself reverses');
-  assert.equal(computeQuarterlyMilestoneLumps(withRefund, 'd1', 400000, 10000, asOf).length, 0, 'the quarter no longer crossed target once the refund counts');
+  assert.equal(computeQuarterlyMilestoneLumps(card, withRefund, 400000, 10000, asOf).length, 0, 'the quarter no longer crossed target once the refund counts');
+});
+
+test('getQuarterlyMilestoneCreditDate follows the billing cycle, not a fixed calendar day', () => {
+  assert.equal(getQuarterlyMilestoneCreditDate({ billingCycleDay: 10 }, '2026-04-01'), '2026-04-10');
+  assert.equal(getQuarterlyMilestoneCreditDate({ billingCycleDay: 1 }, '2026-04-01'), '2026-04-01', 'a cycle day of 1 happens to land exactly on the quarter boundary');
+  assert.equal(getQuarterlyMilestoneCreditDate({ billingCycleDay: 25 }, '2026-04-01'), '2026-04-25');
 });
 
 test('formatCurrency puts the minus sign before the currency symbol', () => {
