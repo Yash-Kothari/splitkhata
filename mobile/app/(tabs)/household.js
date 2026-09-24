@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, ScrollView } from 'react-native';
+import { View, ScrollView, Platform, useWindowDimensions } from 'react-native';
 import {
   subscribeToExpenses,
   subscribeToCategories,
@@ -11,12 +11,13 @@ import {
   subscribeToRecurringRules,
   deleteExpense,
   deleteCardTransaction,
+  clearTripRollupPointer,
 } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
 import { useJump } from '../../lib/JumpContext';
 import { useUndoDelete } from '../../lib/useUndoDelete';
 import { usePaymentInstruments } from '../../lib/usePaymentInstruments';
-import { DEFAULT_PERSONS, DEFAULT_CATEGORIES, todayISO, getMonthKey, getAvailableMonths, formatCurrency } from '../../lib/utils';
+import { DEFAULT_PERSONS, DEFAULT_CATEGORIES, todayISO, getMonthKey, getAvailableMonths, formatCurrency, memberForUser } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import AddEntryForm from '../../components/AddEntryForm';
 import EntryList from '../../components/EntryList';
@@ -48,6 +49,9 @@ export default function Household() {
   async function deleteHouseholdEntry(id) {
     const entry = entries?.find((e) => e.id === id);
     await deleteExpense(id);
+    if (entry?.isTripRollup) {
+      clearTripRollupPointer(id).catch((err) => reportError(err, "Deleted the trip line, but couldn't reset the trip's rollup"));
+    }
     if (entry?.cardTransactionId) {
       try {
         await deleteCardTransaction(entry.cardTransactionId);
@@ -93,6 +97,12 @@ export default function Household() {
     }
   }, [pendingJump, setPendingJump]);
 
+  // order-* classes only work on the website; on the phone the rail (budget
+  // alerts, forecast, reminder) rendered below the entire passbook, so the
+  // stacked column is reversed there instead to put it first, as on the web.
+  const { width } = useWindowDimensions();
+  const nativeStacked = Platform.OS !== 'web' && width < 1024;
+
   return (
     <View className="flex-1 bg-paper">
       <AppHeader badge="🏠 Household Ledger" />
@@ -102,11 +112,11 @@ export default function Household() {
             right - order-* keeps the rail's time-sensitive alerts appearing
             first when stacked on a narrow screen, same as before this
             split, while visually becoming the right-hand column at lg:. */}
-        <View className="flex-col lg:flex-row" style={{ gap: 20 }}>
+        <View className="flex-col lg:flex-row" style={nativeStacked ? { gap: 20, flexDirection: 'column-reverse' } : { gap: 20 }}>
           <View className="order-2 lg:order-1 lg:flex-1">
             <View className="px-4">
               <AddEntryForm
-                deviceName={user?.displayName}
+                deviceName={memberForUser(user, members) || undefined}
                 ledger="household"
                 dbCategories={categories}
                 dbMembers={members}

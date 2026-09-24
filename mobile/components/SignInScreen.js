@@ -3,6 +3,7 @@ import { View, Text, Pressable, ActivityIndicator, Platform } from 'react-native
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import { signInWithGoogleIdToken, signInWithGooglePopup, signInDevTestUser, IS_DEV_EMULATOR } from '../lib/firebase';
+import { themeColor } from '../lib/theme';
 
 // Matches web's shadow-xl on this specific card (GoogleSignIn in App.jsx) -
 // a taller, softer shadow than .panel-card's own box-shadow, which is what
@@ -96,7 +97,7 @@ export default function SignInScreen() {
 
         {IS_DEV_EMULATOR ? (
           <View className="flex-row items-center gap-2">
-            <ActivityIndicator color="#3D7068" />
+            <ActivityIndicator color={themeColor('ledgerGreen', false)} />
             <Text className="font-body text-xs text-muted-text">Signing in as a dev test user (emulator)…</Text>
           </View>
         ) : configMissing ? (

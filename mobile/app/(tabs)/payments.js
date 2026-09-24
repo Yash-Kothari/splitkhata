@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, Alert } from 'react-native';
-import { ScrollView } from 'react-native';
+import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView } from 'react-native';
+import { notify } from '../../lib/dialogs';
 import {
   subscribeToExpenses,
   subscribeToMembers,
@@ -8,9 +8,10 @@ import {
   addExpense,
   deleteExpense,
   deleteCardTransaction,
+  clearTripRollupPointer,
 } from '../../lib/firebase';
 import { useUndoDelete } from '../../lib/useUndoDelete';
-import { DEFAULT_PERSONS, computeBalance, todayISO, formatCurrency } from '../../lib/utils';
+import { DEFAULT_PERSONS, computeBalance, todayISO, formatCurrency, parseAmountInput, isValidISODate } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import AppHeader from '../../components/AppHeader';
 import Card from '../../components/Card';
@@ -21,11 +22,24 @@ import EntryList from '../../components/EntryList';
 import PaymentReminderBanner from '../../components/PaymentReminderBanner';
 import UndoToast from '../../components/UndoToast';
 
-function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
-  const hasPoints = travelEntries.some((e) => Number(e.rewardPoints || 0) !== 0);
+// The early return lives in this hook-free wrapper so the body's hooks run
+// in the same order on every render - returning before a later useMemo
+// crashed the whole tab ("Rendered more/fewer hooks") whenever the first
+// points entry arrived or the last one was deleted.
+function RewardPointsCard(props) {
+  const hasPoints = props.travelEntries.some((e) => Number(e.rewardPoints || 0) !== 0);
+  if (!hasPoints) return null;
+  return <RewardPointsCardBody {...props} />;
+}
+
+function RewardPointsCardBody({ entries, travelEntries, dbMembers, onSaveError }) {
+  // A trip rollup line carries that trip's points balance, but the trip's own
+  // travel entries are already counted below - including both counted every
+  // rolled-up trip's points twice.
+  const pointsEntries = useMemo(() => entries.filter((e) => !e.isTripRollup), [entries]);
   const pointsBalance = useMemo(
-    () => (hasPoints ? computeBalance([...entries, ...travelEntries], null, dbMembers, 'rewardPoints') : null),
-    [entries, travelEntries, dbMembers, hasPoints],
+    () => computeBalance([...pointsEntries, ...travelEntries], null, dbMembers, 'rewardPoints'),
+    [pointsEntries, travelEntries, dbMembers],
   );
 
   const [settling, setSettling] = useState(false);
@@ -35,8 +49,6 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
-
-  if (!hasPoints) return null;
 
   function startSettling() {
     const [defaultPayer, defaultOwedBy] =
@@ -49,20 +61,28 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
     setSettling(true);
   }
 
-  const parsedAmount = parseFloat(amount) || 0;
+  const parsedAmount = parseAmountInput(amount) || 0;
   const previewBalance = useMemo(() => {
     if (!parsedAmount || !payer || !owedBy || payer === owedBy) return null;
     return computeBalance(
-      [...entries, ...travelEntries, { rewardPoints: parsedAmount, payer, owedBy, splitType: 'settlement', split: true }],
+      [...pointsEntries, ...travelEntries, { rewardPoints: parsedAmount, payer, owedBy, splitType: 'settlement', split: true }],
       null,
       dbMembers,
       'rewardPoints',
     );
-  }, [entries, travelEntries, parsedAmount, payer, owedBy, dbMembers]);
+  }, [pointsEntries, travelEntries, parsedAmount, payer, owedBy, dbMembers]);
 
   async function handleConfirm() {
-    const parsed = Math.round(parseFloat(amount));
-    if (!parsed || parsed <= 0 || !payer || !owedBy || payer === owedBy) return;
+    const parsed = Math.round(parseAmountInput(amount) || 0);
+    if (!payer || !owedBy || payer === owedBy) return;
+    if (!(parsed > 0)) {
+      notify('Check the points', 'Enter a whole number of points, like 1500.');
+      return;
+    }
+    if (!isValidISODate(date)) {
+      notify('Check the date', 'Use the format YYYY-MM-DD.');
+      return;
+    }
     setSaving(true);
     try {
       await addExpense({
@@ -81,7 +101,7 @@ function RewardPointsCard({ entries, travelEntries, dbMembers, onSaveError }) {
       setSettling(false);
     } catch (err) {
       onSaveError?.(err);
-      Alert.alert('Could not save', err?.message || String(err));
+      notify('Could not save', err?.message || String(err));
     } finally {
       setSaving(false);
     }
@@ -210,6 +230,9 @@ export default function Payments() {
   async function deletePaymentsEntry(id) {
     const entry = [...(entries || []), ...travelEntries].find((e) => e.id === id);
     await deleteExpense(id);
+    if (entry?.isTripRollup) {
+      clearTripRollupPointer(id).catch((err) => reportError(err, "Deleted the trip line, but couldn't reset the trip's rollup"));
+    }
     if (entry?.cardTransactionId) {
       try {
         await deleteCardTransaction(entry.cardTransactionId);

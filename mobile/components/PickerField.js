@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
 import { View, Text, Pressable, Modal, ScrollView, Dimensions } from 'react-native';
 import Svg, { Polyline } from 'react-native-svg';
+import { useColorScheme } from 'nativewind';
+import { themeColor } from '../lib/theme';
 
 // Matches iOS Safari's actual <select> rendering on modern iOS: a compact
 // menu popover anchored right at the tapped control (checkmark next to the
@@ -15,6 +17,10 @@ function normalizeOptions(options) {
 }
 
 export default function PickerField({ label, value, options, onChange, labelExtra }) {
+  // SVG strokes don't follow the Tailwind colour tokens, so match --color-ink by hand -
+  // the fixed light-mode ink nearly vanished on the dark background.
+  const { colorScheme } = useColorScheme();
+  const chevronColor = themeColor('ink', colorScheme === 'dark');
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState(null);
   const rowRef = useRef(null);
@@ -61,7 +67,7 @@ export default function PickerField({ label, value, options, onChange, labelExtr
             polyline SVG) - a plain "▾" glyph renders at a different weight/size
             per platform font and in muted-text gray instead of web's ink color. */}
         <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-          <Polyline points="6,9 12,15 18,9" fill="none" stroke="#24304A" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
+          <Polyline points="6,9 12,15 18,9" fill="none" stroke={chevronColor} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
         </Svg>
       </Pressable>
 

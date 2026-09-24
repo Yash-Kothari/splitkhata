@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
+import { notify, confirmAsync } from '../lib/dialogs';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import Card from './Card';
-import { addExpense, updateExpense, deleteExpense, updateTripInDb, generateDigest } from '../lib/firebase';
+import { addExpense, generateDigest, clearTripRollupEntry, updateTripRollupEntry, createTripRollupEntry } from '../lib/firebase';
+import { themeColor } from '../lib/theme';
 import {
   formatCurrency,
   computeBalance,
@@ -16,6 +18,9 @@ import {
   PERSON_COLORS,
   groupByCategory,
   buildTripDigestPrompt,
+  parseAmountInput,
+  isValidISODate,
+  findBalanceIssues,
 } from '../lib/utils';
 
 // RN port of web's BalanceStrip.jsx - household net balance, or (ledger=
@@ -34,6 +39,11 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
     () => (hasMultipleMembers ? computeSettlements(balanceEntries, ledger, dbMembers) : null),
     [hasMultipleMembers, balanceEntries, ledger, dbMembers],
   );
+  // Entries the maths had to leave out (someone not on this ledger, an
+  // "owed" entry owed by its own payer...) - listed rather than silently
+  // shifting who owes whom.
+  const balanceIssues = useMemo(() => findBalanceIssues(balanceEntries, dbMembers), [balanceEntries, dbMembers]);
+  const [showIssues, setShowIssues] = useState(false);
   const memberTotals = useMemo(
     () => (isTravel ? computeMemberTotals(balanceEntries, dbMembers) : null),
     [balanceEntries, dbMembers, isTravel],
@@ -56,7 +66,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
     () => (hasPoints ? computeMemberTotals(entries, dbMembers, 'rewardPoints') : null),
     [entries, dbMembers, hasPoints],
   );
-  const totalSpend = useMemo(() => (isTravel ? computeTripTotalSpend(entries) : null), [entries, isTravel]);
+  const totalSpend = useMemo(() => (isTravel ? computeTripTotalSpend(entries, dbMembers) : null), [entries, isTravel, dbMembers]);
   const displayCurrency = 'INR';
   const categoryBreakdown = useMemo(() => (isTravel ? groupByCategory(entries, null, 'travel') : null), [entries, isTravel]);
   const digestPrompt = useMemo(() => {
@@ -107,7 +117,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
     setSettling(true);
   }
 
-  const parsedAmount = parseFloat(amount) || 0;
+  const parsedAmount = parseAmountInput(amount) || 0;
   const previewBalance = useMemo(() => {
     if (!parsedAmount || !settlePayer || !settleOwedBy || settlePayer === settleOwedBy) return null;
     return computeBalance(
@@ -118,8 +128,16 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
   }, [balanceEntries, parsedAmount, settlePayer, settleOwedBy, ledger, dbMembers]);
 
   async function handleConfirm() {
-    const parsed = parseFloat(amount);
-    if (!parsed || parsed <= 0 || !settlePayer || !settleOwedBy || settlePayer === settleOwedBy) return;
+    const parsed = parseAmountInput(amount);
+    if (!settlePayer || !settleOwedBy || settlePayer === settleOwedBy) return;
+    if (!(parsed > 0)) {
+      notify('Check the amount', 'Enter an amount like 1200 or 1200.50.');
+      return;
+    }
+    if (!isValidISODate(date)) {
+      notify('Check the date', 'Use the format YYYY-MM-DD.');
+      return;
+    }
     setSaving(true);
     try {
       await addExpense({
@@ -137,9 +155,30 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
       setSettling(false);
     } catch (err) {
       onSaveError?.(err);
-      Alert.alert('Could not save', err?.message || String(err));
+      notify('Could not save', err?.message || String(err));
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Once a guest joins a trip that was already rolled into the household
+  // ledger, the rollup controls below are replaced by the guest note - so
+  // this is the only way left to take the (now stale) household line back out.
+  async function handleRemoveRollupWithGuests() {
+    const ok = await confirmAsync({
+      title: 'Remove this trip from the main ledger?',
+      message: `The household line for ${tripName} (${formatCurrency(tripRollup.amount || 0)}) is deleted. The trip's own entries stay.`,
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
+    setRollingUp(true);
+    try {
+      await clearTripRollupEntry(tripId, tripRollup.entryId);
+    } catch (err) {
+      onSaveError?.(err);
+      notify('Could not update', err?.message || String(err));
+    } finally {
+      setRollingUp(false);
     }
   }
 
@@ -147,50 +186,43 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
     setRollingUp(true);
     try {
       if (rollupNowSettled) {
-        await deleteExpense(tripRollup.entryId);
-        if (tripId) {
-          await updateTripInDb(tripId, { rolledUpEntryId: null, rolledUpAmount: null, rolledUpDebtor: null, rolledUpCreditor: null });
-        }
+        await clearTripRollupEntry(tripId, tripRollup.entryId);
       } else {
         const rollupRewardPoints = hasPoints && pointsBalance && pointsBalance.status !== 'settled' ? pointsBalance.amount : null;
-        let entryId = tripRollup?.entryId;
+        const entryId = tripRollup?.entryId;
         if (entryId) {
-          await updateExpense(entryId, {
-            amount: balance.amount,
-            payer: balance.creditor,
-            owedBy: balance.debtor,
-            rewardPoints: rollupRewardPoints,
-          });
+          await updateTripRollupEntry(
+            tripId,
+            entryId,
+            { amount: balance.amount, payer: balance.creditor, owedBy: balance.debtor, rewardPoints: rollupRewardPoints },
+            { rolledUpEntryId: entryId, rolledUpAmount: balance.amount, rolledUpDebtor: balance.debtor, rolledUpCreditor: balance.creditor },
+          );
         } else {
           const lastEntryDate = getTripLastDate(entries) || todayISO();
-          entryId = await addExpense({
-            amount: balance.amount,
-            payer: balance.creditor,
-            owedBy: balance.debtor,
-            splitType: 'owed',
-            split: true,
-            category: 'Trip',
-            note: `From ${tripName} trip`,
-            date: lastEntryDate,
-            ledger: 'household',
-            tripName: '',
-            isTripRollup: true,
-            rewardPoints: rollupRewardPoints,
-          });
-        }
-        if (tripId) {
-          await updateTripInDb(tripId, {
-            rolledUpEntryId: entryId,
-            rolledUpAmount: balance.amount,
-            rolledUpDebtor: balance.debtor,
-            rolledUpCreditor: balance.creditor,
-          });
+          await createTripRollupEntry(
+            tripId,
+            {
+              amount: balance.amount,
+              payer: balance.creditor,
+              owedBy: balance.debtor,
+              splitType: 'owed',
+              split: true,
+              category: 'Trip',
+              note: `From ${tripName} trip`,
+              date: lastEntryDate,
+              ledger: 'household',
+              tripName: '',
+              isTripRollup: true,
+              rewardPoints: rollupRewardPoints,
+            },
+            { rolledUpAmount: balance.amount, rolledUpDebtor: balance.debtor, rolledUpCreditor: balance.creditor },
+          );
         }
       }
       setConfirmingRollup(false);
     } catch (err) {
       onSaveError?.(err);
-      Alert.alert('Could not update', err?.message || String(err));
+      notify('Could not update', err?.message || String(err));
     } finally {
       setRollingUp(false);
     }
@@ -277,7 +309,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
         <View className="mt-3 pt-3 border-t border-ink/10 flex-row flex-wrap gap-x-4 gap-y-1.5">
           {dbMembers.map((m) => (
             <View key={m} className="flex-row items-center gap-1.5">
-              <View className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: PERSON_COLORS[m] || '#3D7068' }} />
+              <View className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: PERSON_COLORS[m] || themeColor('ledgerGreen', false) }} />
               <Text className="text-xs text-muted-text">{m}</Text>
               <Text className="font-mono text-xs text-ink">{formatCurrency(memberTotals?.[m] || 0)}</Text>
             </View>
@@ -289,7 +321,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
         <View className="mt-1.5 flex-row flex-wrap gap-x-4 gap-y-1.5">
           {dbMembers.map((m) => (
             <View key={m} className="flex-row items-center gap-1.5">
-              <View className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: PERSON_COLORS[m] || '#3D7068' }} />
+              <View className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: PERSON_COLORS[m] || themeColor('ledgerGreen', false) }} />
               <Text className="text-xs text-muted-text">{m}</Text>
               <Text className="font-mono text-xs text-ink">
                 💳 {Math.round(pointsMemberTotals?.[m] || 0).toLocaleString('en-IN')} pts
@@ -326,7 +358,22 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
       <View className="flex-col sm:flex-row sm:items-center w-full sm:w-auto mt-3 sm:mt-0" style={{ gap: 8 }}>
       {isTravel ? (
         hasMultipleMembers ? (
-          <Text className="font-body text-2xs text-muted-text">Settle with guests separately - can't roll into household.</Text>
+          <>
+            {!settling && (
+              <Pressable onPress={startSettling} className="w-full sm:w-auto min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center">
+                <Text className="font-body-semibold text-xs text-white">Record Payment</Text>
+              </Pressable>
+            )}
+            {tripRollup ? (
+              <Pressable
+                onPress={handleRemoveRollupWithGuests}
+                disabled={rollingUp}
+                className={`w-full sm:w-auto min-h-9 px-3.5 rounded-lg bg-mustard/90 items-center justify-center ${rollingUp ? 'opacity-50' : ''}`}
+              >
+                <Text className="font-body-semibold text-xs text-white">Remove from Main Ledger</Text>
+              </Pressable>
+            ) : null}
+          </>
         ) : confirmingRollup ? null : rollupNowSettled ? (
           <Pressable onPress={() => setConfirmingRollup(true)} className="w-full sm:w-auto min-h-9 px-3.5 rounded-lg bg-mustard/90 items-center justify-center">
             <Text className="font-body-semibold text-xs text-white">Remove from Main Ledger</Text>
@@ -354,6 +401,30 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
       <Text className="font-body text-2xs text-muted-text">Calculated across {ledgerLabel.toLowerCase()} entries</Text>
       </View>
       </View>
+
+      {balanceIssues.length > 0 && (
+        <Pressable onPress={() => setShowIssues((v) => !v)} className="mt-3 rounded-lg bg-mustard/15 px-3 py-2">
+          <Text className="font-body text-xs text-ink">
+            ⚠️ {balanceIssues.length} {balanceIssues.length === 1 ? 'entry is' : 'entries are'} left out of this balance because{' '}
+            {balanceIssues.length === 1 ? 'it names' : 'they name'} someone who isn't here or can't owe themselves. Edit{' '}
+            {balanceIssues.length === 1 ? 'it' : 'them'} to fix. {showIssues ? 'Hide' : 'Show'}
+          </Text>
+          {showIssues &&
+            balanceIssues.map((issue) => (
+              <Text key={issue.id || `${issue.date}-${issue.note}`} className="font-body text-2xs text-muted-text mt-1">
+                {issue.date} · {issue.note || 'No note'} · {formatCurrency(issue.amount)} ·{' '}
+                {{
+                  unknown_payer: 'paid by someone not in this ledger',
+                  unknown_debtor: 'owed by someone not in this ledger',
+                  missing_debtor: 'no one picked as owing it',
+                  debtor_is_payer: 'owed by the same person who paid',
+                  custom_no_members: 'custom shares only name people not in this ledger',
+                  split_no_members: 'split among people not in this ledger',
+                }[issue.reason] || issue.reason}
+              </Text>
+            ))}
+        </Pressable>
+      )}
 
       {isTravel && !hasMultipleMembers && confirmingRollup && (
         <View className="mt-4 pt-4 border-t border-ink/10">
@@ -415,7 +486,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
         </View>
       )}
 
-      {!isTravel && settling && (
+      {(!isTravel || hasMultipleMembers) && settling && (
         <View className="mt-4 pt-4 border-t border-ink/10">
           <Text className="font-body text-sm text-ink mb-3">
             Record a real-world payment - either direction, any amount. It doesn't have to match the balance above or pay

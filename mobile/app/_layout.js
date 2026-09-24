@@ -1,6 +1,6 @@
 import '../global.css';
 import { useEffect } from 'react';
-import { View } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Stack, ThemeProvider, DefaultTheme, DarkTheme } from 'expo-router';
 import { useColorScheme } from 'nativewind';
@@ -14,14 +14,40 @@ import { LockProvider } from '../lib/LockContext';
 import { JumpProvider } from '../lib/JumpContext';
 import ConnectionBanner from '../components/ConnectionBanner';
 import { getStoredColorScheme } from '../lib/utils';
+import { reportError } from '../lib/errorReporting';
+import { themeColor } from '../lib/theme';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// expo-router renders this in place of the route tree when anything below
+// throws while rendering - without it a single bad render blanked the whole
+// app (white screen on web, crash on native) with no way back but a reload.
+export function ErrorBoundary({ error, retry }) {
+  useEffect(() => {
+    reportError(error, 'Something crashed');
+  }, [error]);
+  return (
+    <View className="flex-1 items-center justify-center bg-paper px-8">
+      <Text className="font-display text-xl text-ink mb-2">Something went wrong</Text>
+      <Text className="font-body text-sm text-muted-text text-center mb-4">{error?.message}</Text>
+      <Pressable onPress={retry} className="bg-ledger-green rounded-xl px-5 min-h-11 items-center justify-center">
+        <Text className="font-body-semibold text-white">Try again</Text>
+      </Pressable>
+    </View>
+  );
+}
 
 // React Navigation paints screens with its own light-gray default
 // (rgb(242,242,242)), which showed through as a pale band behind the top nav
 // in dark mode - these match global.css's --color-paper tokens instead.
-const LIGHT_NAV_THEME = { ...DefaultTheme, colors: { ...DefaultTheme.colors, background: '#F2ECDD', card: '#F2ECDD' } };
-const DARK_NAV_THEME = { ...DarkTheme, colors: { ...DarkTheme.colors, background: '#1A2130', card: '#1A2130' } };
+const LIGHT_NAV_THEME = {
+  ...DefaultTheme,
+  colors: { ...DefaultTheme.colors, background: themeColor('paper', false), card: themeColor('paper', false) },
+};
+const DARK_NAV_THEME = {
+  ...DarkTheme,
+  colors: { ...DarkTheme.colors, background: themeColor('paper', true), card: themeColor('paper', true) },
+};
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({

@@ -30,7 +30,7 @@ jobs:
         working-directory: mobile
 
       - name: Test mobile app
-        run: npm test -- --watchAll=false
+        run: npm test
         working-directory: mobile
 
       - name: Export mobile app for web
@@ -39,6 +39,7 @@ jobs:
         env:
           EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_IOS_CLIENT_ID }}
           EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ${{ secrets.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID }}
+          EXPO_PUBLIC_SENTRY_DSN: ${{ secrets.EXPO_PUBLIC_SENTRY_DSN }}
           EXPO_PUBLIC_BUILD_SHA: ${{ github.sha }}
 
       - name: Assemble Pages artifact

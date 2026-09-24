@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, Alert } from 'react-native';
+import { View, Text, TextInput, Pressable } from 'react-native';
+import { notify } from '../lib/dialogs';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import CustomSplitEditor from './CustomSplitEditor';
 import { cardShadow } from './Card';
-import { updateExpense, addCardTransaction, updateCardTransaction, deleteCardTransaction } from '../lib/firebase';
+import { updateExpense, updateCardTransaction, replaceCardTransaction } from '../lib/firebase';
 import { reportError } from '../lib/errorReporting';
 import {
   buildPaymentInstruments,
@@ -16,6 +17,9 @@ import {
   isStatementOnlyCard,
   resolveInstrument,
   resolveStrategyParamsForDate,
+  parseAmountInput,
+  isValidISODate,
+  isCashPaid,
 } from '../lib/utils';
 
 const SPLIT_TYPE_OPTIONS = [
@@ -68,11 +72,17 @@ export default function EditEntryRow({
   const [category, setCategory] = useState(entry.category);
   const [splitType, setSplitType] = useState(entry.splitType || (entry.split ? 'shared' : 'personal'));
   const [owedBy, setOwedBy] = useState(entry.owedBy || members.find((m) => m !== payer) || '');
+  // Picking a card whose owner is the person who owes switches the payer to
+  // them - move "owes" to the other person so the entry can't end up owed by
+  // its own payer (which used to create a phantom debt).
+  useEffect(() => {
+    if (splitType === 'owed' && owedBy === payer) setOwedBy(members.find((m) => m !== payer) || '');
+  }, [payer, splitType]);
   const [splitAmong, setSplitAmong] = useState(entry.splitAmong || members);
   const [customShares, setCustomShares] = useState(() =>
     Object.fromEntries(Object.entries(entry.splitShares || {}).map(([k, v]) => [k, String(v)])),
   );
-  const customSharesCheck = checkCustomSharesTotal(customShares, parseFloat(amount) || 0);
+  const customSharesCheck = checkCustomSharesTotal(customShares, parseAmountInput(amount) || 0);
   const customSplitInvalid = splitType === 'custom' && !customSharesCheck.ok;
   // Legacy household entries may have no payment method at all - keep that
   // as-is unless it's changed, rather than silently stamping "Cash" on save.
@@ -85,11 +95,11 @@ export default function EditEntryRow({
 
   const tripWithdrawals = useMemo(() => tripEntries.filter((e) => e.isWithdrawal), [tripEntries]);
   const otherCashEntries = useMemo(
-    () => tripEntries.filter((e) => !e.isWithdrawal && e.paymentMethod === 'Cash'),
+    () => tripEntries.filter(isCashPaid),
     [tripEntries],
   );
   const fifoResult = useMemo(() => {
-    const parsedLocal = parseFloat(localAmount);
+    const parsedLocal = parseAmountInput(localAmount);
     if (!parsedLocal || parsedLocal <= 0) return null;
     return computeFifoCashAmount(tripWithdrawals, otherCashEntries, {
       id: entry.id,
@@ -98,14 +108,14 @@ export default function EditEntryRow({
       localAmount: parsedLocal,
     });
   }, [tripWithdrawals, otherCashEntries, date, localAmount, entry.id, entry.createdAt]);
-  const amountLocked = isTravel && paymentMethod === 'Cash' && fifoResult != null;
+  const amountLocked = isTravel && selectedInstrument?.type === 'cash' && fifoResult != null;
   const fifoBreakdownText = useMemo(
     () => (fifoResult ? formatFifoBreakdownSummary(fifoResult.breakdown, currentCurrency) : ''),
     [fifoResult, currentCurrency],
   );
 
   useEffect(() => {
-    if (!isTravel || paymentMethod !== 'Cash' || fifoResult == null) return;
+    if (!isTravel || selectedInstrument?.type !== 'cash' || fifoResult == null) return;
     setAmount(fifoResult.amount.toString());
   }, [fifoResult, paymentMethod, isTravel]);
 
@@ -139,17 +149,19 @@ export default function EditEntryRow({
         await updateCardTransaction(oldTxnId, updates);
         return oldTxnId;
       }
-      if (oldTxnId) await deleteCardTransaction(oldTxnId);
-      if (!newCardId) return null;
-      const card = creditCards.find((c) => c.id === newCardId);
-      return await addCardTransaction({
-        cardId: newCardId,
-        amount: parsedAmount,
-        date,
-        description: note.trim() || category,
-        linkedEntryId: entry.id,
-        ...inferCardRewardFields(card, category, resolveStrategyParamsForDate(card?.strategyParamsHistory, date)),
-      });
+      let newData = null;
+      if (newCardId) {
+        const newCard = creditCards.find((c) => c.id === newCardId);
+        newData = {
+          cardId: newCardId,
+          amount: parsedAmount,
+          date,
+          description: note.trim() || category,
+          linkedEntryId: entry.id,
+          ...inferCardRewardFields(newCard, category, resolveStrategyParamsForDate(newCard?.strategyParamsHistory, date)),
+        };
+      }
+      return await replaceCardTransaction(oldTxnId, newData);
     } catch (err) {
       reportError(err, 'Saved the entry, but could not update its linked card transaction');
       return oldTxnId;
@@ -163,8 +175,31 @@ export default function EditEntryRow({
   }
 
   async function handleSave() {
-    const parsed = parseFloat(amount);
-    if (!parsed || parsed <= 0) return;
+    // Bad input used to make Save silently do nothing, or save wrong
+    // ("1,200" as ₹1, a typed date that no month view could find).
+    const parsed = parseAmountInput(amount);
+    if (!(parsed > 0)) {
+      notify('Check the amount', 'Enter an amount like 1200 or 1200.50.');
+      return;
+    }
+    if (!isValidISODate(date)) {
+      notify('Check the date', 'Use the format YYYY-MM-DD.');
+      return;
+    }
+    if (splitType === 'owed' && (!owedBy || owedBy === payer)) {
+      notify('Pick who owes', 'The person who owes must be different from who paid.');
+      return;
+    }
+    const parsedLocal = isTravel && localAmount ? parseAmountInput(localAmount) : null;
+    if (isTravel && localAmount && !(parsedLocal > 0)) {
+      notify('Check the local amount', 'Enter an amount like 1200 or 1200.50, or leave it empty.');
+      return;
+    }
+    const parsedPoints = isTravel && rewardPoints ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
+    if (isTravel && rewardPoints && parsedPoints == null) {
+      notify('Check the reward points', 'Enter points like 1500 or -250, or leave it empty.');
+      return;
+    }
     setSaving(true);
     const slowTimer = setTimeout(() => setSlowSave(true), 2500);
     try {
@@ -187,16 +222,17 @@ export default function EditEntryRow({
           date,
           paymentMethod: paymentMethod || null,
           paymentInstrumentId: selectedInstrument?.id || null,
+          paymentType: selectedInstrument?.type || null,
           cardTransactionId,
-          localAmount: isTravel && localAmount ? parseFloat(localAmount) : null,
-          rewardPoints: isTravel && rewardPoints ? parseFloat(rewardPoints) : null,
+          localAmount: parsedLocal,
+          rewardPoints: parsedPoints,
           isWithdrawal: isTravel ? isWithdrawal : false,
         });
       }
       onSaved?.();
     } catch (err) {
       onSaveError?.(err);
-      Alert.alert('Could not save', err?.message || String(err));
+      notify('Could not save', err?.message || String(err));
     } finally {
       clearTimeout(slowTimer);
       setSaving(false);
@@ -337,7 +373,7 @@ export default function EditEntryRow({
 
         {splitType === 'custom' && (
           <View className="w-full">
-            <CustomSplitEditor members={members} total={parseFloat(amount) || 0} shares={customShares} onChange={setCustomShares} />
+            <CustomSplitEditor members={members} total={parseAmountInput(amount) || 0} shares={customShares} onChange={setCustomShares} />
           </View>
         )}
 

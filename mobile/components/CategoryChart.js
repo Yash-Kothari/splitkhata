@@ -67,7 +67,7 @@ function CategoryDrilldownModal({ category, entries, currency, isTravel, selecte
             <View className="flex-1 pr-2">
               <Text className="font-display text-base text-ink" numberOfLines={1}>{category}</Text>
               <Text className="font-body text-xs text-muted-text">
-                {isTravel ? 'Whole trip' : formatMonthLabel(selectedMonth)} · {formatCurrency(total, currency)} total
+                {isTravel ? 'Whole trip' : selectedMonth === 'all' ? 'All months' : formatMonthLabel(selectedMonth)} · {formatCurrency(total, currency)} total
               </Text>
             </View>
             <Pressable onPress={onClose} hitSlop={8} className="w-8 h-8 rounded-full border border-ink/15 bg-paper items-center justify-center shrink-0">
@@ -135,9 +135,14 @@ function CategoryDrilldownModal({ category, entries, currency, isTravel, selecte
 // sectors via SVG arc paths) - tapping a slice or a legend row opens the
 // same drilldown modal web opens on click.
 export default function CategoryChart({ entries, selectedMonth, onMonthChange, availableMonths, ledger, budgets = {} }) {
+  // The passbook's "All Months" choice is shared with this chart: treat it as
+  // no month filter. It used to be passed through as the month 'all', which
+  // matched nothing - an empty donut captioned "Invalid Date".
+  const monthKey = selectedMonth === 'all' ? null : selectedMonth;
+  const monthLabel = monthKey ? formatMonthLabel(monthKey) : 'all months';
   const isTravel = ledger === 'travel';
   const data = useMemo(
-    () => getCategoryMoMComparison(entries, isTravel ? null : selectedMonth, ledger).sort((a, b) => b.amount - a.amount),
+    () => getCategoryMoMComparison(entries, isTravel ? null : monthKey, ledger).sort((a, b) => b.amount - a.amount),
     [entries, selectedMonth, ledger, isTravel],
   );
   const total = useMemo(() => data.reduce((sum, d) => sum + d.amount, 0), [data]);
@@ -152,7 +157,7 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
 
   const [selectedCategory, setSelectedCategory] = useState(null);
   const drilldownEntries = useMemo(
-    () => (selectedCategory ? getCategoryEntries(entries, isTravel ? null : selectedMonth, ledger, selectedCategory) : []),
+    () => (selectedCategory ? getCategoryEntries(entries, isTravel ? null : monthKey, ledger, selectedCategory) : []),
     [entries, isTravel, selectedMonth, ledger, selectedCategory],
   );
   const budgetStatus = useMemo(() => {
@@ -183,7 +188,7 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
           <View style={{ width: 150 }}>
             <PickerField
               value={selectedMonth}
-              options={availableMonths.map((m) => ({ value: m, label: formatMonthLabel(m) }))}
+              options={[{ value: 'all', label: 'All Months' }, ...availableMonths.map((m) => ({ value: m, label: formatMonthLabel(m) }))]}
               onChange={onMonthChange}
               label="Month"
             />
@@ -194,7 +199,7 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
       {data.length === 0 ? (
         <View className="border-2 border-dashed border-ink/20 rounded-xl py-10 items-center justify-center bg-paper/50">
           <Text className="font-body text-sm text-muted-text text-center px-4">
-            {isTravel ? 'No expenses recorded yet.' : `No expenses recorded in ${formatMonthLabel(selectedMonth)}.`}
+            {isTravel ? 'No expenses recorded yet.' : `No expenses recorded in ${monthLabel}.`}
           </Text>
         </View>
       ) : (

@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
 import CardStrategyFields from './CardStrategyFields';
 import DateField from './DateField';
 import { updateCardTransaction } from '../lib/firebase';
-import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward, isStatementOnlyCard } from '../lib/utils';
+import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward, isStatementOnlyCard, parseAmountInput, isValidISODate, defaultCardTxnFields } from '../lib/utils';
+import { notify } from '../lib/dialogs';
 import { reportError } from '../lib/errorReporting';
 
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
@@ -31,18 +32,33 @@ function nextMonthFirst(dateStr) {
 // RN port of web's TransactionRow (inside CardsManager.jsx).
 export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, onDelete, isLast }) {
   const [editing, setEditing] = useState(false);
-  const [draftAmount, setDraftAmount] = useState(String(txn.amount));
-  const [draftDate, setDraftDate] = useState(txn.date);
-  const [draftDescription, setDraftDescription] = useState(txn.description || txn.note || '');
-  const [draft, setDraft] = useState({
-    category: txn.category ?? null,
-    channel: txn.channel ?? null,
-    isBonusEligible: Boolean(txn.isBonusEligible),
+  const draftFromTxn = () => ({
+    ...defaultCardTxnFields(card),
+    ...(txn.category != null ? { category: txn.category } : {}),
+    ...(txn.channel != null ? { channel: txn.channel } : {}),
+    ...(txn.isBonusEligible != null ? { isBonusEligible: Boolean(txn.isBonusEligible) } : {}),
     travelMultiplier: txn.travelMultiplier ?? null,
     pointsRedeemed: txn.pointsRedeemed ?? null,
   });
+  const [draftAmount, setDraftAmount] = useState(String(txn.amount));
+  const [draftDate, setDraftDate] = useState(txn.date);
+  const [draftDescription, setDraftDescription] = useState(txn.description || txn.note || '');
+  const [draft, setDraft] = useState(draftFromTxn);
   const [draftRewardOverride, setDraftRewardOverride] = useState(txn.rewardOverride != null ? String(txn.rewardOverride) : '');
   const [saving, setSaving] = useState(false);
+  const statementOnly = isStatementOnlyCard(card);
+
+  // The row stays mounted while the transaction changes elsewhere (its linked
+  // household entry edited, say) - refresh the draft whenever it isn't being
+  // edited, so saving here can't write an old amount back.
+  useEffect(() => {
+    if (editing) return;
+    setDraftAmount(String(txn.amount));
+    setDraftDate(txn.date);
+    setDraftDescription(txn.description || txn.note || '');
+    setDraft(draftFromTxn());
+    setDraftRewardOverride(txn.rewardOverride != null ? String(txn.rewardOverride) : '');
+  }, [txn, editing]);
 
   function updateDraft(patch) {
     setDraft((prev) => ({ ...prev, ...patch }));
@@ -54,8 +70,8 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
   const editPreview = editing
     ? previewTransactionReward(card, cardTxns, {
         id: txn.id,
-        date: draftDate,
-        amount: parseFloat(draftAmount),
+        date: isValidISODate(draftDate) ? draftDate : null,
+        amount: parseAmountInput(draftAmount, { allowNegative: true }),
         category: draft.category,
         channel: draft.channel,
         isBonusEligible: Boolean(draft.isBonusEligible),
@@ -65,19 +81,35 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
   const editCalculatedReward = editPreview ? (editPreview.earned ?? editPreview.estimated ?? 0) : null;
   const editRewardUnit = CARD_REWARD_STRATEGIES.find((s) => s.key === card.rewardStrategy)?.unit || 'inr';
 
+  const hasTravelFields = draft.category === 'smartbuy_hotel' || draft.category === 'travel_bonus';
+
   async function handleSave() {
+    const amountValue = parseAmountInput(draftAmount, { allowNegative: true });
+    if (!amountValue) {
+      notify('Check the amount', 'Enter an amount like 1200 or 1,200.50.');
+      return;
+    }
+    if (!isValidISODate(draftDate)) {
+      notify('Check the date', 'Use the format YYYY-MM-DD.');
+      return;
+    }
+    const overrideValue = draftRewardOverride === '' ? null : parseAmountInput(draftRewardOverride, { allowNegative: true });
+    if (draftRewardOverride !== '' && overrideValue == null) {
+      notify('Check the override', 'Enter a number like 250, or leave it empty to use the calculated reward.');
+      return;
+    }
     setSaving(true);
     try {
       await updateCardTransaction(txn.id, {
-        amount: parseFloat(draftAmount) || txn.amount,
+        amount: amountValue,
         date: draftDate,
         description: draftDescription.trim(),
         category: draft.category ?? null,
         channel: draft.channel ?? null,
         isBonusEligible: Boolean(draft.isBonusEligible),
-        travelMultiplier: draft.travelMultiplier ? Number(draft.travelMultiplier) : null,
-        pointsRedeemed: draft.pointsRedeemed ? Number(draft.pointsRedeemed) : null,
-        rewardOverride: draftRewardOverride === '' ? null : parseFloat(draftRewardOverride),
+        travelMultiplier: hasTravelFields && draft.travelMultiplier ? Number(draft.travelMultiplier) : null,
+        pointsRedeemed: hasTravelFields && draft.pointsRedeemed ? Number(draft.pointsRedeemed) : null,
+        rewardOverride: statementOnly ? null : overrideValue,
       });
       setEditing(false);
     } catch (err) {
@@ -117,6 +149,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
           <CardStrategyFields card={card} draft={draft} onChange={updateDraft} gap={12} />
         </View>
 
+        {!statementOnly && (
         <View className="flex-row flex-wrap mt-3.5" style={{ gap: 12 }}>
           <View className="w-full sm:w-[calc(50%-6px)]">
             <Text className={label}>Calculated Reward</Text>
@@ -137,6 +170,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
             />
           </View>
         </View>
+        )}
 
         <View className="flex-row gap-2 mt-3.5">
           <Pressable onPress={handleSave} disabled={saving} className="px-3 py-2 rounded-lg bg-ledger-green disabled:opacity-50">

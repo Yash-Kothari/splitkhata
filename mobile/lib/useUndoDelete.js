@@ -24,19 +24,20 @@ export function useUndoDelete(deleteFn, onError) {
 
   function handleDelete(item) {
     const id = item.id;
-    const timeoutId = setTimeout(async () => {
-      try {
-        await deleteFn(id);
-      } catch (err) {
-        onError?.(err);
-      } finally {
-        if (isMountedRef.current) {
-          setPendingDeletes((prev) => {
-            const next = { ...prev };
-            delete next[id];
-            return next;
-          });
-        }
+    const timeoutId = setTimeout(() => {
+      // Issue the delete and immediately drop the pending-delete entry - the
+      // row is gone from the list either way, and while offline this promise
+      // can stay unresolved for a long time (queued by Firestore until
+      // reconnect), which used to leave the entry "pending" forever instead
+      // of just letting go once the delete has been handed off. A real
+      // failure still surfaces via onError -> the shared ConnectionBanner.
+      deleteFn(id).catch((err) => onError?.(err));
+      if (isMountedRef.current) {
+        setPendingDeletes((prev) => {
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
       }
     }, UNDO_WINDOW_MS);
     setPendingDeletes((prev) => ({ ...prev, [id]: { item, timeoutId } }));

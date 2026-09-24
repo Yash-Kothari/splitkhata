@@ -1,14 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, Modal, ScrollView, Alert, useWindowDimensions } from 'react-native';
+import { View, Text, TextInput, Pressable, Modal, ScrollView, useWindowDimensions } from 'react-native';
+import { notify, confirmAsync } from '../lib/dialogs';
 import PickerField from './PickerField';
 import DateField from './DateField';
-import { updateTripInDb, deleteTripFromDb, addCashMovementToDb, addExpense, addGuestToDb, deleteGuestFromDb } from '../lib/firebase';
-import { computeBudgetStatus, formatCurrency, groupByCategory, normalizeLedger, todayISO } from '../lib/utils';
+import { updateTripInDb, deleteTripCascade, addWithdrawal, setOpeningCash as setOpeningCashInDb, addGuestToDb, deleteGuestFromDb, renameGuestInDb } from '../lib/firebase';
+import { computeBudgetStatus, formatCurrency, groupByCategory, normalizeLedger, todayISO, parseAmountInput, isValidISODate } from '../lib/utils';
 
-function Tag({ label, onRemove, removable = true }) {
+function Tag({ label, onRemove, onEdit, removable = true }) {
   return (
     <View className="flex-row items-center gap-1.5 rounded-md border border-ink/10 bg-paper px-2.5 py-1.5 mr-1.5 mb-1.5">
       <Text className="font-body-medium text-xs text-ink">{label}</Text>
+      {onEdit && (
+        <Pressable onPress={onEdit} hitSlop={6}>
+          <Text className="font-body-semibold text-xs text-muted-text">✎</Text>
+        </Pressable>
+      )}
       {removable && (
         <Pressable onPress={onRemove} hitSlop={6}>
           <Text className="font-body-semibold text-xs text-muted-text">✕</Text>
@@ -52,7 +58,14 @@ export default function TripSettings({
   const [withdrawalDate, setWithdrawalDate] = useState(todayISO());
   const [withdrawalPayer, setWithdrawalPayer] = useState('');
   const [withdrawalPaymentMethod, setWithdrawalPaymentMethod] = useState('');
+  // A withdrawal is the card/forex charge that carries the shared debt for
+  // the cash - saving one as "Cash" dropped it from every trip total (so the
+  // other person's half vanished) and zeroed the Cash Balance tile. Cash
+  // itself is never offered here.
+  const withdrawalInstruments = instruments.filter((i) => i.type !== 'cash');
   const [guestDraft, setGuestDraft] = useState('');
+  const [editingGuest, setEditingGuest] = useState(null);
+  const [savingGuestRename, setSavingGuestRename] = useState(false);
   const [tripBudgetDrafts, setTripBudgetDrafts] = useState({});
   const [newBudgetCategory, setNewBudgetCategory] = useState('');
   const [newBudgetAmount, setNewBudgetAmount] = useState('');
@@ -64,8 +77,16 @@ export default function TripSettings({
     setDatesEnd(trip.endDate || '');
     setTripBudgetDrafts({ ...(trip.categoryBudgets || {}) });
     setWithdrawalPayer(dbMembers[0] || '');
-    setWithdrawalPaymentMethod(instruments[0]?.label || 'Cash');
+    setWithdrawalPaymentMethod(withdrawalInstruments[0]?.label || '');
   }, [trip?.id]);
+
+  // Instruments can load after the trip does - keep the picker on a real option.
+  const withdrawalLabels = withdrawalInstruments.map((i) => i.label).join('|');
+  useEffect(() => {
+    if (!withdrawalInstruments.some((i) => i.label === withdrawalPaymentMethod)) {
+      setWithdrawalPaymentMethod(withdrawalInstruments[0]?.label || '');
+    }
+  }, [withdrawalLabels]);
 
   const tripGuests = trip?.guests || [];
 
@@ -92,6 +113,15 @@ export default function TripSettings({
 
   async function handleSaveDates() {
     if (!trip) return;
+    // Dates must be real YYYY-MM-DD dates, and the trip can't end before it starts.
+    if ((datesStart && !isValidISODate(datesStart)) || (datesEnd && !isValidISODate(datesEnd))) {
+      notify('Check the dates', 'Use the format YYYY-MM-DD.');
+      return;
+    }
+    if (datesStart && datesEnd && datesEnd < datesStart) {
+      notify('Check the dates', 'The end date is before the start date.');
+      return;
+    }
     try {
       await updateTripInDb(trip.id, { startDate: datesStart || null, endDate: datesEnd || null });
     } catch (err) {
@@ -100,26 +130,38 @@ export default function TripSettings({
   }
 
   async function handleSaveCash() {
-    const parsed = parseFloat(openingCash);
-    if (!(parsed > 0)) return;
+    const parsed = parseAmountInput(openingCash);
+    if (!(parsed > 0)) {
+      notify('Check the amount', 'Enter an amount like 20000 or 20,000.');
+      return;
+    }
     try {
-      await addCashMovementToDb({ tripName: trip.name, type: 'opening', amount: parsed });
+      await setOpeningCashInDb(trip.name, trip.id, parsed);
       setOpeningCash('');
+      notify('Starting cash set', `Starting cash for this trip is now ${parsed.toLocaleString('en-IN')} ${currentCurrency || ''}.`.trim());
     } catch (err) {
       onSaveError?.(err);
     }
   }
 
   async function handleAddWithdrawal() {
-    const parsedWithdrawal = parseFloat(withdrawalAmount);
-    const parsedInr = parseFloat(withdrawalInr);
+    const parsedWithdrawal = parseAmountInput(withdrawalAmount);
+    const parsedInr = parseAmountInput(withdrawalInr);
     if (!(parsedWithdrawal > 0) || !(parsedInr > 0) || !withdrawalPayer) {
-      Alert.alert('Missing info', 'Amount, INR cost, and who withdrew it are all required.');
+      notify('Missing info', 'Amount, INR cost, and who withdrew it are all required. Amounts look like 1200 or 1,200.50.');
+      return;
+    }
+    const withdrawalInstrument = withdrawalInstruments.find((i) => i.label === withdrawalPaymentMethod);
+    if (!withdrawalInstrument) {
+      notify('Pick the card or account', 'Choose the card or forex account the cash came from.');
+      return;
+    }
+    if (!isValidISODate(withdrawalDate)) {
+      notify('Check the date', 'Use the format YYYY-MM-DD.');
       return;
     }
     try {
-      await addCashMovementToDb({ tripName: trip.name, type: 'withdrawal', amount: parsedWithdrawal, date: withdrawalDate });
-      await addExpense({
+      await addWithdrawal({ tripName: trip.name, type: 'withdrawal', amount: parsedWithdrawal, date: withdrawalDate }, {
         amount: parsedInr,
         localAmount: parsedWithdrawal,
         payer: withdrawalPayer,
@@ -131,8 +173,9 @@ export default function TripSettings({
         date: withdrawalDate,
         ledger: 'travel',
         tripName: trip.name,
-        paymentMethod: withdrawalPaymentMethod,
-        paymentInstrumentId: instruments.find((i) => i.label === withdrawalPaymentMethod)?.id || null,
+        paymentMethod: withdrawalInstrument.label,
+        paymentInstrumentId: withdrawalInstrument.id,
+        paymentType: withdrawalInstrument.type || null,
         isWithdrawal: true,
       });
       setWithdrawalAmount('');
@@ -140,7 +183,26 @@ export default function TripSettings({
       setWithdrawalDate(todayISO());
     } catch (err) {
       onSaveError?.(err);
-      Alert.alert('Could not record withdrawal', err?.message || String(err));
+      notify('Could not record withdrawal', err?.message || String(err));
+    }
+  }
+
+  async function handleSaveRenamedGuest() {
+    if (!editingGuest?.name.trim()) return;
+    const trimmed = editingGuest.name.trim();
+    const taken = [...dbMembers, ...tripGuests].some((n) => n.toLowerCase() === trimmed.toLowerCase() && n !== editingGuest.oldName);
+    if (taken) {
+      notify('Name already in use', `"${trimmed}" is already a member or guest.`);
+      return;
+    }
+    setSavingGuestRename(true);
+    try {
+      await renameGuestInDb(editingGuest.oldName, trimmed, guestRawDocs);
+      setEditingGuest(null);
+    } catch (err) {
+      onSaveError?.(err);
+    } finally {
+      setSavingGuestRename(false);
     }
   }
 
@@ -149,7 +211,7 @@ export default function TripSettings({
     if (!trimmed || !trip) return;
     const taken = [...dbMembers, ...tripGuests].some((n) => n.toLowerCase() === trimmed.toLowerCase());
     if (taken) {
-      Alert.alert('Name already in use', `"${trimmed}" is already a member or guest.`);
+      notify('Name already in use', `"${trimmed}" is already a member or guest.`);
       return;
     }
     try {
@@ -179,7 +241,7 @@ export default function TripSettings({
 
   async function handleDeleteTrip() {
     try {
-      await deleteTripFromDb(trip.id);
+      await deleteTripCascade(trip);
       setConfirmingDelete(false);
       onTripDeleted?.();
       onClose?.();
@@ -187,6 +249,8 @@ export default function TripSettings({
       onSaveError?.(err);
     }
   }
+
+  const tripEntriesForDelete = (entries || []).filter((e) => normalizeLedger(e.ledger) === 'travel' && e.tripName === trip?.name);
 
   if (!trip) return null;
 
@@ -238,7 +302,7 @@ export default function TripSettings({
                 style={{ minWidth: 0 }}
               />
               <Pressable onPress={handleSaveCash} className="min-h-11 px-5 shrink-0 rounded-lg bg-ledger-green items-center justify-center">
-                <Text className="font-body-semibold text-sm text-white">Save Starting Cash</Text>
+                <Text className="font-body-semibold text-sm text-white">Set Starting Cash</Text>
               </Pressable>
             </View>
           </View>
@@ -274,13 +338,28 @@ export default function TripSettings({
                 <PickerField label="Withdrawn By" value={withdrawalPayer} options={dbMembers} onChange={setWithdrawalPayer} />
               </View>
               <View className="w-full">
-                <PickerField label="Card / method used" value={withdrawalPaymentMethod} options={instruments.map((i) => i.label)} onChange={setWithdrawalPaymentMethod} />
+                {withdrawalInstruments.length ? (
+                  <PickerField
+                    label="Card / method used"
+                    value={withdrawalPaymentMethod}
+                    options={withdrawalInstruments.map((i) => i.label)}
+                    onChange={setWithdrawalPaymentMethod}
+                  />
+                ) : (
+                  <Text className="font-body text-xs text-stamp-red">
+                    Add the card or forex account you withdraw with in Settings → Payment Methods first.
+                  </Text>
+                )}
               </View>
               <Text className="w-full font-body text-2xs text-muted-text">
                 This is the only place to record an ATM withdrawal. The INR cost is required - it's what registers the joint
                 debt above and gives every "Cash" purchase you add afterward its rate, so nothing needs pricing by hand.
               </Text>
-              <Pressable onPress={handleAddWithdrawal} className="w-full min-h-11 rounded-lg border border-ink/15 items-center justify-center">
+              <Pressable
+                onPress={handleAddWithdrawal}
+                disabled={!withdrawalInstruments.length}
+                className={`w-full min-h-11 rounded-lg border border-ink/15 items-center justify-center ${withdrawalInstruments.length ? '' : 'opacity-40'}`}
+              >
                 <Text className="font-body-semibold text-sm text-ink">Record Withdrawal</Text>
               </Pressable>
             </View>
@@ -309,8 +388,12 @@ export default function TripSettings({
                 </View>
                 <Pressable
                   onPress={() => {
-                    const amt = Number(newBudgetAmount);
-                    if (!newBudgetCategory || !amt || amt <= 0) return;
+                    const amt = parseAmountInput(newBudgetAmount);
+                    if (!newBudgetCategory) return;
+                    if (!(amt > 0)) {
+                      notify('Check the amount', 'Enter a budget like 50000 or 50,000.');
+                      return;
+                    }
                     persistBudgets({ ...tripBudgetDrafts, [newBudgetCategory]: amt });
                     setNewBudgetCategory('');
                     setNewBudgetAmount('');
@@ -326,7 +409,8 @@ export default function TripSettings({
                 <View className="flex-row items-center justify-between mb-1">
                   <Text className="font-body-medium text-xs text-ink">{s.category}</Text>
                   <Pressable
-                    onPress={() => {
+                    onPress={async () => {
+                      if (!(await confirmAsync({ title: `Remove the ${s.category} budget for this trip?`, message: 'Your entries are not affected.', confirmLabel: 'Remove' }))) return;
                       const next = { ...tripBudgetDrafts };
                       delete next[s.category];
                       persistBudgets(next);
@@ -376,7 +460,13 @@ export default function TripSettings({
                       <Pressable onPress={() => handleAddKnownGuest(g)}>
                         <Text className="font-body-medium text-xs text-muted-text">+ {g}</Text>
                       </Pressable>
-                      <Pressable onPress={() => deleteGuestFromDb(g, guestRawDocs).catch((err) => onSaveError?.(err))} hitSlop={6}>
+                      <Pressable
+                        onPress={async () => {
+                          if (!(await confirmAsync({ title: `Forget ${g}?`, message: 'They leave the suggestions list. Trips they were on keep them.', confirmLabel: 'Forget' }))) return;
+                          deleteGuestFromDb(g, guestRawDocs).catch((err) => onSaveError?.(err));
+                        }}
+                        hitSlop={6}
+                      >
                         <Text className="font-body-semibold text-xs text-muted-text">✕</Text>
                       </Pressable>
                     </View>
@@ -385,9 +475,42 @@ export default function TripSettings({
               </View>
             )}
             <View className="flex-row flex-wrap">
-              {tripGuests.map((g) => (
-                <Tag key={g} label={g} onRemove={() => updateTripInDb(trip.id, { guests: tripGuests.filter((x) => x !== g) }).catch((err) => onSaveError?.(err))} />
-              ))}
+              {tripGuests.map((g) =>
+                editingGuest?.oldName === g ? (
+                  <View key={g} className="w-full rounded-lg border border-ink/15 bg-paper p-3 mb-2" style={{ gap: 8 }}>
+                    <TextInput
+                      value={editingGuest.name}
+                      onChangeText={(v) => setEditingGuest((p) => ({ ...p, name: v }))}
+                      className="font-body text-sm text-ink border border-ink/15 rounded-lg px-3 py-2 bg-paper shadow-2xs"
+                    />
+                    <Text className="font-body text-2xs text-muted-text">
+                      Renames every entry {g} paid for or shares in too, on any trip they're on.
+                    </Text>
+                    <View className="flex-row gap-2">
+                      <Pressable onPress={() => setEditingGuest(null)} className="flex-1 min-h-9 rounded-lg border border-ink/15 items-center justify-center">
+                        <Text className="font-body-semibold text-xs text-ink">Cancel</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={handleSaveRenamedGuest}
+                        disabled={savingGuestRename || !editingGuest.name.trim()}
+                        className="flex-1 min-h-9 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
+                      >
+                        <Text className="font-body-semibold text-xs text-white">{savingGuestRename ? 'Renaming...' : 'Save'}</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : (
+                  <Tag
+                    key={g}
+                    label={g}
+                    onEdit={() => setEditingGuest({ oldName: g, name: g })}
+                    onRemove={async () => {
+                      if (!(await confirmAsync({ title: `Remove ${g} from this trip?`, message: `Entries ${g} paid for or shares in will no longer balance correctly until they're edited.`, confirmLabel: 'Remove' }))) return;
+                      updateTripInDb(trip.id, { guests: tripGuests.filter((x) => x !== g) }).catch((err) => onSaveError?.(err));
+                    }}
+                  />
+                ),
+              )}
             </View>
           </View>
 
@@ -403,8 +526,12 @@ export default function TripSettings({
             ) : (
               <View className="rounded-lg border border-stamp-red/30 bg-stamp-red/5 p-3">
                 <Text className="font-body text-xs text-ink mb-2.5">
-                  Permanently delete <Text className="font-body-semibold">{trip.name}</Text>? Its entries and cash movements
-                  aren't deleted with it, but they'll no longer be reachable from any trip. This can't be undone.
+                  Permanently delete <Text className="font-body-semibold">{trip.name}</Text>? This also deletes its{' '}
+                  {tripEntriesForDelete.length} {tripEntriesForDelete.length === 1 ? 'entry' : 'entries'} (
+                  {formatCurrency(tripEntriesForDelete.reduce((sum, e) => sum + (Number(e.amount) || 0), 0))}), their card
+                  transactions and its cash records
+                  {trip.rolledUpEntryId ? `, and the ${formatCurrency(trip.rolledUpAmount || 0)} line it added to the household ledger` : ''}.
+                  This can't be undone - export the Travel CSV from Settings first if you want a copy.
                 </Text>
                 <View className="flex-row gap-2">
                   <Pressable onPress={handleDeleteTrip} className="flex-1 min-h-9 rounded-lg bg-stamp-red items-center justify-center">

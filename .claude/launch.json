@@ -2,24 +2,6 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 3000
-    },
-    {
-      "name": "dev-demo",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:demo"],
-      "port": 3000
-    },
-    {
-      "name": "preview",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "preview", "--", "--port", "4173"],
-      "port": 4173
-    },
-    {
       "name": "mobile-web",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "mobile", "run", "web"],

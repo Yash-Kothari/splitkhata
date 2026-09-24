@@ -19,11 +19,16 @@ function formatDate(dateStr) {
 // (subscribes to both ledgers itself) since it's opened from AppHeader,
 // present on every screen, rather than receiving already-loaded entries
 // the way web's App.jsx passes them down.
-export default function GlobalSearch({ visible, onClose }) {
+export default function GlobalSearch({ visible, onClose: onCloseProp }) {
   const { height: windowHeight } = useWindowDimensions();
   const router = useRouter();
   const { setPendingJump } = useJump();
   const [term, setTerm] = useState('');
+  // Closing starts the next search fresh instead of showing the old query.
+  function onClose() {
+    setTerm('');
+    onCloseProp();
+  }
   const [householdEntries, setHouseholdEntries] = useState([]);
   const [travelEntries, setTravelEntries] = useState([]);
 

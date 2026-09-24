@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
+import { useColorScheme } from 'nativewind';
 import { View, Text } from 'react-native';
 import Svg, { Path, Line, Text as SvgText } from 'react-native-svg';
 import Card from './Card';
 import { getLast6MonthsData, formatCurrency } from '../lib/utils';
+import { themeColor } from '../lib/theme';
 
-const BAR_COLOR = '#3D7068';
+const BAR_COLOR = themeColor('ledgerGreen', false);
 const BAR_COLOR_DIM_OPACITY = 0.56;
 const CHART_HEIGHT = 180;
 const AXIS_LEFT = 34;
@@ -53,6 +55,12 @@ function roundedTopBarPath(x, y, width, height, radius) {
 // a hand-rolled bar chart on react-native-svg - tap a bar for the same MoM
 // tooltip web shows on hover.
 export default function MonthChart({ entries, ledger }) {
+  // SVG fills don't follow the Tailwind colour tokens - match --color-ink and
+  // --color-muted-text by hand so the axis stays visible in dark mode.
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
+  const axisTextColor = themeColor('mutedText', isDark);
+  const baselineColor = themeColor('ink', isDark);
   const data = useMemo(() => getLast6MonthsData(entries, ledger), [entries, ledger]);
   const [width, setWidth] = useState(0);
   const [selected, setSelected] = useState(null);
@@ -116,13 +124,13 @@ export default function MonthChart({ entries, ledger }) {
                     x={AXIS_LEFT - 6}
                     y={plotHeight - (t / domainMax) * plotHeight + 3}
                     fontSize={9}
-                    fill="#5C6478"
+                    fill={axisTextColor}
                     textAnchor="end"
                   >
                     {yTick(t)}
                   </SvgText>
                 ))}
-                <Line x1={AXIS_LEFT} y1={plotHeight} x2={width} y2={plotHeight} stroke="#24304A" strokeOpacity={0.125} strokeWidth={1} />
+                <Line x1={AXIS_LEFT} y1={plotHeight} x2={width} y2={plotHeight} stroke={baselineColor} strokeOpacity={0.125} strokeWidth={1} />
                 {data.map((d, i) => {
                   const barH = domainMax > 0 ? (d.total / domainMax) * plotHeight : 0;
                   const x = AXIS_LEFT + i * barSlot + (barSlot - barWidth) / 2;
@@ -141,7 +149,7 @@ export default function MonthChart({ entries, ledger }) {
                 {data.map((d, i) => {
                   const x = AXIS_LEFT + i * barSlot + barSlot / 2;
                   return (
-                    <SvgText key={d.month} x={x} y={CHART_HEIGHT - 4} fontSize={10} fontWeight="500" fill="#5C6478" textAnchor="middle">
+                    <SvgText key={d.month} x={x} y={CHART_HEIGHT - 4} fontSize={10} fontWeight="500" fill={axisTextColor} textAnchor="middle">
                       {d.label}
                     </SvgText>
                   );

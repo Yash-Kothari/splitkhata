@@ -10,9 +10,8 @@ import {
   computeCardRewardLedger,
   getCardBillingCycleKey,
   isStatementOnlyCard,
+  parseAmountInput,
 } from '../lib/utils';
-
-const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
 
 function formatReward(amount, unit) {
   return unit === 'points' ? `${Math.round(amount).toLocaleString('en-IN')} pts` : formatCurrency(amount);
@@ -55,8 +54,8 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
     : null;
 
   async function confirmBill() {
-    const amount = parseFloat(billDraft);
-    if (!amount && amount !== 0) return;
+    const amount = parseAmountInput(billDraft, { allowNegative: true });
+    if (amount == null) return;
     setSaving(true);
     try {
       await saveCardBillingCycle(card.id, cycle.cycleStart, { actualBillAmount: amount, billConfirmedAt: new Date().toISOString() });
@@ -69,8 +68,8 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
   }
 
   async function confirmPoints() {
-    const amount = parseFloat(pointsDraft);
-    if (!amount && amount !== 0) return;
+    const amount = parseAmountInput(pointsDraft, { allowNegative: true });
+    if (amount == null) return;
     setSaving(true);
     try {
       await saveCardBillingCycle(card.id, cycle.cycleStart, { actualRewardCredited: amount, pointsConfirmedAt: new Date().toISOString() });

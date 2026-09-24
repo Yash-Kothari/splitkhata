@@ -4,7 +4,8 @@ import Card from './Card';
 import DateField from './DateField';
 import CardStrategyFields from './CardStrategyFields';
 import { addCardTransaction } from '../lib/firebase';
-import { todayISO, CARD_REWARD_STRATEGIES, previewTransactionReward, formatCurrency, isStatementOnlyCard } from '../lib/utils';
+import { todayISO, CARD_REWARD_STRATEGIES, previewTransactionReward, formatCurrency, isStatementOnlyCard, parseAmountInput, isValidISODate, defaultCardTxnFields, statementDateToCycleDate } from '../lib/utils';
+import { notify } from '../lib/dialogs';
 
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
 const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper';
@@ -29,43 +30,58 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
     setDraft((prev) => ({ ...prev, ...patch }));
   }
 
-  // Matches the Axis Supermoney and HSBC Live+ defaults in CardStrategyFields (the top rate) -
-  // an untouched draft should preview/save the same channel the picker is
-  // showing.
-  const bonusEligibleDefault = card.rewardStrategy === 'axis_supermoney_dual_pool' || card.rewardStrategy === 'hsbc_tiered_cashback_aggregate';
-  const isBonusEligible = draft.isBonusEligible ?? bonusEligibleDefault;
+  // An untouched draft previews and saves exactly what the pickers show as
+  // their defaults (see defaultCardTxnFields).
+  const effective = { ...defaultCardTxnFields(card), ...draft };
+  const isBonusEligible = Boolean(effective.isBonusEligible);
+  // SmartBuy / Premier travel bookings are the only ones with their own
+  // multiplier and redeemed points; anything else never saves them.
+  const hasTravelFields = effective.category === 'smartbuy_hotel' || effective.category === 'travel_bonus';
+  const travelMultiplier = hasTravelFields && draft.travelMultiplier ? Number(draft.travelMultiplier) : null;
 
   // A refund is a negative amount: typed with a minus, or with the Refund
   // toggle (phone keypads often have no minus key).
-  const typedAmount = parseFloat(amount);
+  const typedAmount = parseAmountInput(amount, { allowNegative: true });
   const parsedAmount = isRefund && Number.isFinite(typedAmount) ? -Math.abs(typedAmount) : typedAmount;
   const preview = previewTransactionReward(card, cardTxns, {
-    date,
+    date: isValidISODate(date) ? date : null,
     amount: parsedAmount,
-    category: draft.category ?? null,
-    channel: draft.channel ?? null,
+    category: effective.category ?? null,
+    channel: effective.channel ?? null,
     isBonusEligible,
-    travelMultiplier: draft.travelMultiplier ? Number(draft.travelMultiplier) : null,
+    travelMultiplier,
   });
   const calculatedReward = preview ? (preview.earned ?? preview.estimated ?? 0) : null;
   const rewardUnit = CARD_REWARD_STRATEGIES.find((s) => s.key === card.rewardStrategy)?.unit || 'inr';
 
   async function handleSubmit() {
     const parsed = parsedAmount;
-    if (!parsed) return;
+    if (!parsed) {
+      notify('Check the amount', 'Enter an amount like 1200 or 1,200.50.');
+      return;
+    }
+    if (!isValidISODate(date)) {
+      notify('Check the date', 'Use the format YYYY-MM-DD.');
+      return;
+    }
+    const overrideValue = rewardOverride === '' ? null : parseAmountInput(rewardOverride, { allowNegative: true });
+    if (rewardOverride !== '' && overrideValue == null) {
+      notify('Check the override', 'Enter a number like 250, or leave it empty to use the calculated reward.');
+      return;
+    }
     setSaving(true);
     try {
       await addCardTransaction({
         cardId: card.id,
         amount: parsed,
         description: description.trim() || (statementOnly ? 'Statement' : ''),
-        date,
-        category: draft.category ?? null,
-        channel: draft.channel ?? null,
+        date: statementOnly ? statementDateToCycleDate(date, card.billingCycleDay ?? 1) : date,
+        category: effective.category ?? null,
+        channel: effective.channel ?? null,
         isBonusEligible,
-        travelMultiplier: draft.travelMultiplier ? Number(draft.travelMultiplier) : null,
-        pointsRedeemed: draft.pointsRedeemed ? Number(draft.pointsRedeemed) : null,
-        rewardOverride: rewardOverride === '' ? null : parseFloat(rewardOverride),
+        travelMultiplier,
+        pointsRedeemed: hasTravelFields && draft.pointsRedeemed ? Number(draft.pointsRedeemed) : null,
+        rewardOverride: overrideValue,
       });
       setAmount('');
       setIsRefund(false);
@@ -122,6 +138,9 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
             <View className="w-full sm:w-[calc(50%-7px)]">
               <Text className={label}>{statementOnly ? 'Statement date' : 'Date'}</Text>
               <DateField value={date} onChange={setDate} className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
+              {statementOnly ? (
+                <Text className="font-body text-2xs text-muted-text mt-1">Counted in the statement that closes on this date.</Text>
+              ) : null}
             </View>
           </View>
 

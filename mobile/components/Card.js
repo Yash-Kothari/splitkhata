@@ -1,4 +1,5 @@
 import { View } from 'react-native';
+import { themeColor } from '../lib/theme';
 
 // Matches web's .panel-card (src/styles.css): border-ink/10, rounded-2xl
 // (1rem), bg-paper-card, plus a soft floating shadow - web's actual value is
@@ -8,7 +9,7 @@ import { View } from 'react-native';
 // spread-radius equivalent, so this is tuned by eye to the same soft,
 // close-in look rather than translated value-for-value.
 export const cardShadow = {
-  shadowColor: '#24304A',
+  shadowColor: themeColor('ink', false),
   shadowOffset: { width: 0, height: 8 },
   shadowOpacity: 0.16,
   shadowRadius: 20,

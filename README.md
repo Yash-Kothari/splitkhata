@@ -18,10 +18,9 @@ A shared expense tracker for two people. Log an expense, say who paid, split it 
 
 - Expo / React Native, built for both the native iOS app and the website (via `expo export --platform web`)
 - NativeWind (Tailwind for React Native)
-- Recharts
 - Firebase Firestore
 
-The app lives in `mobile/` - see `mobile/README.md` for that project's own setup. This repo root otherwise only holds Firebase project config (`firestore.rules`, `firebase.json`) and `scripts/check-card-data.mjs`, a standalone diagnostic script.
+The app lives in `mobile/` - see `mobile/README.md` for that project's own setup. This repo root otherwise only holds Firebase project config (`firestore.rules`, `firebase.json`).
 
 ## Local development
 

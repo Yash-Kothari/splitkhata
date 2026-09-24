@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
-import { Tabs } from 'expo-router';
-import { View, Text, Platform, useWindowDimensions } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Tabs, Redirect } from 'expo-router';
+import { View, Text, Platform, AppState, useWindowDimensions } from 'react-native';
 import { useColorScheme } from 'nativewind';
-import { subscribeToPinConfig, subscribeToRecurringRules, saveRecurringRulesToDb, addExpensesBatch } from '../../lib/firebase';
-import { computeRecurringEntriesToGenerate, getMonthKey, todayISO } from '../../lib/utils';
+import { subscribeToPinConfig, subscribeToRecurringRules, runRecurringGeneration } from '../../lib/firebase';
+import { getMonthKey, todayISO, decideInitialLock, shouldRelockAfterBackground } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
+import { getJSON, setJSON } from '../../lib/deviceStore';
+import { themeColor, themeRgba } from '../../lib/theme';
 import { useLock } from '../../lib/LockContext';
+import { useAuth } from '../../lib/AuthContext';
 import PinLockScreen from '../../components/PinLockScreen';
 import AskQuestion from '../../components/AskQuestion';
 
@@ -30,69 +33,154 @@ function TabIcon({ emoji, focused }) {
   );
 }
 
+const PIN_LAST_KNOWN_KEY = 'splitkhata_pin_last_known';
+
 // Gates the tabs (i.e. everything past sign-in) behind PinLockScreen when a
 // PIN is configured - matches web's App.jsx, which locks by default on
-// every fresh load if getPinConfig().enabled && .pin, and unlocks for the
-// rest of that session once the right PIN is entered. Firestore-backed here
-// instead of web's localStorage, so the very first snapshot decides whether
-// to lock rather than a synchronous initial state.
+// every fresh load if the PIN is enabled, and unlocks for the rest of that
+// session once the right PIN is entered.
+//
+// Two things this used to get wrong (P0-13):
+// - only the FIRST Firestore snapshot ever decided whether to lock, and an
+//   empty offline-cache read was read the same as "PIN disabled" - opening
+//   the app offline skipped the lock outright, permanently for that session.
+// - nothing ever re-locked an unlocked session, so leaving the app open
+//   (or backgrounded) defeated the PIN entirely.
+// decideInitialLock/shouldRelockAfterBackground (utils.js) hold the actual
+// decision logic, kept pure and tested on their own; this component is just
+// the wiring: deviceStore remembers the last config this device actually
+// confirmed, across relaunches, for the offline case to fail closed against.
 function PinGate({ children }) {
   const { isLocked, setIsLocked } = useLock();
   const [pinConfig, setPinConfig] = useState(null);
+  const [ready, setReady] = useState(false);
+  const lastKnownRef = useRef(null);
   const bootstrapped = useRef(false);
+  const hiddenAtRef = useRef(null);
 
-  useEffect(
-    () =>
-      subscribeToPinConfig((cfg) => {
-        setPinConfig(cfg);
-        if (!bootstrapped.current) {
-          bootstrapped.current = true;
-          if (cfg.enabled && cfg.pin) setIsLocked(true);
+  useEffect(() => {
+    let cancelled = false;
+    getJSON(PIN_LAST_KNOWN_KEY, null).then((stored) => {
+      if (cancelled) return;
+      lastKnownRef.current = stored;
+      setReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!ready) return undefined;
+    return subscribeToPinConfig((snapshot) => {
+      if (!bootstrapped.current) {
+        bootstrapped.current = true;
+        const decision = decideInitialLock({ lastKnown: lastKnownRef.current, snapshot });
+        setPinConfig(decision.config);
+        if (decision.locked) setIsLocked(true);
+        if (decision.trustworthy) {
+          lastKnownRef.current = decision.config;
+          setJSON(PIN_LAST_KNOWN_KEY, decision.config);
         }
-      }),
-    [setIsLocked],
-  );
+        return;
+      }
+      // After bootstrap: only a real server answer updates the remembered
+      // config and last-known record - a later cache/error blip must not
+      // erase what was already confirmed.
+      if (snapshot.error || (snapshot.fromCache && !snapshot.exists)) return;
+      const config = snapshot.enabled && (snapshot.pinHash || snapshot.legacyPin)
+        ? { enabled: true, pinHash: snapshot.pinHash, legacyPin: snapshot.legacyPin }
+        : null;
+      setPinConfig(config);
+      lastKnownRef.current = config;
+      setJSON(PIN_LAST_KNOWN_KEY, config);
+    });
+  }, [ready, setIsLocked]);
 
-  if (pinConfig === null) return null;
-  if (isLocked && pinConfig.enabled && pinConfig.pin) {
-    return <PinLockScreen correctPin={pinConfig.pin} onUnlock={() => setIsLocked(false)} />;
+  // Re-lock after time away, not just on the first load - a phone left
+  // unlocked on a table stayed unlocked forever otherwise.
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const onVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') {
+          hiddenAtRef.current = Date.now();
+          return;
+        }
+        if (hiddenAtRef.current == null) return;
+        const hiddenForMs = Date.now() - hiddenAtRef.current;
+        hiddenAtRef.current = null;
+        if (shouldRelockAfterBackground({ lastKnown: lastKnownRef.current, hiddenForMs, platform: 'web' })) setIsLocked(true);
+      };
+      document.addEventListener('visibilitychange', onVisibilityChange);
+      return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+    }
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'background' || state === 'inactive') {
+        hiddenAtRef.current = Date.now();
+        return;
+      }
+      if (state === 'active' && hiddenAtRef.current != null) {
+        const hiddenForMs = Date.now() - hiddenAtRef.current;
+        hiddenAtRef.current = null;
+        if (shouldRelockAfterBackground({ lastKnown: lastKnownRef.current, hiddenForMs, platform: Platform.OS })) setIsLocked(true);
+      }
+    });
+    return () => subscription.remove();
+  }, [setIsLocked]);
+
+  if (!ready || pinConfig === undefined) return null;
+  if (isLocked && pinConfig) {
+    return <PinLockScreen pinConfig={pinConfig} onUnlock={() => setIsLocked(false)} />;
   }
   return children;
 }
 
-// Runs at most once per app session - mirrors web's App.jsx, which was the
-// only place this ever ran; mobile imported the Recurring rules UI but never
-// called the generator, so a rule created on the phone only ever
-// materialized if someone happened to open the web build that same month.
-// The ref only ever locks true, never resets. Waits for dbRecurringRules to
-// have actually loaded (an empty array on first render means "not loaded
-// yet" as often as "no rules"), so it keeps re-checking until real data
-// shows up.
+// Creates any recurring entries that are due. The generation itself is one
+// server transaction with fixed ids per rule and month (see
+// runRecurringGeneration), so running it often is safe - it runs on start,
+// whenever the rules change (a rule added mid-session no longer waits for a
+// restart), and when the app comes back to the foreground (so a month that
+// rolls over while the app stays open is caught). Only one run at a time;
+// a request that arrives mid-run queues a single follow-up.
 function RecurringRuleRunner() {
-  const generatedRef = useRef(false);
+  const runningRef = useRef(false);
+  const rerunRef = useRef(false);
 
-  useEffect(
-    () =>
-      subscribeToRecurringRules((rules) => {
-        if (generatedRef.current || !rules.length) return;
-        generatedRef.current = true;
-        (async () => {
-          const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(rules, getMonthKey(todayISO()));
-          if (toCreate.length) {
-            try {
-              await addExpensesBatch(toCreate);
-            } catch (err) {
-              reportError(err, 'Recurring expense generation failed');
-              return;
-            }
-          }
-          if (updatedRules) {
-            await saveRecurringRulesToDb(updatedRules);
-          }
-        })();
-      }),
-    [],
-  );
+  const run = useCallback(async () => {
+    if (runningRef.current) {
+      rerunRef.current = true;
+      return;
+    }
+    runningRef.current = true;
+    try {
+      await runRecurringGeneration(getMonthKey(todayISO()));
+    } catch (err) {
+      // Offline: transactions need the server; the next run picks it up.
+      if (err?.code !== 'unavailable') reportError(err, 'Recurring expense generation failed');
+    } finally {
+      runningRef.current = false;
+      if (rerunRef.current) {
+        rerunRef.current = false;
+        run();
+      }
+    }
+  }, []);
+
+  useEffect(() => subscribeToRecurringRules(() => run()), [run]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const onVisible = () => {
+        if (document.visibilityState === 'visible') run();
+      };
+      document.addEventListener('visibilitychange', onVisible);
+      return () => document.removeEventListener('visibilitychange', onVisible);
+    }
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') run();
+    });
+    return () => subscription.remove();
+  }, [run]);
 
   return null;
 }
@@ -112,6 +200,14 @@ export default function TabsLayout() {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
 
+  // index.js used to be the only sign-in check, so signing out (or
+  // reloading a deep link like /cards while signed out) left you inside an
+  // empty app whose every listener failed with permission-denied - and the
+  // recurring runner and PIN gate below ran signed out too.
+  const { user, allowed, initializing } = useAuth();
+  if (initializing) return <View className="flex-1 bg-paper" />;
+  if (!user || !allowed) return <Redirect href="/" />;
+
   return (
     <PinGate>
       <View style={{ flex: 1 }}>
@@ -123,12 +219,12 @@ export default function TabsLayout() {
             // default, which shows through as a pale band under the top nav
             // in dark mode - transparent lets the root's bg-paper win.
             sceneStyle: { backgroundColor: 'transparent' },
-            tabBarActiveTintColor: isDark ? '#4FB3A0' : '#3D7068',
-            tabBarInactiveTintColor: isDark ? '#93A0B8' : '#5C6478',
+            tabBarActiveTintColor: themeColor('ledgerGreen', isDark),
+            tabBarInactiveTintColor: themeColor('mutedText', isDark),
             tabBarStyle: {
               display: isWide ? 'none' : 'flex',
-              backgroundColor: isDark ? '#1A2130' : '#F2ECDD',
-              borderTopColor: isDark ? 'rgba(237,230,211,0.1)' : 'rgba(36,48,74,0.1)',
+              backgroundColor: themeColor('paper', isDark),
+              borderTopColor: themeRgba('ink', isDark, 0.1),
               // The default 49px can't fit the icon pill plus label on web.
               ...(Platform.OS === 'web' ? { height: 60 } : {}),
             },

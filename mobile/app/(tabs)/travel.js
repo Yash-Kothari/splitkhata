@@ -17,7 +17,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { useJump } from '../../lib/JumpContext';
 import { useUndoDelete } from '../../lib/useUndoDelete';
 import { usePaymentInstruments } from '../../lib/usePaymentInstruments';
-import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger, formatCurrency } from '../../lib/utils';
+import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger, formatCurrency, memberForUser } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import AppHeader from '../../components/AppHeader';
 import TripPicker from '../../components/TripPicker';
@@ -169,7 +169,7 @@ export default function Travel() {
             <View className="order-2 lg:order-1 lg:flex-1">
               <View className="px-4">
                 <AddEntryForm
-                  deviceName={user?.displayName}
+                  deviceName={memberForUser(user, members) || undefined}
                   ledger="travel"
                   tripName={selectedTrip}
                   dbCategories={categories}

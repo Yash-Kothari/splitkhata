@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { signOutUser, subscribeToPinConfig } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useLock } from '../lib/LockContext';
+import { reportError } from '../lib/errorReporting';
 import SettingsModal from './SettingsModal';
 import GlobalSearch from './GlobalSearch';
 import TopNavBar from './TopNavBar';
@@ -23,6 +25,7 @@ import { VERSION_LABEL, BUILD_SHA } from '../lib/version';
 export default function AppHeader({ badge, showSettings: controlledShowSettings, onShowSettingsChange }) {
   const { user } = useAuth();
   const { setIsLocked } = useLock();
+  const router = useRouter();
   const [uncontrolledShowSettings, setUncontrolledShowSettings] = useState(false);
   const showSettings = controlledShowSettings !== undefined ? controlledShowSettings : uncontrolledShowSettings;
   const setShowSettings = onShowSettingsChange || setUncontrolledShowSettings;
@@ -30,7 +33,7 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [accountMenuAnchor, setAccountMenuAnchor] = useState(null);
   const accountButtonRef = useRef(null);
-  const [pinConfig, setPinConfig] = useState({ pin: '', enabled: false });
+  const [pinConfig, setPinConfig] = useState({ enabled: false, pinHash: null, legacyPin: null });
 
   useEffect(() => subscribeToPinConfig(setPinConfig), []);
 
@@ -126,7 +129,7 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
               {user?.email ? (
                 <Text numberOfLines={1} className="font-body text-xs text-muted-text px-2 py-1.5">{user.email}</Text>
               ) : null}
-              {pinConfig.enabled && pinConfig.pin ? (
+              {pinConfig.enabled && (pinConfig.pinHash || pinConfig.legacyPin) ? (
                 <Pressable
                   onPress={() => {
                     setShowAccountMenu(false);
@@ -140,7 +143,9 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
               <Pressable
                 onPress={() => {
                   setShowAccountMenu(false);
-                  signOutUser();
+                  signOutUser()
+                    .then(() => router.replace('/'))
+                    .catch((err) => reportError(err, 'Could not sign out'));
                 }}
                 className="min-h-10 rounded-lg px-3 py-2 justify-center"
               >

@@ -5,7 +5,8 @@ import Svg, { Line } from 'react-native-svg';
 import EditEntryRow from './EditEntryRow';
 import PickerField from './PickerField';
 import { cardShadow } from './Card';
-import { formatCurrency, formatMonthLabel, PERSON_COLORS } from '../lib/utils';
+import { formatCurrency, formatMonthLabel, PERSON_COLORS, isCashPaid } from '../lib/utils';
+import { themeRgba, themeColor } from '../lib/theme';
 
 function formatShortDate(dateStr) {
   try {
@@ -49,7 +50,7 @@ export default function EntryList({
   // The rail and dividers are drawn with raw colors (SVG / RN styles), so they
   // need the scheme picked explicitly - ink is light-on-dark in dark mode.
   const { colorScheme } = useColorScheme();
-  const inkRgb = colorScheme === 'dark' ? '237,230,211' : '36,48,74';
+  const isDark = colorScheme === 'dark';
   const [editingId, setEditingId] = useState(null);
 
   const filtered = useMemo(() => {
@@ -114,7 +115,7 @@ export default function EntryList({
 
       {loading ? (
         <View className="items-center py-10">
-          <ActivityIndicator color="#3D7068" />
+          <ActivityIndicator color={themeColor('ledgerGreen', isDark)} />
         </View>
       ) : filtered.length === 0 ? (
         <View className="items-center py-12 border-2 border-dashed border-ink/20 rounded-xl bg-paper/50 px-4">
@@ -130,7 +131,7 @@ export default function EntryList({
           // all four sides at once and the row already needs a dashed left
           // edge (the ledger rail below); a shared borderStyle would force
           // this divider dashed too.
-          const divider = index > 0 ? <View key={`${item.id}-divider`} style={{ height: 1, backgroundColor: `rgba(${inkRgb},0.12)` }} /> : null;
+          const divider = index > 0 ? <View key={`${item.id}-divider`} style={{ height: 1, backgroundColor: themeRgba('ink', isDark, 0.12) }} /> : null;
 
           if (editingId === item.id) {
             return (
@@ -157,7 +158,7 @@ export default function EntryList({
 
           const isSettlement = item.splitType === 'settlement';
           const hasPoints = (isTravel || item.isTripRollup || isSettlement) && Number(item.rewardPoints || 0) !== 0;
-          const isCashPool = isTravel && !item.split && item.paymentMethod === 'Cash';
+          const isCashPool = isTravel && !item.split && isCashPaid(item);
 
           return (
             <Fragment key={item.id}>
@@ -170,12 +171,12 @@ export default function EntryList({
                     instead, which dashes reliably on every platform. */}
                 <View className="absolute" style={{ left: 0, top: 0, bottom: 0, width: 2 }}>
                   <Svg width="100%" height="100%">
-                    <Line x1="1" y1="0" x2="1" y2="100%" stroke={`rgba(${inkRgb},0.3)`} strokeWidth={2} strokeDasharray="4,3" />
+                    <Line x1="1" y1="0" x2="1" y2="100%" stroke={themeRgba('ink', isDark, 0.3)} strokeWidth={2} strokeDasharray="4,3" />
                   </Svg>
                 </View>
                 <View
                   className="absolute rounded-full"
-                  style={{ left: -3, top: '50%', marginTop: -4, width: 8, height: 8, backgroundColor: PERSON_COLORS[item.payer] || '#3D7068' }}
+                  style={{ left: -3, top: '50%', marginTop: -4, width: 8, height: 8, backgroundColor: PERSON_COLORS[item.payer] || themeColor('ledgerGreen', isDark) }}
                 />
                 <View className="flex-row items-center justify-between gap-3">
                   <View className="flex-1 min-w-0">

@@ -5,7 +5,7 @@ import { createContext, useContext, useState } from 'react';
 // like web's App.jsx), this is how the search modal tells the target screen
 // what to select once it's navigated there. Mirrors web's handleJumpToEntry
 // in App.jsx, just split across a shared context instead of local state.
-const JumpContext = createContext({ pendingJump: null, setPendingJump: () => {} });
+const JumpContext = createContext({ pendingJump: null, setPendingJump: (_value) => {} });
 
 export function JumpProvider({ children }) {
   const [pendingJump, setPendingJump] = useState(null);

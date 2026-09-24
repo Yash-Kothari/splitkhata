@@ -16,6 +16,8 @@ import {
   resolveCardParams,
   computeCardMilestoneProgress,
   getQuarterlyMilestoneCreditDate,
+  getQuarterStartingSpend,
+  getAnnualStartingSpend,
   getAnnualMilestoneWindow,
   computeCardCapStatus,
   getQuarterBounds,
@@ -93,10 +95,6 @@ export default function Cards() {
   // computeQuarterlyMilestoneLumps for why they can't live inside
   // computeCardCycleReward and getQuarterlyMilestoneCreditDate for how their
   // date is worked out.
-  const quarterlyStarting = {
-    spend: selectedCard?.quarterlyMilestoneStartingSpend || 0,
-    quarterStart: selectedCard?.quarterlyMilestoneStartingQuarter || null,
-  };
   // Only rewards already credited count as "in account"; the rest is shown as pending with its date.
   const lifetimeRewardTotal =
     (selectedCard?.startingRewardPoints || 0) + ledger.credited - lifetimePointsRedeemed;
@@ -116,7 +114,9 @@ export default function Cards() {
         quarterStart,
         quarterEnd,
         params.quarterlyMilestoneTarget,
-        quarterlyStarting.quarterStart === quarterStart ? quarterlyStarting.spend : 0,
+        // Per-quarter map (getQuarterStartingSpend), not one shared field -
+        // editing the card in a later quarter used to zero this one out.
+        getQuarterStartingSpend(selectedCard, quarterStart),
       )
     : null;
   const annualMilestone = params.annualMilestoneTarget
@@ -126,7 +126,7 @@ export default function Cards() {
         annualPeriodStart,
         annualPeriodEnd,
         params.annualMilestoneTarget,
-        selectedCard.annualMilestoneStartingSpend,
+        getAnnualStartingSpend(selectedCard, annualPeriodStart),
       )
     : null;
   const capStatuses = selectedCard ? computeCardCapStatus(selectedCard, cardTxns, currentCycleTxns, today) : [];
@@ -187,7 +187,7 @@ export default function Cards() {
         {selectedCard && (
           <View className="flex-col lg:flex-row" style={{ gap: 20 }}>
             <View className="order-2 lg:order-1 lg:flex-1 px-4">
-              <CardTransactionForm card={selectedCard} cardTxns={cardTxns} onSaveError={(err) => reportError(err, 'Could not save transaction')} />
+              <CardTransactionForm key={selectedCard.id} card={selectedCard} cardTxns={cardTxns} onSaveError={(err) => reportError(err, 'Could not save transaction')} />
 
               <Card className="p-4 mb-4">
                 <View className="flex-row items-center justify-between gap-2 mb-3">
@@ -241,10 +241,10 @@ export default function Cards() {
                 {!statementOnly && (
                 <View className="rounded-xl bg-ledger-green/10 px-3.5 py-2.5 mb-3">
                   <Text className="font-body-semibold text-2xs text-ledger-green uppercase tracking-wider">
-                    {currentCycleReward.unit === 'points' ? 'Total reward points in account' : 'Total cashback in account'}
+                    {ledger.unit === 'points' ? 'Total reward points in account' : 'Total cashback in account'}
                   </Text>
                   <Text className="font-mono-bold text-ledger-green text-2xl">
-                    {formatReward(lifetimeRewardTotal, currentCycleReward.unit)}
+                    {formatReward(lifetimeRewardTotal, ledger.unit)}
                   </Text>
                 </View>
                 )}

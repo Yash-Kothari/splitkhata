@@ -12,6 +12,10 @@ import { initializeApp } from 'firebase/app';
 import {
   getAuth,
   initializeAuth,
+  // @ts-expect-error - getReactNativePersistence is a real, documented
+  // export of @firebase/auth's "react-native" build (see above), but TS's
+  // own module resolution here picks a different conditional export whose
+  // .d.ts doesn't declare it - a types-only gap, not a runtime one.
   getReactNativePersistence,
   connectAuthEmulator,
   GoogleAuthProvider,
@@ -23,21 +27,25 @@ import {
 import {
   initializeFirestore,
   persistentLocalCache,
+  persistentMultipleTabManager,
   memoryLocalCache,
   connectFirestoreEmulator,
   collection,
   addDoc,
   deleteDoc,
   updateDoc,
+  deleteField,
   setDoc,
   doc,
   getDocs,
+  getDoc,
   onSnapshot,
   serverTimestamp,
   query,
   where,
   orderBy,
   writeBatch,
+  runTransaction,
 } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
@@ -48,6 +56,12 @@ import {
   DEFAULT_PAYMENT_METHODS as PAYMENT_METHODS,
   normalizeLedger,
   getCardBillingCycleKey,
+  computeRecurringEntriesToGenerate,
+  buildPaymentInstruments,
+  resolveInstrument,
+  isStatementOnlyCard,
+  resolveStrategyParamsForDate,
+  inferCardRewardFields,
 } from './utils';
 
 // Same project the web app (yash-kothari.github.io/splitkhata) uses - public
@@ -84,8 +98,41 @@ const auth =
 // worth it just for this. Web still gets the real persistent cache matching
 // enableIndexedDbPersistence behavior (src/firebase.js).
 const dbInstance = initializeFirestore(app, {
-  localCache: Platform.OS === 'web' ? persistentLocalCache() : memoryLocalCache(),
+  // Multi-tab: with the default single-tab manager, a second open tab (or an
+  // old page still closing during a reload) failed to get the IndexedDB lock
+  // with failed-precondition and silently fell back to a memory-only cache.
+  localCache: Platform.OS === 'web' ? persistentLocalCache({ tabManager: persistentMultipleTabManager() }) : memoryLocalCache(),
 });
+
+// A count of writes still in flight, for ConnectionBanner to show "N changes
+// waiting to sync" - there was previously no way to tell a stuck save from a
+// successful one apart from watching the spinner never stop. `track` never
+// swallows the write's own outcome (the returned promise still rejects the
+// same way); it only observes it to keep the count and to report a failure
+// that nothing else is watching for.
+let pendingWriteCount = 0;
+let pendingWriteListeners = [];
+function notifyPendingWrites() {
+  pendingWriteListeners.forEach((listener) => listener(pendingWriteCount));
+}
+export function subscribeToPendingWrites(listener) {
+  pendingWriteListeners.push(listener);
+  listener(pendingWriteCount);
+  return () => {
+    pendingWriteListeners = pendingWriteListeners.filter((l) => l !== listener);
+  };
+}
+function track(promise, context) {
+  pendingWriteCount += 1;
+  notifyPendingWrites();
+  promise
+    .catch(() => {}) // the caller's own await/catch still sees the rejection - this just stops it becoming an unhandled one here
+    .finally(() => {
+      pendingWriteCount -= 1;
+      notifyPendingWrites();
+    });
+  return promise;
+}
 
 // Opt-in only (EXPO_PUBLIC_USE_FIRESTORE_EMULATOR=true in mobile/.env) - lets
 // development point at a disposable local Firestore + Auth (`firebase
@@ -158,6 +205,11 @@ function ensureAi() {
       const ai = getAI(app, { backend: new GoogleAIBackend() });
       const model = getGenerativeModel(ai, { model: 'gemini-flash-latest' });
       return { ai, model, getGenerativeModel };
+    }).catch((err) => {
+      // Don't cache a failed load (e.g. a flaky network fetching the module) -
+      // every AI feature stayed broken until a full reload.
+      aiInitPromise = null;
+      throw err;
     });
   }
   return aiInitPromise;
@@ -277,15 +329,30 @@ export function subscribeToExpenses(ledger, onData, onError) {
   );
 }
 
-async function seedDefaultCategories() {
+// Default lists are seeded at most once per list, ever: a flag doc records
+// it in the same batch as the defaults. Without it, an empty snapshot from
+// the offline cache (first launch with no network) or two devices starting
+// at once seeded a second set, and deleting every item in a list brought
+// the defaults back on the next launch.
+async function seedOnce(key, writeDefaults) {
+  const seedStateRef = doc(dbInstance, 'settings', 'seed_state');
+  const state = await getDoc(seedStateRef);
+  if (state.exists() && state.data()[key]) return;
   const batch = writeBatch(dbInstance);
-  for (const cat of CATEGORIES) {
-    batch.set(doc(categoriesRef), { name: cat, ledger: 'household', createdAt: serverTimestamp() });
-  }
-  for (const cat of TRAVEL_CATEGORIES) {
-    batch.set(doc(categoriesRef), { name: cat, ledger: 'travel', createdAt: serverTimestamp() });
-  }
+  writeDefaults(batch);
+  batch.set(seedStateRef, { [key]: true }, { merge: true });
   await batch.commit();
+}
+
+async function seedDefaultCategories() {
+  await seedOnce('categories', (batch) => {
+    for (const cat of CATEGORIES) {
+      batch.set(doc(categoriesRef), { name: cat, ledger: 'household', createdAt: serverTimestamp() });
+    }
+    for (const cat of TRAVEL_CATEGORIES) {
+      batch.set(doc(categoriesRef), { name: cat, ledger: 'travel', createdAt: serverTimestamp() });
+    }
+  });
 }
 
 // Lists keep their creation order unless a saved sortOrder says otherwise (see
@@ -314,8 +381,17 @@ export function subscribeToCategories(onData, onError) {
   const q = query(categoriesRef, orderBy('createdAt', 'asc'));
   return onSnapshot(
     q,
+    // Metadata changes too, so a cache-only empty result is followed by the
+    // server's answer even when that answer is also empty.
+    { includeMetadataChanges: true },
     (snapshot) => {
-      if (snapshot.empty && !categoriesSeededFlag) {
+      // An empty result straight from the local cache says nothing about the
+      // server: show the defaults, but don't seed until the server confirms.
+      if (snapshot.empty && snapshot.metadata.fromCache) {
+        onData({ household: [...CATEGORIES], travel: [...TRAVEL_CATEGORIES], rawDocs: [] });
+        return;
+      }
+      if (snapshot.empty && !snapshot.metadata.fromCache && !categoriesSeededFlag) {
         categoriesSeededFlag = true;
         seedDefaultCategories().catch(() => {});
         onData({ household: [...CATEGORIES], travel: [...TRAVEL_CATEGORIES], rawDocs: [] });
@@ -337,19 +413,28 @@ export function subscribeToCategories(onData, onError) {
 }
 
 async function seedDefaultMembers() {
-  const batch = writeBatch(dbInstance);
-  for (const p of PERSONS) {
-    batch.set(doc(membersRef), { name: p, createdAt: serverTimestamp() });
-  }
-  await batch.commit();
+  await seedOnce('members', (batch) => {
+    for (const name of PERSONS) {
+      batch.set(doc(membersRef), { name, createdAt: serverTimestamp() });
+    }
+  });
 }
 
 export function subscribeToMembers(onData, onError) {
   const q = query(membersRef, orderBy('createdAt', 'asc'));
   return onSnapshot(
     q,
+    // Metadata changes too, so a cache-only empty result is followed by the
+    // server's answer even when that answer is also empty.
+    { includeMetadataChanges: true },
     (snapshot) => {
-      if (snapshot.empty && !membersSeededFlag) {
+      // An empty result straight from the local cache says nothing about the
+      // server: show the defaults, but don't seed until the server confirms.
+      if (snapshot.empty && snapshot.metadata.fromCache) {
+        onData({ members: [...PERSONS], rawDocs: [] });
+        return;
+      }
+      if (snapshot.empty && !snapshot.metadata.fromCache && !membersSeededFlag) {
         membersSeededFlag = true;
         seedDefaultMembers().catch(() => {});
         onData({ members: [...PERSONS], rawDocs: [] });
@@ -358,6 +443,7 @@ export function subscribeToMembers(onData, onError) {
       const members = [];
       const rawDocs = [];
       snapshot.docs.forEach((d) => {
+        /** @type {{id: string, name?: string}} */
         const item = { id: d.id, ...d.data() };
         rawDocs.push(item);
         if (item.name) members.push(item.name);
@@ -369,7 +455,7 @@ export function subscribeToMembers(onData, onError) {
 }
 
 export async function addExpense(entry) {
-  const docRef = await addDoc(expensesRef, { ...entry, createdAt: serverTimestamp() });
+  const docRef = await track(addDoc(expensesRef, { ...entry, createdAt: serverTimestamp() }), 'Could not save entry');
   return docRef.id;
 }
 
@@ -381,15 +467,15 @@ export async function addExpensesBatch(entries) {
   for (const entry of entries) {
     batch.set(doc(expensesRef), { ...entry, createdAt: serverTimestamp() });
   }
-  await batch.commit();
+  await track(batch.commit(), 'Could not save entries');
 }
 
 export async function updateExpense(id, updates) {
-  await updateDoc(doc(dbInstance, 'expenses', id), updates);
+  await track(updateDoc(doc(dbInstance, 'expenses', id), updates), 'Could not save changes');
 }
 
 export async function deleteExpense(id) {
-  await deleteDoc(doc(dbInstance, 'expenses', id));
+  await track(deleteDoc(doc(dbInstance, 'expenses', id)), 'Could not delete entry');
 }
 
 export function subscribeToHouseholdBudgets(callback) {
@@ -442,9 +528,90 @@ export async function updateTripInDb(tripId, updates) {
   await updateDoc(doc(dbInstance, 'trips', tripId), updates);
 }
 
+// Deleting a trip's household rollup line from Payment History left the trip
+// still pointing at it - "Add to Main Ledger" never came back and "Update"
+// failed on the missing entry. Clears the pointer on whichever trip holds it
+// (normally at most one) in a single write, rather than one updateDoc per
+// match with no shared all-or-nothing outcome between them.
+export async function clearTripRollupPointer(entryId) {
+  if (!entryId) return;
+  const snap = await getDocs(query(tripsRef, where('rolledUpEntryId', '==', entryId)));
+  if (snap.empty) return;
+  const batch = writeBatch(dbInstance);
+  snap.docs.forEach((d) => batch.update(d.ref, { rolledUpEntryId: null, rolledUpAmount: null, rolledUpDebtor: null, rolledUpCreditor: null }));
+  await track(batch.commit(), "Could not reset the trip's rollup");
+}
+
+// Atomic: the household "rollup" entry for a trip and the trip's own
+// rolledUpEntryId/Amount/Debtor/Creditor pointer must always agree - these
+// three helpers replace what used to be a separate expense write (create,
+// update, or delete) followed by a separate updateTripInDb call, which on a
+// mid-way failure left the two out of sync (a deleted rollup entry the trip
+// still pointed at, or a newly created one the trip never learned the id of).
+
+export async function clearTripRollupEntry(tripId, entryId) {
+  const batch = writeBatch(dbInstance);
+  batch.delete(doc(dbInstance, 'expenses', entryId));
+  if (tripId) {
+    batch.update(doc(dbInstance, 'trips', tripId), { rolledUpEntryId: null, rolledUpAmount: null, rolledUpDebtor: null, rolledUpCreditor: null });
+  }
+  await track(batch.commit(), 'Could not update the trip rollup');
+}
+
+export async function updateTripRollupEntry(tripId, entryId, entryUpdates, pointerUpdates) {
+  const batch = writeBatch(dbInstance);
+  batch.update(doc(dbInstance, 'expenses', entryId), entryUpdates);
+  if (tripId) {
+    batch.update(doc(dbInstance, 'trips', tripId), pointerUpdates);
+  }
+  await track(batch.commit(), 'Could not update the trip rollup');
+}
+
+export async function createTripRollupEntry(tripId, entryData, pointerData) {
+  const entryRef = doc(expensesRef);
+  const batch = writeBatch(dbInstance);
+  batch.set(entryRef, { ...entryData, createdAt: serverTimestamp() });
+  if (tripId) {
+    batch.update(doc(dbInstance, 'trips', tripId), { ...pointerData, rolledUpEntryId: entryRef.id });
+  }
+  await track(batch.commit(), 'Could not update the trip rollup');
+  return entryRef.id;
+}
+
 export async function deleteTripFromDb(tripId) {
   if (!tripId) return;
   await deleteDoc(doc(dbInstance, 'trips', tripId));
+}
+
+// Deleting a trip used to remove only the trip doc: its entries stayed (still
+// counted by search, Ask, exports and the points balance, and adopted by any
+// new trip with the same name), its household rollup line stayed in the
+// balance for good, and its cash records stayed too. This removes all of it:
+// the trip's travel entries and their linked card transactions, its cash
+// movements, its household rollup line, then the trip. Needs the server.
+export async function deleteTripCascade(trip) {
+  if (!trip?.id) return;
+  const [entriesSnap, movementsSnap] = await Promise.all([
+    getDocs(query(expensesRef, where('tripName', '==', trip.name))),
+    getDocs(query(cashMovementsRef, where('tripName', '==', trip.name))),
+  ]);
+  const refs = [];
+  entriesSnap.docs.forEach((d) => {
+    const data = d.data();
+    if (normalizeLedger(data.ledger) !== 'travel') return;
+    refs.push(d.ref);
+    if (data.cardTransactionId) refs.push(doc(dbInstance, 'cardTransactions', data.cardTransactionId));
+  });
+  movementsSnap.docs.forEach((d) => refs.push(d.ref));
+  if (trip.rolledUpEntryId) refs.push(doc(expensesRef, trip.rolledUpEntryId));
+  refs.push(doc(dbInstance, 'trips', trip.id));
+  // Batches cap at 500 writes; the trip doc goes last so a partial failure
+  // leaves the trip visible to delete again.
+  for (let i = 0; i < refs.length; i += 400) {
+    const batch = writeBatch(dbInstance);
+    refs.slice(i, i + 400).forEach((ref) => batch.delete(ref));
+    await batch.commit();
+  }
 }
 
 // --- Cash movements (travel ledger - opening balance + ATM withdrawals per trip) ---
@@ -466,7 +633,32 @@ export function subscribeToCashMovements(onData, onError) {
 }
 
 export async function addCashMovementToDb(movement) {
-  await addDoc(cashMovementsRef, { ...movement, createdAt: serverTimestamp() });
+  await track(addDoc(cashMovementsRef, { ...movement, createdAt: serverTimestamp() }), 'Could not save cash record');
+}
+
+// Atomic: an ATM withdrawal is really two records at once - the cash
+// movement (what left the card/account) and the shared expense entry
+// (where that cash went) - previously two separate calls, which on a
+// mid-way failure left a withdrawal in the cash ledger with no matching
+// expense (the trip's cash balance and its spend total would disagree).
+export async function addWithdrawal(movement, entry) {
+  const batch = writeBatch(dbInstance);
+  batch.set(doc(cashMovementsRef), { ...movement, createdAt: serverTimestamp() });
+  batch.set(doc(expensesRef), { ...entry, createdAt: serverTimestamp() });
+  await track(batch.commit(), 'Could not record the withdrawal');
+}
+
+// Starting cash is one value per trip: this replaces every earlier opening
+// record for the trip. Saving used to add another record each time, so
+// correcting 20,000 to 25,000 showed 45,000.
+export async function setOpeningCash(tripName, tripId, amount) {
+  const existing = await getDocs(query(cashMovementsRef, where('tripName', '==', tripName)));
+  const batch = writeBatch(dbInstance);
+  existing.docs.forEach((d) => {
+    if (d.data().type === 'opening') batch.delete(d.ref);
+  });
+  batch.set(doc(cashMovementsRef, `opening_${tripId}`), { tripName, type: 'opening', amount, createdAt: serverTimestamp() });
+  await track(batch.commit(), 'Could not save opening cash');
 }
 
 export async function deleteCashMovementFromDb(id) {
@@ -481,8 +673,17 @@ export function subscribeToPaymentMethods(onData, onError) {
   const q = query(paymentMethodsRef, orderBy('createdAt', 'asc'));
   return onSnapshot(
     q,
+    // Metadata changes too, so a cache-only empty result is followed by the
+    // server's answer even when that answer is also empty.
+    { includeMetadataChanges: true },
     (snapshot) => {
-      if (snapshot.empty && !paymentMethodsSeededFlag) {
+      // An empty result straight from the local cache says nothing about the
+      // server: show the defaults, but don't seed until the server confirms.
+      if (snapshot.empty && snapshot.metadata.fromCache) {
+        onData({ methods: [...PAYMENT_METHODS], rawDocs: [] });
+        return;
+      }
+      if (snapshot.empty && !snapshot.metadata.fromCache && !paymentMethodsSeededFlag) {
         paymentMethodsSeededFlag = true;
         seedDefaultPaymentMethods().catch(() => {});
         onData({ methods: [...PAYMENT_METHODS], rawDocs: [] });
@@ -501,13 +702,18 @@ export function subscribeToPaymentMethods(onData, onError) {
 }
 
 async function seedDefaultPaymentMethods() {
-  const batch = writeBatch(dbInstance);
-  for (const m of PAYMENT_METHODS) {
-    batch.set(doc(paymentMethodsRef), { name: m, createdAt: serverTimestamp() });
-  }
-  await batch.commit();
+  await seedOnce('paymentMethods', (batch) => {
+    for (const name of PAYMENT_METHODS) {
+      batch.set(doc(paymentMethodsRef), { name, createdAt: serverTimestamp() });
+    }
+  });
 }
 
+/**
+ * @param {string} name
+ * @param {Array<{name?: string}>} [existingRawDocs]
+ * @param {{type?: string, owner?: string}} [options]
+ */
 export async function addPaymentMethodToDb(name, existingRawDocs = [], { type, owner } = {}) {
   const trimmed = name.trim();
   if (!trimmed) return;
@@ -558,13 +764,152 @@ export async function updatePaymentMethodInDb(id, { name, type, owner }) {
   await updateDoc(doc(dbInstance, 'paymentMethods', id), { name: name.trim(), type: type || 'other', owner: owner || '' });
 }
 
-export async function deletePaymentMethodFromDb(name, rawDocs = []) {
-  const trimmed = name.trim();
-  if (!trimmed) return;
-  const docToDelete = rawDocs.find((d) => d.name?.trim().toLowerCase() === trimmed.toLowerCase());
-  if (docToDelete?.id) {
-    await deleteDoc(doc(dbInstance, 'paymentMethods', docToDelete.id));
+// By id - two methods can share a name (told apart by owner), and deleting
+// by name removed whichever came first, not the one tapped.
+export async function deletePaymentMethodFromDb(id) {
+  if (!id) return;
+  await deleteDoc(doc(dbInstance, 'paymentMethods', id));
+}
+
+// --- Rename / usage guards (P1-5): a category/member/guest historically
+// couldn't be renamed at all - deleting and re-adding left every past
+// record saying the old name forever - and deleting one still in use
+// silently orphaned that history instead of refusing. These read the
+// relevant collections once (this app's scale - a household plus
+// occasional trip guests, not enterprise volume - makes that fine, and
+// Firestore can't query "does this map have key X" or combine an
+// array-contains with other filters in one query anyway) and batch every
+// doc that needs a change, chunked at 400 writes per commit (Firestore's
+// real cap is 500).
+
+async function batchUpdateDocs(collectionRef, computeUpdates) {
+  const snap = await getDocs(collectionRef);
+  const toUpdate = [];
+  snap.docs.forEach((d) => {
+    const updates = computeUpdates(d.data(), d);
+    if (updates) toUpdate.push({ ref: d.ref, updates });
+  });
+  for (let i = 0; i < toUpdate.length; i += 400) {
+    const batch = writeBatch(dbInstance);
+    toUpdate.slice(i, i + 400).forEach(({ ref, updates }) => batch.update(ref, updates));
+    await track(batch.commit(), 'Could not update some records');
   }
+  return toUpdate.length;
+}
+
+// Shared by members and guests - both are just "a person" as far as
+// entries, trips, cards and payment methods are concerned. A guest rename
+// additionally touches trip.guests arrays (a member never appears there);
+// a member rename touches nothing extra, so one function covers both.
+async function renamePersonEverywhere(oldName, newName) {
+  const entriesUpdated = await batchUpdateDocs(expensesRef, (entry) => {
+    const updates = {};
+    let changed = false;
+    if (entry.payer === oldName) {
+      updates.payer = newName;
+      changed = true;
+    }
+    if (entry.owedBy === oldName) {
+      updates.owedBy = newName;
+      changed = true;
+    }
+    if (Array.isArray(entry.splitAmong) && entry.splitAmong.includes(oldName)) {
+      updates.splitAmong = entry.splitAmong.map((m) => (m === oldName ? newName : m));
+      changed = true;
+    }
+    if (entry.splitShares && Object.prototype.hasOwnProperty.call(entry.splitShares, oldName)) {
+      const { [oldName]: value, ...rest } = entry.splitShares;
+      updates.splitShares = { ...rest, [newName]: value };
+      changed = true;
+    }
+    return changed ? updates : null;
+  });
+
+  await batchUpdateDocs(tripsRef, (trip) => {
+    const updates = {};
+    let changed = false;
+    if (trip.rolledUpDebtor === oldName) {
+      updates.rolledUpDebtor = newName;
+      changed = true;
+    }
+    if (trip.rolledUpCreditor === oldName) {
+      updates.rolledUpCreditor = newName;
+      changed = true;
+    }
+    if (Array.isArray(trip.guests) && trip.guests.includes(oldName)) {
+      updates.guests = trip.guests.map((g) => (g === oldName ? newName : g));
+      changed = true;
+    }
+    return changed ? updates : null;
+  });
+
+  await batchUpdateDocs(creditCardsRef, (card) => (card.owner === oldName ? { owner: newName } : null));
+  await batchUpdateDocs(paymentMethodsRef, (pm) => (pm.owner === oldName ? { owner: newName } : null));
+
+  const rulesRef = doc(dbInstance, 'settings', 'recurring_rules');
+  await track(
+    runTransaction(dbInstance, async (tx) => {
+      const snap = await tx.get(rulesRef);
+      const rules = snap.exists() && Array.isArray(snap.data().rules) ? snap.data().rules : [];
+      let changed = false;
+      const nextRules = rules.map((r) => {
+        if (r.payer !== oldName && r.owedBy !== oldName && !(r.splitShares && Object.prototype.hasOwnProperty.call(r.splitShares, oldName))) {
+          return r;
+        }
+        changed = true;
+        const next = { ...r };
+        if (r.payer === oldName) next.payer = newName;
+        if (r.owedBy === oldName) next.owedBy = newName;
+        if (r.splitShares && Object.prototype.hasOwnProperty.call(r.splitShares, oldName)) {
+          const { [oldName]: value, ...rest } = r.splitShares;
+          next.splitShares = { ...rest, [newName]: value };
+        }
+        return next;
+      });
+      if (!changed) return;
+      tx.set(rulesRef, { rules: nextRules, updatedAt: serverTimestamp() }, { merge: true });
+    }),
+    'Could not rename on recurring rules',
+  );
+
+  return entriesUpdated;
+}
+
+// Counts every record anywhere that still names this person - members and
+// guests share the same check, since both are just "a person" in the data.
+export async function countRecordsUsingPerson(name) {
+  const [entriesSnap, tripsSnap, cardsSnap, pmSnap, rulesSnap] = await Promise.all([
+    getDocs(expensesRef),
+    getDocs(tripsRef),
+    getDocs(creditCardsRef),
+    getDocs(paymentMethodsRef),
+    getDoc(doc(dbInstance, 'settings', 'recurring_rules')),
+  ]);
+  let count = 0;
+  entriesSnap.docs.forEach((d) => {
+    const e = d.data();
+    if (e.payer === name || e.owedBy === name) count += 1;
+    else if (Array.isArray(e.splitAmong) && e.splitAmong.includes(name)) count += 1;
+    else if (e.splitShares && Object.prototype.hasOwnProperty.call(e.splitShares, name)) count += 1;
+  });
+  tripsSnap.docs.forEach((d) => {
+    const t = d.data();
+    if (t.rolledUpDebtor === name || t.rolledUpCreditor === name) count += 1;
+    if (Array.isArray(t.guests) && t.guests.includes(name)) count += 1;
+  });
+  cardsSnap.docs.forEach((d) => {
+    if (d.data().owner === name) count += 1;
+  });
+  pmSnap.docs.forEach((d) => {
+    if (d.data().owner === name) count += 1;
+  });
+  if (rulesSnap.exists()) {
+    const rules = rulesSnap.data().rules || [];
+    rules.forEach((r) => {
+      if (r.payer === name || r.owedBy === name || (r.splitShares && Object.prototype.hasOwnProperty.call(r.splitShares, name))) count += 1;
+    });
+  }
+  return count;
 }
 
 // --- Guests (a reusable directory, not scoped to one trip - lets a trip
@@ -598,9 +943,28 @@ export async function addGuestToDb(name, existingRawDocs = []) {
   }
 }
 
+// Renames the guest everywhere - the directory doc, every entry/trip/card/
+// payment method that already named them (see renamePersonEverywhere), and
+// every trip's guests array that includes them (a guest can be reused
+// across trips via this same directory).
+export async function renameGuestInDb(oldName, newName, existingRawDocs = []) {
+  const trimmedOld = oldName.trim();
+  const trimmedNew = newName.trim();
+  if (!trimmedOld || !trimmedNew || trimmedOld === trimmedNew) return 0;
+  const guestDoc = existingRawDocs.find((d) => d.name?.trim().toLowerCase() === trimmedOld.toLowerCase());
+  if (guestDoc?.id) {
+    await track(updateDoc(doc(dbInstance, 'guests', guestDoc.id), { name: trimmedNew }), 'Could not rename guest');
+  }
+  return renamePersonEverywhere(trimmedOld, trimmedNew);
+}
+
 export async function deleteGuestFromDb(name, rawDocs = []) {
   const trimmed = name.trim();
   if (!trimmed) return;
+  const inUseCount = await countRecordsUsingPerson(trimmed);
+  if (inUseCount > 0) {
+    throw new Error(`"${trimmed}" is still used by ${inUseCount} ${inUseCount === 1 ? 'record' : 'records'} - rename them instead, or edit those first.`);
+  }
   const docToDelete = rawDocs.find((d) => d.name?.trim().toLowerCase() === trimmed.toLowerCase());
   if (docToDelete?.id) {
     await deleteDoc(doc(dbInstance, 'guests', docToDelete.id));
@@ -615,8 +979,17 @@ export function subscribeToCurrencies(onData, onError) {
   const q = query(currenciesRef, orderBy('createdAt', 'asc'));
   return onSnapshot(
     q,
+    // Metadata changes too, so a cache-only empty result is followed by the
+    // server's answer even when that answer is also empty.
+    { includeMetadataChanges: true },
     (snapshot) => {
-      if (snapshot.empty && !currenciesSeededFlag) {
+      // An empty result straight from the local cache says nothing about the
+      // server: show the defaults, but don't seed until the server confirms.
+      if (snapshot.empty && snapshot.metadata.fromCache) {
+        onData({ currencies: [...CURRENCIES], rawDocs: [] });
+        return;
+      }
+      if (snapshot.empty && !snapshot.metadata.fromCache && !currenciesSeededFlag) {
         currenciesSeededFlag = true;
         seedDefaultCurrencies().catch(() => {});
         onData({ currencies: [...CURRENCIES], rawDocs: [] });
@@ -625,6 +998,7 @@ export function subscribeToCurrencies(onData, onError) {
       const currencies = [];
       const rawDocs = [];
       snapshot.docs.forEach((d) => {
+        /** @type {{id: string, name?: string}} */
         const item = { id: d.id, ...d.data() };
         rawDocs.push(item);
         if (item.name) currencies.push(item.name);
@@ -636,11 +1010,11 @@ export function subscribeToCurrencies(onData, onError) {
 }
 
 async function seedDefaultCurrencies() {
-  const batch = writeBatch(dbInstance);
-  for (const cur of CURRENCIES) {
-    batch.set(doc(currenciesRef), { name: cur, createdAt: serverTimestamp() });
-  }
-  await batch.commit();
+  await seedOnce('currencies', (batch) => {
+    for (const name of CURRENCIES) {
+      batch.set(doc(currenciesRef), { name, createdAt: serverTimestamp() });
+    }
+  });
 }
 
 // --- Currencies (add/delete) ---
@@ -680,9 +1054,27 @@ export async function addMemberToDb(name, existingRawDocs = []) {
   }
 }
 
+// Renames the member everywhere - the roster doc, every entry/trip/card/
+// payment method that already named them, and any recurring rule (see
+// renamePersonEverywhere).
+export async function renameMemberInDb(oldName, newName, existingRawDocs = []) {
+  const trimmedOld = oldName.trim();
+  const trimmedNew = newName.trim();
+  if (!trimmedOld || !trimmedNew || trimmedOld === trimmedNew) return 0;
+  const memberDoc = existingRawDocs.find((d) => d.name?.trim().toLowerCase() === trimmedOld.toLowerCase());
+  if (memberDoc?.id) {
+    await track(updateDoc(doc(dbInstance, 'members', memberDoc.id), { name: trimmedNew }), 'Could not rename member');
+  }
+  return renamePersonEverywhere(trimmedOld, trimmedNew);
+}
+
 export async function deleteMemberFromDb(name, rawDocs = []) {
   const trimmed = name.trim();
   if (!trimmed) return;
+  const inUseCount = await countRecordsUsingPerson(trimmed);
+  if (inUseCount > 0) {
+    throw new Error(`"${trimmed}" is still used by ${inUseCount} ${inUseCount === 1 ? 'record' : 'records'} - rename them instead, or edit those first.`);
+  }
   const docToDelete = rawDocs.find((d) => d.name && d.name.trim().toLowerCase() === trimmed.toLowerCase());
   if (docToDelete?.id) {
     await deleteDoc(doc(dbInstance, 'members', docToDelete.id));
@@ -697,16 +1089,36 @@ export async function deleteMemberFromDb(name, rawDocs = []) {
 
 // --- Household budgets (save - subscribeToHouseholdBudgets already exists above) ---
 
-export async function saveHouseholdBudgetsToDb(budgets) {
+// Field-path writes: each only touches its own category's key inside the
+// `budgets` map (Firestore deep-merges a nested object under `{merge:
+// true}`), rather than overwriting the whole map with whatever this device
+// last saw - two people editing different categories at the same time used
+// to have the second save silently drop the first's change.
+export async function saveHouseholdBudget(category, amount) {
   const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
-  await setDoc(budgetsDocRef, { budgets, updatedAt: serverTimestamp() });
+  await track(
+    setDoc(budgetsDocRef, { budgets: { [category]: amount }, updatedAt: serverTimestamp() }, { merge: true }),
+    'Could not save budget',
+  );
+}
+
+export async function deleteHouseholdBudget(category) {
+  const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+  await track(
+    setDoc(budgetsDocRef, { budgets: { [category]: deleteField() }, updatedAt: serverTimestamp() }, { merge: true }),
+    'Could not remove budget',
+  );
 }
 
 // --- Payment reminder config (save - subscribeToPaymentReminderConfig already exists above) ---
 
-export async function savePaymentReminderConfigToDb(config) {
+// Takes only the field(s) actually changing (e.g. just {enabled}) and
+// merges them in, rather than overwriting the whole two-field config with
+// this device's full local copy - toggling "enabled" on one phone used to
+// be able to revert a threshold edit made moments earlier on the other.
+export async function savePaymentReminderConfigToDb(updates) {
   const configDocRef = doc(dbInstance, 'settings', 'payment_reminder_config');
-  await setDoc(configDocRef, { ...config, updatedAt: serverTimestamp() });
+  await track(setDoc(configDocRef, { ...updates, updatedAt: serverTimestamp() }, { merge: true }), 'Could not save reminder settings');
 }
 
 // --- Recurring expense rules (rent, subscriptions, utilities) - one settings
@@ -721,33 +1133,162 @@ export function subscribeToRecurringRules(callback) {
   );
 }
 
-export async function saveRecurringRulesToDb(rules) {
-  const rulesDocRef = doc(dbInstance, 'settings', 'recurring_rules');
-  await setDoc(rulesDocRef, { rules, updatedAt: serverTimestamp() });
+// Generates every recurring entry that's due, inside one transaction that
+// re-reads the rules from the server: the entries (fixed ids per rule and
+// month, see recurringEntryId) and the rules' lastGeneratedMonth commit
+// together or not at all, and an entry that already exists - made by the
+// other phone, or edited since - is never written over. The old runner
+// wrote entries with random ids and saved the rules separately, so two
+// devices opening at once, a stale cached snapshot, or a failed rules save
+// all produced duplicate rent entries. Needs the server; returns how many
+// entries it created.
+export async function runRecurringGeneration(currentMonthKey) {
+  const rulesRef = doc(dbInstance, 'settings', 'recurring_rules');
+  const { created, linkable } = await runTransaction(dbInstance, async (tx) => {
+    const rulesSnap = await tx.get(rulesRef);
+    const rules = rulesSnap.exists() && Array.isArray(rulesSnap.data().rules) ? rulesSnap.data().rules : [];
+    const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(rules, currentMonthKey);
+    if (!updatedRules) return { created: 0, linkable: [] };
+    const refs = toCreate.map((item) => doc(expensesRef, item.id));
+    const existing = await Promise.all(refs.map((ref) => tx.get(ref)));
+    let createdCount = 0;
+    const linkableEntries = [];
+    toCreate.forEach(({ id, ...entry }, index) => {
+      if (existing[index].exists()) return;
+      tx.set(refs[index], { ...entry, createdAt: serverTimestamp() });
+      createdCount += 1;
+      if (entry.paymentInstrumentId) linkableEntries.push({ id, ...entry });
+    });
+    tx.update(rulesRef, { rules: updatedRules, updatedAt: serverTimestamp() });
+    return { created: createdCount, linkable: linkableEntries };
+  });
+
+  // Best-effort card linking, same reasoning as AddEntryForm's own card
+  // link (see addCardTransactionAndLink's call sites): a failure here
+  // shouldn't undo entries that already saved fine, and a writeBatch can't
+  // safely be combined with the runTransaction above.
+  if (linkable.length > 0) {
+    try {
+      const [paymentMethodsSnap, creditCardsSnap] = await Promise.all([getDocs(paymentMethodsRef), getDocs(creditCardsRef)]);
+      const rawPaymentMethods = paymentMethodsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const creditCardDocs = creditCardsSnap.docs.map((d) => /** @type {import('./types').Card} */ ({ id: d.id, ...d.data() }));
+      const instruments = buildPaymentInstruments(rawPaymentMethods, creditCardDocs);
+      for (const entry of linkable) {
+        const instrument = resolveInstrument(instruments, entry);
+        const linkedCard = instrument?.cardId ? creditCardDocs.find((c) => c.id === instrument.cardId) : null;
+        const matchedCard = linkedCard && !isStatementOnlyCard(linkedCard) ? linkedCard : null;
+        if (!matchedCard) continue;
+        try {
+          const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, entry.date);
+          const fields = inferCardRewardFields(matchedCard, entry.category, params);
+          await addCardTransactionAndLink(entry.id, {
+            cardId: matchedCard.id,
+            amount: entry.amount,
+            date: entry.date,
+            description: entry.note || entry.category,
+            ...fields,
+          });
+        } catch (err) {
+          reportError(err, 'Created a recurring entry, but could not link it to the card');
+        }
+      }
+    } catch (err) {
+      reportError(err, 'Created recurring entries, but could not check their card links');
+    }
+  }
+
+  return created;
+}
+
+// Both re-read the rules array from the server inside a transaction rather
+// than trusting this device's possibly-stale local copy, then apply the
+// add/remove against that fresh copy - adding one rule on one phone while
+// deleting a different one on the other used to have whichever save landed
+// second silently overwrite the first's change with its own stale snapshot.
+export async function addRecurringRule(rule) {
+  const rulesRef = doc(dbInstance, 'settings', 'recurring_rules');
+  await track(
+    runTransaction(dbInstance, async (tx) => {
+      const snap = await tx.get(rulesRef);
+      const rules = snap.exists() && Array.isArray(snap.data().rules) ? snap.data().rules : [];
+      tx.set(rulesRef, { rules: [...rules, rule], updatedAt: serverTimestamp() }, { merge: true });
+    }),
+    'Could not save the recurring rule',
+  );
+}
+
+// Edits an existing rule in place (category, amount, payer, split, payment
+// method, day, frequency, end date, note) - or just flips `active` for
+// pause/resume. Re-reads from the server first, same reasoning as
+// add/delete above. Editing never touches lastGeneratedMonth, so it can't
+// accidentally re-create or skip a month the rule already generated.
+export async function updateRecurringRule(ruleId, updates) {
+  const rulesRef = doc(dbInstance, 'settings', 'recurring_rules');
+  await track(
+    runTransaction(dbInstance, async (tx) => {
+      const snap = await tx.get(rulesRef);
+      const rules = snap.exists() && Array.isArray(snap.data().rules) ? snap.data().rules : [];
+      tx.set(
+        rulesRef,
+        { rules: rules.map((r) => (r.id === ruleId ? { ...r, ...updates } : r)), updatedAt: serverTimestamp() },
+        { merge: true },
+      );
+    }),
+    'Could not save the recurring rule',
+  );
+}
+
+export async function deleteRecurringRule(ruleId) {
+  const rulesRef = doc(dbInstance, 'settings', 'recurring_rules');
+  await track(
+    runTransaction(dbInstance, async (tx) => {
+      const snap = await tx.get(rulesRef);
+      const rules = snap.exists() && Array.isArray(snap.data().rules) ? snap.data().rules : [];
+      tx.set(rulesRef, { rules: rules.filter((r) => r.id !== ruleId), updatedAt: serverTimestamp() }, { merge: true });
+    }),
+    'Could not delete the recurring rule',
+  );
 }
 
 // --- PIN lock config - stored as plain text (not hashed), matching web's
 // own storage exactly (a 4-digit device passcode, not an account credential). ---
 
+// Reports enough for decideInitialLock (utils.js) to fail closed instead of
+// reading an unproven snapshot as "PIN disabled": `fromCache`/`exists` on a
+// normal read, or `{error:true}` when the listener itself fails (offline
+// with nothing cached, permission-denied). `pinHash` is the current hashed
+// PIN (see lib/pinAuth.js); `legacyPin` is a plaintext PIN saved before
+// hashing existed, kept working until the next save overwrites it.
 export function subscribeToPinConfig(callback) {
   const pinDocRef = doc(dbInstance, 'settings', 'pin_config');
   return onSnapshot(
     pinDocRef,
+    { includeMetadataChanges: true },
     (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        callback({ pin: typeof data.pin === 'string' ? data.pin : '', enabled: Boolean(data.enabled) });
-      } else {
-        callback({ pin: '', enabled: false });
-      }
+      const data = docSnap.exists() ? docSnap.data() : {};
+      callback({
+        enabled: Boolean(data.enabled),
+        pinHash: typeof data.pinHash === 'string' ? data.pinHash : null,
+        legacyPin: typeof data.pin === 'string' && data.pin ? data.pin : null,
+        fromCache: docSnap.metadata.fromCache,
+        exists: docSnap.exists(),
+        error: false,
+      });
     },
-    (err) => { reportError(err, 'Could not load security PIN settings'); callback({ pin: '', enabled: false }); },
+    (err) => {
+      reportError(err, 'Could not load security PIN settings');
+      callback({ enabled: false, pinHash: null, legacyPin: null, fromCache: false, exists: false, error: true });
+    },
   );
 }
 
-export async function savePinConfigToDb(config) {
+// `pinHash` (see lib/pinAuth.js's hashPin) replaces the old plaintext `pin`
+// field on every save - deleteField() clears it rather than leaving a stale
+// plaintext copy next to the hash once a device that still has the PIN
+// disabled saves again.
+export async function savePinConfigToDb({ pinHash, enabled }) {
   const pinDocRef = doc(dbInstance, 'settings', 'pin_config');
-  await setDoc(pinDocRef, { pin: config.pin || '', enabled: Boolean(config.enabled), updatedAt: serverTimestamp() });
+  await setDoc(pinDocRef, { pinHash: pinHash || null, pin: deleteField(), enabled: Boolean(enabled), updatedAt: serverTimestamp() }, { merge: true });
 }
 
 // --- Credit cards - a handful of user-managed entities, one doc per card. ---
@@ -796,18 +1337,55 @@ export function subscribeToCardTransactions(onData, onError) {
 }
 
 export async function addCardTransaction(transaction) {
-  const docRef = await addDoc(cardTransactionsRef, { ...transaction, createdAt: serverTimestamp() });
+  const docRef = await track(addDoc(cardTransactionsRef, { ...transaction, createdAt: serverTimestamp() }), 'Could not save card transaction');
   return docRef.id;
 }
 
 export async function updateCardTransaction(id, updates) {
   if (!id) return;
-  await updateDoc(doc(dbInstance, 'cardTransactions', id), updates);
+  await track(updateDoc(doc(dbInstance, 'cardTransactions', id), updates), 'Could not save card transaction');
 }
 
 export async function deleteCardTransaction(id) {
   if (!id) return;
-  await deleteDoc(doc(dbInstance, 'cardTransactions', id));
+  await track(deleteDoc(doc(dbInstance, 'cardTransactions', id)), 'Could not delete card transaction');
+}
+
+// Atomic: creates a card transaction and stamps the entry it belongs to
+// with the new id, in one write - previously two separate calls (create,
+// then update the entry), which could leave a card transaction with no
+// back-reference on its entry if the connection dropped in between. Callers
+// keep their own best-effort try/catch around this (the entry itself was
+// already saved by a separate, earlier call) - this only makes the "create
+// the card side and link it" pair atomic with each other.
+export async function addCardTransactionAndLink(entryId, cardTransaction) {
+  const cardTxnRef = doc(cardTransactionsRef);
+  const batch = writeBatch(dbInstance);
+  batch.set(cardTxnRef, { ...cardTransaction, linkedEntryId: entryId, createdAt: serverTimestamp() });
+  batch.update(doc(dbInstance, 'expenses', entryId), { cardTransactionId: cardTxnRef.id });
+  await track(batch.commit(), 'Could not link the card transaction');
+  return cardTxnRef.id;
+}
+
+// Atomic swap of a linked card transaction: deletes `oldId` (if given) and
+// creates `newData` as one card transaction (if given) in a single write -
+// previously a delete followed by a separate create, which on a mid-way
+// failure left the entry's old cardTransactionId pointing at a transaction
+// that no longer existed (not "kept the old link" the way the catch-and-
+// keep-oldTxnId error handling around this assumed). Returns the new
+// transaction's id, or null if newData wasn't given (a pure removal).
+export async function replaceCardTransaction(oldId, newData) {
+  if (!oldId && !newData) return null;
+  const batch = writeBatch(dbInstance);
+  if (oldId) batch.delete(doc(dbInstance, 'cardTransactions', oldId));
+  let newId = null;
+  if (newData) {
+    const newRef = doc(cardTransactionsRef);
+    batch.set(newRef, { ...newData, createdAt: serverTimestamp() });
+    newId = newRef.id;
+  }
+  await track(batch.commit(), 'Could not update the linked card transaction');
+  return newId;
 }
 
 // --- Billing-cycle confirmation records - "did the real statement match
@@ -825,7 +1403,10 @@ export function subscribeToCardBillingCycles(onData, onError) {
 
 export async function saveCardBillingCycle(cardId, cycleStart, updates) {
   const key = getCardBillingCycleKey(cardId, cycleStart);
-  await setDoc(doc(dbInstance, 'cardBillingCycles', key), { cardId, cycleStart, ...updates, updatedAt: serverTimestamp() }, { merge: true });
+  await track(
+    setDoc(doc(dbInstance, 'cardBillingCycles', key), { cardId, cycleStart, ...updates, updatedAt: serverTimestamp() }, { merge: true }),
+    'Could not save card billing cycle',
+  );
 }
 
 // --- Categories (add/delete - subscribeToCategories already exists above) ---
@@ -842,10 +1423,82 @@ export async function addCategoryToDb(ledger, name, existingRawDocs = []) {
   }
 }
 
+// Counts expenses in this ledger still using this category - categories are
+// per-ledger, so a household "Rent" and a travel "Rent" are unrelated.
+export async function countEntriesUsingCategory(ledger, name) {
+  const targetKey = ledger === 'travel' ? 'travel' : 'household';
+  const snap = await getDocs(expensesRef);
+  return snap.docs.filter((d) => (d.data().ledger || 'household') === targetKey && d.data().category === name).length;
+}
+
+// Renames the category doc, every matching entry's category field, the
+// household budget (or every trip's per-trip category budget, for travel),
+// and any recurring rule using it.
+export async function renameCategoryInDb(ledger, oldName, newName, existingRawDocs = []) {
+  const trimmedOld = oldName.trim();
+  const trimmedNew = newName.trim();
+  if (!trimmedOld || !trimmedNew || trimmedOld === trimmedNew) return 0;
+  const targetKey = ledger === 'travel' ? 'travel' : 'household';
+
+  const catDoc = existingRawDocs.find(
+    (d) => d.name?.trim().toLowerCase() === trimmedOld.toLowerCase() && (d.ledger === targetKey || (!d.ledger && targetKey === 'household')),
+  );
+  if (catDoc?.id) {
+    await track(updateDoc(doc(dbInstance, 'categories', catDoc.id), { name: trimmedNew }), 'Could not rename category');
+  }
+
+  const entriesUpdated = await batchUpdateDocs(expensesRef, (entry) =>
+    (entry.ledger || 'household') === targetKey && entry.category === trimmedOld ? { category: trimmedNew } : null,
+  );
+
+  if (targetKey === 'household') {
+    const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+    const budgetsSnap = await getDoc(budgetsDocRef);
+    const budgets = budgetsSnap.exists() ? budgetsSnap.data().budgets || {} : {};
+    if (Object.prototype.hasOwnProperty.call(budgets, trimmedOld)) {
+      await track(
+        setDoc(
+          budgetsDocRef,
+          { budgets: { [trimmedOld]: deleteField(), [trimmedNew]: budgets[trimmedOld] }, updatedAt: serverTimestamp() },
+          { merge: true },
+        ),
+        'Could not rename category on the household budget',
+      );
+    }
+  } else {
+    await batchUpdateDocs(tripsRef, (trip) => {
+      const cb = trip.categoryBudgets;
+      if (!cb || !Object.prototype.hasOwnProperty.call(cb, trimmedOld)) return null;
+      return { [`categoryBudgets.${trimmedOld}`]: deleteField(), [`categoryBudgets.${trimmedNew}`]: cb[trimmedOld] };
+    });
+  }
+
+  const rulesRef = doc(dbInstance, 'settings', 'recurring_rules');
+  await track(
+    runTransaction(dbInstance, async (tx) => {
+      const snap = await tx.get(rulesRef);
+      const rules = snap.exists() && Array.isArray(snap.data().rules) ? snap.data().rules : [];
+      if (!rules.some((r) => r.category === trimmedOld)) return;
+      tx.set(
+        rulesRef,
+        { rules: rules.map((r) => (r.category === trimmedOld ? { ...r, category: trimmedNew } : r)), updatedAt: serverTimestamp() },
+        { merge: true },
+      );
+    }),
+    'Could not rename category on recurring rules',
+  );
+
+  return entriesUpdated;
+}
+
 export async function deleteCategoryFromDb(ledger, categoryName, rawDocs = []) {
   const trimmed = categoryName.trim();
   if (!trimmed) return;
   const targetKey = ledger === 'travel' ? 'travel' : 'household';
+  const inUseCount = await countEntriesUsingCategory(ledger, trimmed);
+  if (inUseCount > 0) {
+    throw new Error(`"${trimmed}" is still used by ${inUseCount} ${inUseCount === 1 ? 'entry' : 'entries'} - rename it instead, or edit those entries first.`);
+  }
   const docToDelete = rawDocs.find(
     (d) => d.name && d.name.trim().toLowerCase() === trimmed.toLowerCase() && (d.ledger === targetKey || (!d.ledger && targetKey === 'household')),
   );
@@ -853,9 +1506,13 @@ export async function deleteCategoryFromDb(ledger, categoryName, rawDocs = []) {
     await deleteDoc(doc(dbInstance, 'categories', docToDelete.id));
     return;
   }
+  // Fallback by name, limited to this ledger - it used to delete a same-named
+  // category from the other ledger too (e.g. travel "Food" and household "Food").
   const q = query(categoriesRef, where('name', '==', trimmed));
   const snap = await getDocs(q);
-  if (!snap.empty) {
-    await Promise.all(snap.docs.map((d) => deleteDoc(doc(dbInstance, 'categories', d.id))));
-  }
+  const matches = snap.docs.filter((d) => {
+    const docLedger = d.data().ledger;
+    return docLedger === targetKey || (!docLedger && targetKey === 'household');
+  });
+  await Promise.all(matches.map((d) => deleteDoc(doc(dbInstance, 'categories', d.id))));
 }

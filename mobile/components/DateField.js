@@ -25,5 +25,18 @@ export default function DateField({ value, onChange, className, placeholder }) {
       />
     );
   }
-  return <TextInput value={value} onChangeText={onChange} placeholder={placeholder || '2026-08-24'} className={className} />;
+  // Until a native picker lands, at least steer typing toward YYYY-MM-DD:
+  // the save paths reject anything else (isValidISODate).
+  return (
+    <TextInput
+      value={value}
+      onChangeText={onChange}
+      placeholder={placeholder || 'YYYY-MM-DD'}
+      maxLength={10}
+      autoCorrect={false}
+      autoCapitalize="none"
+      keyboardType="numbers-and-punctuation"
+      className={className}
+    />
+  );
 }

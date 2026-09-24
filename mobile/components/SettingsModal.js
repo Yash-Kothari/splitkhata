@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, Modal, ScrollView, Alert, Switch, useWindowDimensions, Platform } from 'react-native';
+import { View, Text, TextInput, Pressable, Modal, ScrollView, Switch, useWindowDimensions, Platform } from 'react-native';
+import { notify, confirmAsync } from '../lib/dialogs';
+import { randomUUID } from 'expo-crypto';
 import { useColorScheme } from 'nativewind';
 import PickerField from './PickerField';
 import DateField from './DateField';
@@ -9,18 +11,23 @@ import {
   subscribeToCategories,
   addCategoryToDb,
   deleteCategoryFromDb,
+  renameCategoryInDb,
   subscribeToCurrencies,
   addCurrencyToDb,
   deleteCurrencyFromDb,
   subscribeToMembers,
   addMemberToDb,
   deleteMemberFromDb,
+  renameMemberInDb,
   subscribeToHouseholdBudgets,
-  saveHouseholdBudgetsToDb,
+  saveHouseholdBudget,
+  deleteHouseholdBudget,
   subscribeToPaymentReminderConfig,
   savePaymentReminderConfigToDb,
   subscribeToRecurringRules,
-  saveRecurringRulesToDb,
+  addRecurringRule,
+  deleteRecurringRule,
+  updateRecurringRule,
   subscribeToPinConfig,
   savePinConfigToDb,
   subscribeToCreditCards,
@@ -38,6 +45,7 @@ import {
   subscribeToPaymentMethods,
   addPaymentMethodToDb,
   deletePaymentMethodFromDb,
+  subscribeToGuests,
 } from '../lib/firebase';
 import {
   formatCurrency,
@@ -60,18 +68,24 @@ import {
   buildPaymentInstruments,
   resolveInstrument,
   getQuarterBounds,
+  getAnnualMilestoneWindow,
+  getQuarterStartingSpend,
+  getAnnualStartingSpend,
   checkCustomSharesTotal,
   parseCustomShares,
   getUnlinkedCards,
   normalizeInstrumentType,
   toCsv,
   buildFullBackupJson,
-  getStoredColorScheme,
   setStoredColorScheme,
   LEDGER_CSV_COLUMNS,
   CARD_TRANSACTION_CSV_COLUMNS,
+  parseAmountInput,
+  isValidISODate,
 } from '../lib/utils';
 import { reportError } from '../lib/errorReporting';
+import { hashPin, verifyPin } from '../lib/pinAuth';
+import { themeColor } from '../lib/theme';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_OPTIONS = MONTH_NAMES.map((name, i) => ({ value: String(i + 1), label: name }));
@@ -132,17 +146,18 @@ function coerceStrategyParams(strategyKey, rawParams) {
   );
 }
 
-const SPLIT_TYPE_OPTIONS = [
-  { value: 'shared', label: 'Split' },
-  { value: 'owed', label: 'Owed' },
-  { value: 'personal', label: 'Personal' },
-];
 const RULE_SPLIT_TYPE_OPTIONS = [
   { value: 'shared', label: 'Split' },
   { value: 'owed', label: 'Owed in full' },
   { value: 'personal', label: 'Personal' },
   { value: 'custom', label: 'Custom amounts' },
 ];
+const RULE_FREQUENCY_OPTIONS = [
+  { value: 'monthly', label: 'Every month' },
+  { value: 'quarterly', label: 'Every quarter' },
+  { value: 'yearly', label: 'Every year' },
+];
+const RULE_FREQUENCY_LABELS = { monthly: 'month', quarterly: 'quarter', yearly: 'year' };
 const CAP_PERIOD_OPTIONS = [
   { value: '', label: 'No cap' },
   { value: 'day', label: 'Per day' },
@@ -213,7 +228,7 @@ export default function SettingsModal({ visible, onClose }) {
   const [householdBudgets, setHouseholdBudgetsState] = useState({});
   const [reminderConfig, setReminderConfigState] = useState({ enabled: true, amountThreshold: DEFAULT_PAYMENT_REMINDER_THRESHOLD });
   const [recurringRules, setRecurringRules] = useState([]);
-  const [pinConfig, setPinConfigState] = useState({ pin: '', enabled: false });
+  const [pinConfig, setPinConfigState] = useState({ enabled: false, pinHash: null, legacyPin: null });
   const [creditCards, setCreditCards] = useState([]);
   const [travelEntries, setTravelEntries] = useState([]);
   const [dbTrips, setDbTrips] = useState([]);
@@ -221,6 +236,7 @@ export default function SettingsModal({ visible, onClose }) {
   const [cardTransactions, setCardTransactions] = useState([]);
   const [cardBillingCycles, setCardBillingCycles] = useState([]);
   const [paymentMethodsData, setPaymentMethodsData] = useState({ methods: ['Cash'], rawDocs: [] });
+  const [guests, setGuests] = useState([]);
 
   const dbMembers = membersData.members;
   const dbPaymentMethods = paymentMethodsData.methods;
@@ -240,18 +256,21 @@ export default function SettingsModal({ visible, onClose }) {
   useEffect(() => subscribeToCardTransactions((data) => setCardTransactions(data), (err) => reportError(err, 'Could not load card transactions')), []);
   useEffect(() => subscribeToCardBillingCycles((data) => setCardBillingCycles(data), (err) => reportError(err, 'Could not load billing cycles')), []);
   useEffect(() => subscribeToPaymentMethods((data) => setPaymentMethodsData(data), (err) => reportError(err, 'Could not load payment methods')), []);
+  useEffect(() => subscribeToGuests((data) => setGuests(data.rawDocs), (err) => reportError(err, 'Could not load guests')), []);
 
   const cardNameById = useMemo(() => Object.fromEntries(creditCards.map((c) => [c.id, c.name || c.id])), [creditCards]);
 
-  // Native has no file-save/share flow wired up yet (would need expo-sharing,
-  // not currently a dependency) - deliberately scoped to web for now, same
-  // as the rest of this app's website-first rollout. `document`/`Blob`/`URL`
-  // are real browser globals once react-native-web compiles this for the
-  // website, exactly like the native-only branches elsewhere in this
-  // codebase go the other way (Platform.OS === 'web' checks in firebase.js).
+  // Deliberately web-only, not a gap to fill later: exporting a file to
+  // iOS's share sheet would need expo-sharing (not a dependency) plus its
+  // own native flow, for a case any iPhone user already has an easy way
+  // around - open the same account on splitkhata website and export from
+  // there. `document`/`Blob`/`URL` are real browser globals once
+  // react-native-web compiles this for the website, exactly like the
+  // native-only branches elsewhere in this codebase go the other way
+  // (Platform.OS === 'web' checks in firebase.js).
   function downloadTextFile(filename, content, mimeType) {
     if (Platform.OS !== 'web') {
-      Alert.alert('Export', 'Downloading files is available on the Splitkhata website for now - open it in a browser to export your data.');
+      notify('Export from the website', 'Exporting isn’t available in the iPhone app. Open Splitkhata in a browser (the same website - your data is already there) and export from Settings there instead.');
       return;
     }
     const blob = new Blob([content], { type: mimeType });
@@ -285,6 +304,8 @@ export default function SettingsModal({ visible, onClose }) {
       categories,
       currencies,
       members: membersData,
+      paymentMethods: paymentMethodsData.rawDocs,
+      guests,
       householdBudgets,
       recurringRules,
       reminderConfig,
@@ -299,6 +320,8 @@ export default function SettingsModal({ visible, onClose }) {
   const [categoryLedger, setCategoryLedger] = useState('household');
   const [newCatName, setNewCatName] = useState('');
   const [addingCat, setAddingCat] = useState(false);
+  const [editingCategory, setEditingCategory] = useState(null);
+  const [savingCategoryRename, setSavingCategoryRename] = useState(false);
   const categoriesList = categoryLedger === 'travel' ? categories.travel : categories.household;
 
   async function handleAddCategory() {
@@ -315,10 +338,28 @@ export default function SettingsModal({ visible, onClose }) {
     }
   }
   async function handleDeleteCategory(name) {
+    const ok = await confirmAsync({
+      title: `Delete category "${name}"?`,
+      message: `Deletes the category definition. If any entries still use "${name}", this is blocked - rename it instead, or edit those entries first.`,
+      confirmLabel: 'Delete',
+    });
+    if (!ok) return;
     try {
       await deleteCategoryFromDb(categoryLedger, name, categories.rawDocs);
     } catch (err) {
       reportError(err, 'Could not delete category');
+    }
+  }
+  async function handleSaveRenamedCategory() {
+    if (!editingCategory?.name.trim()) return;
+    setSavingCategoryRename(true);
+    try {
+      await renameCategoryInDb(categoryLedger, editingCategory.oldName, editingCategory.name, categories.rawDocs);
+      setEditingCategory(null);
+    } catch (err) {
+      reportError(err, 'Could not rename category');
+    } finally {
+      setSavingCategoryRename(false);
     }
   }
 
@@ -328,10 +369,26 @@ export default function SettingsModal({ visible, onClose }) {
   const [newBudgetAmount, setNewBudgetAmount] = useState('');
   const [budgetMessage, setBudgetMessage] = useState('');
   const [savingBudgetCat, setSavingBudgetCat] = useState(null);
+  // Which category's amount field (if any) the user is actively typing in -
+  // budgetDrafts doubles as that live-typing buffer, so a live update (from
+  // another device, or from this same session - e.g. a category rename
+  // migrating a budget key) must not overwrite an unsaved keystroke there.
+  const [focusedBudgetCategory, setFocusedBudgetCategory] = useState(null);
 
+  // Re-syncs on every live householdBudgets change, not just when the modal
+  // opens - previously a rename or another device's edit only showed up
+  // after closing and reopening Settings. The field currently being typed
+  // into keeps its in-progress value; every other field takes the live one.
   useEffect(() => {
-    if (visible) setBudgetDrafts({ ...householdBudgets });
-  }, [visible]);
+    if (!visible) return;
+    setBudgetDrafts((prev) => {
+      const next = { ...householdBudgets };
+      if (focusedBudgetCategory != null && Object.prototype.hasOwnProperty.call(prev, focusedBudgetCategory)) {
+        next[focusedBudgetCategory] = prev[focusedBudgetCategory];
+      }
+      return next;
+    });
+  }, [householdBudgets, visible, focusedBudgetCategory]);
 
   const householdBudgetStatus = useMemo(() => {
     const currentMonth = getMonthKey(todayISO());
@@ -342,21 +399,25 @@ export default function SettingsModal({ visible, onClose }) {
   const budgetedNames = new Set(householdBudgetStatus.map((s) => s.category));
   const unbudgetedCategories = categories.household.filter((c) => !budgetedNames.has(c));
 
-  async function persistBudgets(next) {
+  async function persistBudget(category, amount) {
     setBudgetMessage('');
     try {
-      await saveHouseholdBudgetsToDb(next);
-      setBudgetDrafts(next);
+      await saveHouseholdBudget(category, amount);
+      setBudgetDrafts((prev) => ({ ...prev, [category]: amount }));
     } catch (err) {
       setBudgetMessage(`Failed to save: ${err?.message || err}`);
     }
   }
   async function handleAddBudget() {
-    const amount = Number(newBudgetAmount);
-    if (!newBudgetCategory || !amount || amount <= 0) return;
+    const amount = parseAmountInput(newBudgetAmount);
+    if (!newBudgetCategory) return;
+    if (!(amount > 0)) {
+      notify('Check the amount', 'Enter a budget like 15000 or 15,000.');
+      return;
+    }
     setSavingBudgetCat(newBudgetCategory);
     try {
-      await persistBudgets({ ...budgetDrafts, [newBudgetCategory]: amount });
+      await persistBudget(newBudgetCategory, amount);
       setNewBudgetCategory('');
       setNewBudgetAmount('');
     } finally {
@@ -364,9 +425,19 @@ export default function SettingsModal({ visible, onClose }) {
     }
   }
   async function handleRemoveBudget(category) {
-    const next = { ...budgetDrafts };
-    delete next[category];
-    await persistBudgets(next);
+    const ok = await confirmAsync({ title: `Remove the ${category} budget?`, message: 'Your entries are not affected.', confirmLabel: 'Remove' });
+    if (!ok) return;
+    setBudgetMessage('');
+    try {
+      await deleteHouseholdBudget(category);
+      setBudgetDrafts((prev) => {
+        const next = { ...prev };
+        delete next[category];
+        return next;
+      });
+    } catch (err) {
+      setBudgetMessage(`Failed to save: ${err?.message || err}`);
+    }
   }
 
   // Recurring tab
@@ -377,8 +448,17 @@ export default function SettingsModal({ visible, onClose }) {
   const [newRuleSplitType, setNewRuleSplitType] = useState('shared');
   const [newRuleOwedBy, setNewRuleOwedBy] = useState('');
   const [newRuleShares, setNewRuleShares] = useState({});
-  const newRuleSharesInvalid = newRuleSplitType === 'custom' && !checkCustomSharesTotal(newRuleShares, Number(newRuleAmount) || 0).ok;
+  const newRuleSharesInvalid = newRuleSplitType === 'custom' && !checkCustomSharesTotal(newRuleShares, parseAmountInput(newRuleAmount) || 0).ok;
   const [newRuleNote, setNewRuleNote] = useState('');
+  const [newRulePaymentMethod, setNewRulePaymentMethod] = useState('');
+  const [newRuleFrequency, setNewRuleFrequency] = useState('monthly');
+  const [newRuleEndDate, setNewRuleEndDate] = useState('');
+  const ruleInstruments = useMemo(() => buildPaymentInstruments(paymentMethodsData.rawDocs, creditCards), [paymentMethodsData.rawDocs, creditCards]);
+  const rulePaymentMethodOptions = ['None', ...ruleInstruments.map((i) => i.label)];
+  const [editingRule, setEditingRule] = useState(null);
+  const [savingRuleEdit, setSavingRuleEdit] = useState(false);
+  const editingRuleSharesInvalid =
+    editingRule?.splitType === 'custom' && !checkCustomSharesTotal(editingRule.splitShares || {}, parseAmountInput(editingRule?.amount) || 0).ok;
   const [addingRule, setAddingRule] = useState(false);
   const [ruleMessage, setRuleMessage] = useState('');
 
@@ -386,14 +466,43 @@ export default function SettingsModal({ visible, onClose }) {
     if (!newRulePayer && dbMembers.length) setNewRulePayer(dbMembers[0]);
   }, [dbMembers.join('|')]);
 
+  // "Owed" rules need someone other than the payer - an empty or same-person
+  // owedBy made every generated entry either a 50/50 split or no debt at all.
+  useEffect(() => {
+    if (newRuleOwedBy && newRuleOwedBy === newRulePayer) setNewRuleOwedBy(dbMembers.find((m) => m !== newRulePayer) || '');
+  }, [newRulePayer]);
+  const newRuleDayNumber = Number(newRuleDay);
+  const newRuleEndDateInvalid = Boolean(newRuleEndDate) && !isValidISODate(newRuleEndDate);
+  const newRuleInvalid =
+    !(newRuleDayNumber >= 1 && newRuleDayNumber <= 31 && Number.isInteger(newRuleDayNumber)) ||
+    (newRuleSplitType === 'owed' && (!newRuleOwedBy || newRuleOwedBy === newRulePayer)) ||
+    newRuleEndDateInvalid;
+
+  function resolveRuleInstrumentFields(label) {
+    if (!label || label === 'None') return { paymentMethod: null, paymentInstrumentId: null, paymentType: null };
+    const instrument = ruleInstruments.find((i) => i.label === label);
+    return { paymentMethod: label, paymentInstrumentId: instrument?.id || null, paymentType: instrument?.type || null };
+  }
+
   async function handleAddRule() {
-    const amount = Number(newRuleAmount);
-    if (!newRuleCategory || !amount || amount <= 0) return;
+    const amount = parseAmountInput(newRuleAmount);
+    if (!newRuleCategory) return;
+    if (!(amount > 0)) {
+      notify('Check the amount', 'Enter an amount like 25000 or 25,000.');
+      return;
+    }
+    if (newRuleInvalid) {
+      notify(
+        'Check the rule',
+        'Day of month must be 1-31, an "Owed" rule needs someone other than the payer, and the end date (if set) must be YYYY-MM-DD.',
+      );
+      return;
+    }
     setAddingRule(true);
     setRuleMessage('');
     try {
       const rule = {
-        id: 'rule_' + crypto.randomUUID(),
+        id: 'rule_' + randomUUID(),
         category: newRuleCategory,
         amount,
         payer: newRulePayer || dbMembers[0] || '',
@@ -402,16 +511,22 @@ export default function SettingsModal({ visible, onClose }) {
         splitShares: newRuleSplitType === 'custom' ? parseCustomShares(newRuleShares) : null,
         note: newRuleNote.trim(),
         dayOfMonth: Math.min(Math.max(1, Math.round(Number(newRuleDay)) || 1), 31),
+        frequency: newRuleFrequency,
+        endDate: newRuleEndDate || null,
+        ...resolveRuleInstrumentFields(newRulePaymentMethod),
         active: true,
         lastGeneratedMonth: null,
         createdAt: new Date().toISOString(),
       };
-      await saveRecurringRulesToDb([...recurringRules, rule]);
+      await addRecurringRule(rule);
       setNewRuleCategory('');
       setNewRuleAmount('');
       setNewRuleDay('1');
       setNewRuleNote('');
       setNewRuleShares({});
+      setNewRulePaymentMethod('');
+      setNewRuleFrequency('monthly');
+      setNewRuleEndDate('');
       setRuleMessage(`Added - this month's ${rule.category} entry will be created automatically.`);
     } catch (err) {
       setRuleMessage(`Failed to save: ${err?.message || err}`);
@@ -419,8 +534,79 @@ export default function SettingsModal({ visible, onClose }) {
       setAddingRule(false);
     }
   }
+  function handleStartEditRule(rule) {
+    setEditingRule({
+      id: rule.id,
+      category: rule.category,
+      amount: String(rule.amount ?? ''),
+      payer: rule.payer,
+      splitType: rule.splitType,
+      owedBy: rule.owedBy || '',
+      splitShares: rule.splitShares || {},
+      note: rule.note || '',
+      dayOfMonth: String(rule.dayOfMonth ?? '1'),
+      frequency: rule.frequency || 'monthly',
+      endDate: rule.endDate || '',
+      paymentMethod: rule.paymentMethod || 'None',
+    });
+  }
+  async function handleSaveEditedRule() {
+    if (!editingRule) return;
+    const amount = parseAmountInput(editingRule.amount);
+    const dayNumber = Number(editingRule.dayOfMonth);
+    const endDateInvalid = Boolean(editingRule.endDate) && !isValidISODate(editingRule.endDate);
+    if (!editingRule.category || !(amount > 0)) {
+      notify('Check the rule', 'Category and amount are required.');
+      return;
+    }
+    if (!(dayNumber >= 1 && dayNumber <= 31 && Number.isInteger(dayNumber)) || endDateInvalid || editingRuleSharesInvalid) {
+      notify('Check the rule', 'Day of month must be 1-31, and the end date (if set) must be YYYY-MM-DD.');
+      return;
+    }
+    if (editingRule.splitType === 'owed' && (!editingRule.owedBy || editingRule.owedBy === editingRule.payer)) {
+      notify('Check the rule', 'An "Owed" rule needs someone other than the payer.');
+      return;
+    }
+    setSavingRuleEdit(true);
+    try {
+      await updateRecurringRule(editingRule.id, {
+        category: editingRule.category,
+        amount,
+        payer: editingRule.payer,
+        splitType: editingRule.splitType,
+        owedBy: editingRule.splitType === 'owed' ? editingRule.owedBy : null,
+        splitShares: editingRule.splitType === 'custom' ? parseCustomShares(editingRule.splitShares) : null,
+        note: editingRule.note.trim(),
+        dayOfMonth: Math.min(Math.max(1, Math.round(dayNumber) || 1), 31),
+        frequency: editingRule.frequency,
+        endDate: editingRule.endDate || null,
+        ...resolveRuleInstrumentFields(editingRule.paymentMethod),
+      });
+      setEditingRule(null);
+    } catch (err) {
+      reportError(err, 'Could not save the recurring rule');
+    } finally {
+      setSavingRuleEdit(false);
+    }
+  }
+  async function handleTogglePauseRule(rule) {
+    try {
+      await updateRecurringRule(rule.id, { active: !rule.active });
+    } catch (err) {
+      reportError(err, `Could not ${rule.active ? 'pause' : 'resume'} the recurring bill`);
+    }
+  }
   async function handleRemoveRule(id) {
-    await saveRecurringRulesToDb(recurringRules.filter((r) => r.id !== id));
+    const ok = await confirmAsync({
+      title: 'Delete this recurring bill?',
+      message: 'Entries it already created stay. No new ones will be made.',
+    });
+    if (!ok) return;
+    try {
+      await deleteRecurringRule(id);
+    } catch (err) {
+      reportError(err, 'Could not delete recurring bill');
+    }
   }
 
   // Reminders tab
@@ -432,22 +618,20 @@ export default function SettingsModal({ visible, onClose }) {
   }, [visible]);
 
   async function handleReminderToggle(enabled) {
-    const next = { ...reminderDraft, enabled };
-    setReminderDraft(next);
+    setReminderDraft((prev) => ({ ...prev, enabled }));
     setReminderMessage('');
     try {
-      await savePaymentReminderConfigToDb(next);
+      await savePaymentReminderConfigToDb({ enabled });
     } catch (err) {
       setReminderMessage(`Failed to save: ${err?.message || err}`);
     }
   }
   async function handleReminderThresholdBlur() {
     const amountThreshold = Math.max(1, Math.round(Number(reminderDraft.amountThreshold)) || DEFAULT_PAYMENT_REMINDER_THRESHOLD);
-    const next = { ...reminderDraft, amountThreshold };
-    setReminderDraft(next);
+    setReminderDraft((prev) => ({ ...prev, amountThreshold }));
     setReminderMessage('');
     try {
-      await savePaymentReminderConfigToDb(next);
+      await savePaymentReminderConfigToDb({ amountThreshold });
     } catch (err) {
       setReminderMessage(`Failed to save: ${err?.message || err}`);
     }
@@ -470,6 +654,12 @@ export default function SettingsModal({ visible, onClose }) {
     }
   }
   async function handleDeleteCurrency(name) {
+    const ok = await confirmAsync({
+      title: `Remove currency ${name}?`,
+      message: 'Trips already using it keep it; it just leaves the picker for new trips.',
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
     try {
       await deleteCurrencyFromDb(name, currencies.rawDocs);
     } catch (err) {
@@ -523,14 +713,19 @@ export default function SettingsModal({ visible, onClose }) {
       setAddingPaymentMethod(false);
     }
   }
-  async function handleDeletePaymentMethod(name) {
-    const doc = paymentMethodsData.rawDocs.find((d) => d.name === name);
-    if (doc && creditCards.some((c) => c.paymentMethodId === doc.id)) {
-      Alert.alert('Linked to a card', `"${name}" is linked to a tracked card - delete the card first.`);
+  async function handleDeletePaymentMethod(id, name) {
+    if (creditCards.some((c) => c.paymentMethodId === id)) {
+      notify('Linked to a card', `"${name}" is linked to a tracked card - delete the card first.`);
       return;
     }
+    const ok = await confirmAsync({
+      title: `Remove payment method "${name}"?`,
+      message: 'Existing entries keep showing it, but it leaves the picker.',
+      confirmLabel: 'Remove',
+    });
+    if (!ok) return;
     try {
-      await deletePaymentMethodFromDb(name, paymentMethodsData.rawDocs);
+      await deletePaymentMethodFromDb(id);
     } catch (err) {
       reportError(err, 'Could not delete payment method');
     }
@@ -602,6 +797,8 @@ export default function SettingsModal({ visible, onClose }) {
   // Members tab
   const [newMemberName, setNewMemberName] = useState('');
   const [addingMember, setAddingMember] = useState(false);
+  const [editingMember, setEditingMember] = useState(null);
+  const [savingMemberRename, setSavingMemberRename] = useState(false);
   async function handleAddMember() {
     const trimmed = newMemberName.trim();
     if (!trimmed) return;
@@ -617,17 +814,27 @@ export default function SettingsModal({ visible, onClose }) {
   }
   function handleDeleteMember(name) {
     if (dbMembers.length <= 1) {
-      Alert.alert('At least one member is required.');
+      notify('At least one member is required.');
       return;
     }
-    Alert.alert('Delete member?', `Delete member "${name}" from database?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () => deleteMemberFromDb(name, membersData.rawDocs).catch((err) => reportError(err, 'Could not delete member')),
-      },
-    ]);
+    confirmAsync({
+      title: `Delete member "${name}"?`,
+      message: `Deletes the member. If any entries, cards, or payment methods still reference "${name}", this is blocked - rename them instead.`,
+    }).then((ok) => {
+      if (ok) deleteMemberFromDb(name, membersData.rawDocs).catch((err) => reportError(err, 'Could not delete member'));
+    });
+  }
+  async function handleSaveRenamedMember() {
+    if (!editingMember?.name.trim()) return;
+    setSavingMemberRename(true);
+    try {
+      await renameMemberInDb(editingMember.oldName, editingMember.name, membersData.rawDocs);
+      setEditingMember(null);
+    } catch (err) {
+      reportError(err, 'Could not rename member');
+    } finally {
+      setSavingMemberRename(false);
+    }
   }
 
   // Cards tab
@@ -697,15 +904,17 @@ export default function SettingsModal({ visible, onClose }) {
         billingCycleDay: Math.min(31, Math.max(1, Math.round(Number(newCardBillingDay)) || 1)),
         dueDateOffsetDays: Math.max(0, Math.round(Number(newCardDueOffset)) || 0),
         annualMilestoneAnchorMonth: Math.min(12, Math.max(1, Math.round(Number(newCardAnnualAnchorMonth)) || 1)),
-        annualMilestoneStartingSpend: Math.max(0, Number(newCardAnnualStartingSpend) || 0),
+        // Keyed by period (quarterlyStartingSpend / annualStartingSpend), not
+        // one shared field per card - see getQuarterStartingSpend.
+        annualStartingSpend: {
+          [getAnnualMilestoneWindow(Math.min(12, Math.max(1, Math.round(Number(newCardAnnualAnchorMonth)) || 1)), todayISO()).periodStart]:
+            Math.max(0, parseAmountInput(newCardAnnualStartingSpend) || 0),
+        },
         ...(CARD_STRATEGY_DEFAULTS[newCardStrategy]?.quarterlyMilestoneTarget
-          ? {
-              quarterlyMilestoneStartingSpend: Math.max(0, Number(newCardQuarterlyStartingSpend) || 0),
-              quarterlyMilestoneStartingQuarter: getQuarterBounds(todayISO()).quarterStart,
-            }
+          ? { quarterlyStartingSpend: { [getQuarterBounds(todayISO()).quarterStart]: Math.max(0, parseAmountInput(newCardQuarterlyStartingSpend) || 0) } }
           : {}),
         startingRewardPoints: CARD_REWARD_STRATEGIES.find((s) => s.key === newCardStrategy)?.unit === 'points'
-          ? Math.max(0, Number(newCardStartingPoints) || 0)
+          ? Math.max(0, parseAmountInput(newCardStartingPoints) || 0)
           : 0,
         active: true,
       });
@@ -728,29 +937,37 @@ export default function SettingsModal({ visible, onClose }) {
       billingCycleDay: String(card.billingCycleDay ?? 1),
       dueDateOffsetDays: String(card.dueDateOffsetDays ?? 20),
       annualMilestoneAnchorMonth: String(card.annualMilestoneAnchorMonth ?? 1),
-      annualMilestoneStartingSpend: String(card.annualMilestoneStartingSpend ?? 0),
-      quarterlyMilestoneStartingSpend: String(
-        card.quarterlyMilestoneStartingQuarter === getQuarterBounds(todayISO()).quarterStart ? card.quarterlyMilestoneStartingSpend ?? 0 : 0,
+      annualMilestoneStartingSpend: String(
+        getAnnualStartingSpend(card, getAnnualMilestoneWindow(card.annualMilestoneAnchorMonth ?? 1, todayISO()).periodStart),
       ),
+      quarterlyMilestoneStartingSpend: String(getQuarterStartingSpend(card, getQuarterBounds(todayISO()).quarterStart)),
       startingRewardPoints: String(card.startingRewardPoints ?? 0),
     });
   }
   async function saveEditCard(cardId) {
     try {
-      const strategyKey = creditCards.find((c) => c.id === cardId)?.rewardStrategy;
+      const card = creditCards.find((c) => c.id === cardId);
+      const strategyKey = card?.rewardStrategy;
       const isPointsCard = CARD_REWARD_STRATEGIES.find((s) => s.key === strategyKey)?.unit === 'points';
+      const newAnchorMonth = Math.min(12, Math.max(1, Math.round(Number(editCardDrafts.annualMilestoneAnchorMonth)) || 1));
+      const annualPeriodStart = getAnnualMilestoneWindow(newAnchorMonth, todayISO()).periodStart;
+      const quarterStart = getQuarterBounds(todayISO()).quarterStart;
+      // Merge into the existing maps rather than replacing them - a plain
+      // field write here used to wipe out whichever quarter or year the
+      // card's one shared starting-spend field had named before, every time
+      // any other field on the card was edited.
+      const annualStartingSpend = { ...(card?.annualStartingSpend || {}), [annualPeriodStart]: Math.max(0, parseAmountInput(editCardDrafts.annualMilestoneStartingSpend) || 0) };
+      const quarterlyStartingSpend = { ...(card?.quarterlyStartingSpend || {}) };
+      if (CARD_STRATEGY_DEFAULTS[strategyKey]?.quarterlyMilestoneTarget) {
+        quarterlyStartingSpend[quarterStart] = Math.max(0, parseAmountInput(editCardDrafts.quarterlyMilestoneStartingSpend) || 0);
+      }
       await updateCreditCardInDb(cardId, {
         billingCycleDay: Math.min(31, Math.max(1, Math.round(Number(editCardDrafts.billingCycleDay)) || 1)),
         dueDateOffsetDays: Math.max(0, Math.round(Number(editCardDrafts.dueDateOffsetDays)) || 0),
-        annualMilestoneAnchorMonth: Math.min(12, Math.max(1, Math.round(Number(editCardDrafts.annualMilestoneAnchorMonth)) || 1)),
-        annualMilestoneStartingSpend: Math.max(0, Number(editCardDrafts.annualMilestoneStartingSpend) || 0),
-        ...(CARD_STRATEGY_DEFAULTS[strategyKey]?.quarterlyMilestoneTarget
-          ? {
-              quarterlyMilestoneStartingSpend: Math.max(0, Number(editCardDrafts.quarterlyMilestoneStartingSpend) || 0),
-              quarterlyMilestoneStartingQuarter: getQuarterBounds(todayISO()).quarterStart,
-            }
-          : {}),
-        startingRewardPoints: isPointsCard ? Math.max(0, Number(editCardDrafts.startingRewardPoints) || 0) : 0,
+        annualMilestoneAnchorMonth: newAnchorMonth,
+        annualStartingSpend,
+        ...(CARD_STRATEGY_DEFAULTS[strategyKey]?.quarterlyMilestoneTarget ? { quarterlyStartingSpend } : {}),
+        startingRewardPoints: isPointsCard ? Math.max(0, parseAmountInput(editCardDrafts.startingRewardPoints) || 0) : 0,
       });
       setEditingCardId(null);
     } catch (err) {
@@ -758,18 +975,12 @@ export default function SettingsModal({ visible, onClose }) {
     }
   }
   function handleDeleteCard(card) {
-    Alert.alert(
-      `Delete "${card.name}"?`,
-      "Its transactions and billing cycle history will stay in storage but won't be reachable from the app anymore.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => deleteCreditCardFromDb(card.id).catch((err) => setCardMessage(`Failed to delete: ${err?.message || err}`)),
-        },
-      ],
-    );
+    confirmAsync({
+      title: `Delete "${card.name}"?`,
+      message: "Its transactions and billing cycle history will stay in storage but won't be reachable from the app anymore.",
+    }).then((ok) => {
+      if (ok) deleteCreditCardFromDb(card.id).catch((err) => setCardMessage(`Failed to delete: ${err?.message || err}`));
+    });
   }
 
   function startEditRules(card) {
@@ -820,23 +1031,57 @@ export default function SettingsModal({ visible, onClose }) {
   }
 
   // PIN tab
+  const [currentPinInput, setCurrentPinInput] = useState('');
   const [newPin, setNewPin] = useState('');
   const [pinMessage, setPinMessage] = useState('');
+  const [savingPin, setSavingPin] = useState(false);
+  const pinCurrentlyEnabled = Boolean(pinConfig.enabled && (pinConfig.pinHash || pinConfig.legacyPin));
 
   useEffect(() => {
-    if (visible) setNewPin(pinConfig.pin || '');
+    if (visible) {
+      setNewPin('');
+      setCurrentPinInput('');
+      setPinMessage('');
+    }
   }, [visible]);
 
+  // Changing or turning off an already-enabled PIN needs the CURRENT PIN
+  // first - anyone holding an unlocked phone used to be able to switch the
+  // PIN off, or set a new one, with no proof they knew the old one.
   async function handleSavePinConfig(enabledOverride = null) {
     const enabled = enabledOverride !== null ? enabledOverride : pinConfig.enabled;
-    const cleanPin = newPin.trim();
-    if (enabled && cleanPin.length !== 4) {
-      setPinMessage('PIN must be exactly 4 digits.');
-      return;
+    if (pinCurrentlyEnabled) {
+      if (currentPinInput.length !== 4) {
+        setPinMessage('Enter the current PIN first.');
+        return;
+      }
+      if (!(await verifyPin(currentPinInput, pinConfig))) {
+        setPinMessage('That current PIN is wrong.');
+        return;
+      }
     }
-    const updated = { pin: cleanPin, enabled };
-    await savePinConfigToDb(updated);
-    setPinMessage(enabled ? 'Security PIN saved & synced to cloud!' : 'Security PIN disabled.');
+    setSavingPin(true);
+    try {
+      if (enabled) {
+        const cleanPin = newPin.trim();
+        if (cleanPin.length !== 4) {
+          setPinMessage('PIN must be exactly 4 digits.');
+          return;
+        }
+        await savePinConfigToDb({ pinHash: await hashPin(cleanPin), enabled: true });
+        setPinMessage('Security PIN saved & synced to cloud!');
+      } else {
+        await savePinConfigToDb({ pinHash: pinConfig.pinHash, enabled: false });
+        setPinMessage('Security PIN disabled.');
+      }
+      setNewPin('');
+      setCurrentPinInput('');
+    } catch (err) {
+      reportError(err, 'Could not save security PIN settings');
+      setPinMessage(`Could not save: ${err?.message || err}`);
+    } finally {
+      setSavingPin(false);
+    }
   }
 
   const hasFirebase = isFirebaseConfigured();
@@ -927,9 +1172,34 @@ export default function SettingsModal({ visible, onClose }) {
               )}
               <Text className={activeListCaption}>Active Database Categories ({categoriesList.length})</Text>
               <View className="flex-row flex-wrap mt-1">
-                {categoriesList.map((cat) => (
-                  <Tag key={cat} label={cat} onRemove={() => handleDeleteCategory(cat)} />
-                ))}
+                {categoriesList.map((cat) =>
+                  editingCategory?.oldName === cat ? (
+                    <View key={cat} className="w-full rounded-xl border border-ink/15 bg-paper-card p-3 mb-2" style={{ gap: 8 }}>
+                      <TextInput
+                        value={editingCategory.name}
+                        onChangeText={(v) => setEditingCategory((p) => ({ ...p, name: v }))}
+                        className={`${input} mb-0`}
+                      />
+                      <Text className="font-body text-2xs text-muted-text">
+                        Renames every entry, budget, and recurring rule that already used "{cat}" too.
+                      </Text>
+                      <View className="flex-row gap-2">
+                        <Pressable onPress={() => setEditingCategory(null)} className="flex-1 min-h-10 rounded-lg border border-ink/15 items-center justify-center">
+                          <Text className="font-body-semibold text-xs text-ink">Cancel</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={handleSaveRenamedCategory}
+                          disabled={savingCategoryRename || !editingCategory.name.trim()}
+                          className="flex-1 min-h-10 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
+                        >
+                          <Text className="font-body-semibold text-xs text-white">{savingCategoryRename ? 'Renaming...' : 'Save'}</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : (
+                    <Tag key={cat} label={cat} onRemove={() => handleDeleteCategory(cat)} onEdit={() => setEditingCategory({ oldName: cat, name: cat })} />
+                  ),
+                )}
               </View>
             </View>
           )}
@@ -980,9 +1250,11 @@ export default function SettingsModal({ visible, onClose }) {
                       <TextInput
                         value={String(budgetDrafts[s.category] ?? '')}
                         onChangeText={(v) => setBudgetDrafts((prev) => ({ ...prev, [s.category]: v }))}
+                        onFocus={() => setFocusedBudgetCategory(s.category)}
                         onBlur={() => {
-                          const amount = Number(budgetDrafts[s.category]);
-                          if (amount > 0) persistBudgets({ ...budgetDrafts, [s.category]: amount });
+                          setFocusedBudgetCategory(null);
+                          const amount = parseAmountInput(budgetDrafts[s.category]);
+                          if (amount > 0) persistBudget(s.category, amount);
                         }}
                         keyboardType="decimal-pad"
                         className="w-24 min-h-8 font-body text-sm text-ink border border-ink/15 rounded-lg px-2 py-1 bg-paper text-right"
@@ -1053,14 +1325,31 @@ export default function SettingsModal({ visible, onClose }) {
                   </View>
                 )}
                 {newRuleSplitType === 'custom' && (
-                  <CustomSplitEditor members={dbMembers} total={Number(newRuleAmount) || 0} shares={newRuleShares} onChange={setNewRuleShares} />
+                  <CustomSplitEditor members={dbMembers} total={parseAmountInput(newRuleAmount) || 0} shares={newRuleShares} onChange={setNewRuleShares} />
                 )}
+                <View className="flex-row flex-wrap mt-3" style={{ gap: 12 }}>
+                  <View className="w-full sm:w-[calc(50%-6px)]">
+                    <PickerField label="Payment method" value={newRulePaymentMethod || 'None'} options={rulePaymentMethodOptions} onChange={setNewRulePaymentMethod} />
+                  </View>
+                  <View className="w-full sm:w-[calc(50%-6px)]">
+                    <PickerField label="Repeats" value={newRuleFrequency} options={RULE_FREQUENCY_OPTIONS} onChange={setNewRuleFrequency} />
+                  </View>
+                </View>
                 <View className="mt-3">
+                  <Text className={label}>Ends on (optional)</Text>
+                  <DateField value={newRuleEndDate} onChange={setNewRuleEndDate} placeholder="YYYY-MM-DD" className={input} />
+                  <Text className="font-body text-2xs text-muted-text -mt-2 mb-3">Leave blank to repeat indefinitely - e.g. set this for a 12-month EMI.</Text>
+                </View>
+                <View className="mt-0">
                   <Text className={label}>Note (optional)</Text>
                   <TextInput value={newRuleNote} onChangeText={setNewRuleNote} placeholder="e.g. Rent" className={input} />
                 </View>
 
-                <Pressable onPress={handleAddRule} disabled={addingRule || !newRuleCategory || !newRuleAmount || newRuleSharesInvalid} className="mt-3 min-h-10 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                <Pressable
+                  onPress={handleAddRule}
+                  disabled={addingRule || !newRuleCategory || !newRuleAmount || newRuleSharesInvalid || newRuleInvalid}
+                  className={`mt-3 min-h-10 rounded-xl bg-ledger-green items-center justify-center ${addingRule || !newRuleCategory || !newRuleAmount || newRuleSharesInvalid || newRuleInvalid ? 'opacity-50' : ''}`}
+                >
                   <Text className="font-body-semibold text-white text-sm">{addingRule ? 'Saving...' : 'Add Recurring Rule'}</Text>
                 </Pressable>
                 {ruleMessage ? <Text className="font-body text-xs text-muted-text mt-3">{ruleMessage}</Text> : null}
@@ -1069,19 +1358,119 @@ export default function SettingsModal({ visible, onClose }) {
               {recurringRules.length === 0 ? (
                 <Text className="font-body text-xs text-muted-text">No recurring rules yet.</Text>
               ) : (
-                recurringRules.map((rule) => (
-                  <View key={rule.id} className="rounded-xl border border-ink/10 bg-paper-card px-3.5 py-3 mb-2">
-                    <View className="flex-row items-start justify-between gap-2">
-                      <Text className="font-body-medium text-sm text-ink flex-1">{rule.category} - {formatCurrency(rule.amount)}</Text>
-                      <Pressable onPress={() => handleRemoveRule(rule.id)}>
-                        <Text className="font-body-semibold text-xs text-muted-text">✕</Text>
-                      </Pressable>
+                recurringRules.map((rule) =>
+                  editingRule?.id === rule.id ? (
+                    <View key={rule.id} className="rounded-xl border border-ledger-green/40 bg-paper-card p-3.5 mb-2" style={{ gap: 10 }}>
+                      <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+                        <View className="w-full sm:w-[calc(50%-6px)]">
+                          <PickerField label="Category" value={editingRule.category} options={categories.household} onChange={(v) => setEditingRule((p) => ({ ...p, category: v }))} />
+                        </View>
+                        <View className="w-full sm:w-[calc(50%-6px)]">
+                          <PickerField label="Who pays" value={editingRule.payer} options={dbMembers} onChange={(v) => setEditingRule((p) => ({ ...p, payer: v }))} />
+                        </View>
+                      </View>
+                      <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+                        <View className="w-full sm:w-[calc(50%-6px)]">
+                          <Text className={label}>Amount (₹)</Text>
+                          <TextInput
+                            value={editingRule.amount}
+                            onChangeText={(v) => setEditingRule((p) => ({ ...p, amount: v }))}
+                            keyboardType="decimal-pad"
+                            className={`${input} mb-0`}
+                          />
+                        </View>
+                        <View className="w-full sm:w-[calc(50%-6px)]">
+                          <Text className={label}>Day of month</Text>
+                          <TextInput
+                            value={editingRule.dayOfMonth}
+                            onChangeText={(v) => setEditingRule((p) => ({ ...p, dayOfMonth: v }))}
+                            keyboardType="number-pad"
+                            className={`${input} mb-0`}
+                          />
+                        </View>
+                      </View>
+                      <PickerField label="Split type" value={editingRule.splitType} options={RULE_SPLIT_TYPE_OPTIONS} onChange={(v) => setEditingRule((p) => ({ ...p, splitType: v }))} />
+                      {editingRule.splitType === 'owed' && (
+                        <PickerField
+                          label="Owed by"
+                          value={editingRule.owedBy || 'Owed by...'}
+                          options={dbMembers.filter((m) => m !== editingRule.payer)}
+                          onChange={(v) => setEditingRule((p) => ({ ...p, owedBy: v }))}
+                        />
+                      )}
+                      {editingRule.splitType === 'custom' && (
+                        <CustomSplitEditor
+                          members={dbMembers}
+                          total={parseAmountInput(editingRule.amount) || 0}
+                          shares={editingRule.splitShares}
+                          onChange={(v) => setEditingRule((p) => ({ ...p, splitShares: v }))}
+                        />
+                      )}
+                      <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+                        <View className="w-full sm:w-[calc(50%-6px)]">
+                          <PickerField
+                            label="Payment method"
+                            value={editingRule.paymentMethod || 'None'}
+                            options={rulePaymentMethodOptions}
+                            onChange={(v) => setEditingRule((p) => ({ ...p, paymentMethod: v }))}
+                          />
+                        </View>
+                        <View className="w-full sm:w-[calc(50%-6px)]">
+                          <PickerField label="Repeats" value={editingRule.frequency} options={RULE_FREQUENCY_OPTIONS} onChange={(v) => setEditingRule((p) => ({ ...p, frequency: v }))} />
+                        </View>
+                      </View>
+                      <View>
+                        <Text className={label}>Ends on (optional)</Text>
+                        <DateField value={editingRule.endDate} onChange={(v) => setEditingRule((p) => ({ ...p, endDate: v }))} placeholder="YYYY-MM-DD" className={input} />
+                      </View>
+                      <View>
+                        <Text className={label}>Note (optional)</Text>
+                        <TextInput value={editingRule.note} onChangeText={(v) => setEditingRule((p) => ({ ...p, note: v }))} placeholder="e.g. Rent" className={`${input} mb-0`} />
+                      </View>
+                      <Text className="font-body text-2xs text-muted-text">
+                        Changes only affect entries this rule creates from now on - anything already generated stays as it is.
+                      </Text>
+                      <View className="flex-row gap-2">
+                        <Pressable onPress={() => setEditingRule(null)} className="flex-1 min-h-10 rounded-lg border border-ink/15 items-center justify-center">
+                          <Text className="font-body-semibold text-xs text-ink">Cancel</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={handleSaveEditedRule}
+                          disabled={savingRuleEdit}
+                          className="flex-1 min-h-10 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
+                        >
+                          <Text className="font-body-semibold text-xs text-white">{savingRuleEdit ? 'Saving...' : 'Save'}</Text>
+                        </Pressable>
+                      </View>
                     </View>
-                    <Text className="font-body text-2xs text-muted-text mt-0.5">
-                      Every month on day {rule.dayOfMonth} · {rule.payer} pays{rule.note ? ` · ${rule.note}` : ''}
-                    </Text>
-                  </View>
-                ))
+                  ) : (
+                    <View key={rule.id} className={`rounded-xl border border-ink/10 bg-paper-card px-3.5 py-3 mb-2 ${rule.active === false ? 'opacity-60' : ''}`}>
+                      <View className="flex-row items-start justify-between gap-2">
+                        <Text className="font-body-medium text-sm text-ink flex-1">
+                          {rule.category} - {formatCurrency(rule.amount)}
+                          {rule.active === false ? ' (paused)' : ''}
+                        </Text>
+                        <View className="flex-row items-center gap-2">
+                          <Pressable onPress={() => handleStartEditRule(rule)} hitSlop={6}>
+                            <Text className="font-body-semibold text-xs text-muted-text">✎</Text>
+                          </Pressable>
+                          <Pressable onPress={() => handleTogglePauseRule(rule)} hitSlop={6}>
+                            <Text className="font-body-semibold text-xs text-muted-text">{rule.active === false ? '▶' : '⏸'}</Text>
+                          </Pressable>
+                          <Pressable onPress={() => handleRemoveRule(rule.id)} hitSlop={6}>
+                            <Text className="font-body-semibold text-xs text-muted-text">✕</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                      <Text className="font-body text-2xs text-muted-text mt-0.5">
+                        Every {RULE_FREQUENCY_LABELS[rule.frequency] || 'month'} on day {rule.dayOfMonth} · {rule.payer} pays
+                        {rule.paymentMethod ? ` via ${rule.paymentMethod}` : ''}
+                        {rule.endDate ? ` · ends ${rule.endDate}` : ''}
+                        {rule.note ? ` · ${rule.note}` : ''}
+                      </Text>
+                    </View>
+                  ),
+                )
               )}
             </View>
           )}
@@ -1200,7 +1589,10 @@ export default function SettingsModal({ visible, onClose }) {
               )}
               <Text className={activeListCaption}>Active Payment Methods ({paymentMethodsData.rawDocs.length || dbPaymentMethods.length})</Text>
               <View className="flex-row flex-wrap mt-1 mb-5">
-                {(paymentMethodsData.rawDocs.length ? paymentMethodsData.rawDocs : dbPaymentMethods.map((name) => ({ id: name, name }))).map((d) => {
+                {(paymentMethodsData.rawDocs.length ? paymentMethodsData.rawDocs : dbPaymentMethods.map((name) => ({ id: name, name }))).map((d, _i, all) => {
+                  // The built-in Cash method: can be renamed, never deleted or re-typed -
+                  // travel cash maths keys off its type (see isCashPaid).
+                  const builtInCashId = all.find((m) => normalizeInstrumentType(m.type, m.name) === 'cash')?.id;
                   const rawTypeLabel = INSTRUMENT_TYPES.find((t) => t.key === normalizeInstrumentType(d.type, d.name))?.label;
                   const typeLabel = rawTypeLabel && rawTypeLabel.toLowerCase() !== d.name.toLowerCase() ? rawTypeLabel : null;
                   const detail = [typeLabel, d.owner].filter(Boolean).join(' · ');
@@ -1214,12 +1606,16 @@ export default function SettingsModal({ visible, onClose }) {
                         />
                         <View className="flex-row flex-wrap" style={{ gap: 8 }}>
                           <View className="w-full sm:w-[calc(50%-4px)]">
-                            <PickerField
-                              label="Type"
-                              value={INSTRUMENT_TYPES.find((t) => t.key === editingMethod.type)?.label || 'Select type'}
-                              options={INSTRUMENT_TYPES.map((t) => t.label)}
-                              onChange={(label) => setEditingMethod((p) => ({ ...p, type: INSTRUMENT_TYPES.find((t) => t.label === label)?.key || '' }))}
-                            />
+                            {editingMethod.id === builtInCashId ? (
+                              <Text className="font-body text-xs text-muted-text">Type: Cash (built in - used for trip cash maths)</Text>
+                            ) : (
+                              <PickerField
+                                label="Type"
+                                value={INSTRUMENT_TYPES.find((t) => t.key === editingMethod.type)?.label || 'Select type'}
+                                options={INSTRUMENT_TYPES.map((t) => t.label)}
+                                onChange={(label) => setEditingMethod((p) => ({ ...p, type: INSTRUMENT_TYPES.find((t) => t.label === label)?.key || '' }))}
+                              />
+                            )}
                           </View>
                           <View className="w-full sm:w-[calc(50%-4px)]">
                             <PickerField label="Owner" value={editingMethod.owner} options={[SHARED_OWNER_LABEL, ...dbMembers]} onChange={(v) => setEditingMethod((p) => ({ ...p, owner: v }))} />
@@ -1243,8 +1639,8 @@ export default function SettingsModal({ visible, onClose }) {
                     <Tag
                       key={d.id}
                       label={`${creditCards.some((c) => c.paymentMethodId === d.id) ? '💳 ' : ''}${detail ? `${d.name} (${detail})` : d.name}`}
-                      removable={d.name !== 'Cash'}
-                      onRemove={() => handleDeletePaymentMethod(d.name)}
+                      removable={d.id !== builtInCashId}
+                      onRemove={() => handleDeletePaymentMethod(d.id, d.name)}
                       onEdit={
                         paymentMethodsData.rawDocs.length
                           ? () => setEditingMethod({
@@ -1595,9 +1991,40 @@ export default function SettingsModal({ visible, onClose }) {
               </View>
               <Text className={activeListCaption}>Active Database Members ({dbMembers.length})</Text>
               <View className="flex-row flex-wrap">
-                {dbMembers.map((m) => (
-                  <Tag key={m} label={m} onRemove={() => handleDeleteMember(m)} labelWeight="font-body-semibold" />
-                ))}
+                {dbMembers.map((m) =>
+                  editingMember?.oldName === m ? (
+                    <View key={m} className="w-full rounded-xl border border-ink/15 bg-paper-card p-3 mb-2" style={{ gap: 8 }}>
+                      <TextInput
+                        value={editingMember.name}
+                        onChangeText={(v) => setEditingMember((p) => ({ ...p, name: v }))}
+                        className={`${input} mb-0`}
+                      />
+                      <Text className="font-body text-2xs text-muted-text">
+                        Renames every entry, card, payment method, and recurring rule that already named "{m}" too.
+                      </Text>
+                      <View className="flex-row gap-2">
+                        <Pressable onPress={() => setEditingMember(null)} className="flex-1 min-h-10 rounded-lg border border-ink/15 items-center justify-center">
+                          <Text className="font-body-semibold text-xs text-ink">Cancel</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={handleSaveRenamedMember}
+                          disabled={savingMemberRename || !editingMember.name.trim()}
+                          className="flex-1 min-h-10 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
+                        >
+                          <Text className="font-body-semibold text-xs text-white">{savingMemberRename ? 'Renaming...' : 'Save'}</Text>
+                        </Pressable>
+                      </View>
+                    </View>
+                  ) : (
+                    <Tag
+                      key={m}
+                      label={m}
+                      onRemove={() => handleDeleteMember(m)}
+                      onEdit={() => setEditingMember({ oldName: m, name: m })}
+                      labelWeight="font-body-semibold"
+                    />
+                  ),
+                )}
               </View>
             </View>
           )}
@@ -1660,8 +2087,8 @@ export default function SettingsModal({ visible, onClose }) {
               <View className="p-4 rounded-xl border border-ink/15 bg-paper gap-2.5">
                 <Text className="font-body-semibold text-sm text-ink">Full Backup</Text>
                 <Text className="font-body text-xs text-muted-text">
-                  Every entry, trip, card, transaction, category, currency, member, budget, and recurring rule as
-                  one JSON file.
+                  Every entry, trip, card, transaction, category, currency, member, payment method, guest, budget,
+                  and recurring rule as one JSON file.
                 </Text>
                 <Pressable
                   onPress={handleExportFullBackup}
@@ -1699,9 +2126,9 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'security' && (
             <View>
-              <Text className="font-body-semibold text-sm text-ink mb-0.5">App Passcode & Security PIN</Text>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Security PIN</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
-                Set a 4-digit security PIN to restrict access to your expense entries on this device.
+                One shared PIN for both of you, on every device - not a per-device passcode.
               </Text>
               {pinMessage ? (
                 <View className="p-3 rounded-xl bg-ledger-green/10 border border-ledger-green/30 mb-3">
@@ -1713,21 +2140,36 @@ export default function SettingsModal({ visible, onClose }) {
                 <View className="flex-row items-center justify-between gap-3 mb-4">
                   <View className="flex-1">
                     <Text className="font-body-semibold text-sm text-ink">Require PIN Protection</Text>
-                    <Text className="font-body text-xs text-muted-text">Prompt for 4-digit PIN upon entering Splitkhata</Text>
+                    <Text className="font-body text-xs text-muted-text">Prompt for the PIN when opening Splitkhata</Text>
                   </View>
                   <Switch
                     value={pinConfig.enabled}
+                    disabled={savingPin}
                     onValueChange={(v) => handleSavePinConfig(v)}
                     trackColor={{
                       false: colorScheme === 'dark' ? '#5A6885' : '#C9C5B8',
-                      true: colorScheme === 'dark' ? '#4FB3A0' : '#3D7068',
+                      true: themeColor('ledgerGreen', colorScheme === 'dark'),
                     }}
-                    thumbColor={colorScheme === 'dark' ? '#EDE6D3' : '#FFFFFF'}
+                    thumbColor={colorScheme === 'dark' ? themeColor('ink', true) : '#FFFFFF'}
                     ios_backgroundColor={colorScheme === 'dark' ? '#5A6885' : '#C9C5B8'}
                   />
                 </View>
 
                 <View className="pt-3 border-t border-ink/10">
+                  {pinCurrentlyEnabled && (
+                    <View className="mb-3">
+                      <Text className="font-body-semibold text-xs text-ink mb-2">Current PIN (to confirm it's you)</Text>
+                      <TextInput
+                        value={currentPinInput}
+                        onChangeText={(v) => setCurrentPinInput(v.replace(/\D/g, '').slice(0, 4))}
+                        placeholder="e.g. 1234"
+                        keyboardType="number-pad"
+                        secureTextEntry
+                        maxLength={4}
+                        className="font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3.5 py-2.5 bg-paper tracking-widest"
+                      />
+                    </View>
+                  )}
                   <Text className="font-body-semibold text-xs text-ink mb-2">Set / Change 4-Digit Security PIN</Text>
                   <View className="flex-row gap-2">
                     <TextInput
@@ -1740,7 +2182,11 @@ export default function SettingsModal({ visible, onClose }) {
                       className="flex-1 min-w-0 font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3.5 py-2.5 bg-paper tracking-widest"
                       style={{ minWidth: 0 }}
                     />
-                    <Pressable onPress={() => handleSavePinConfig()} disabled={newPin.length !== 4} className="min-h-11 px-5 shrink-0 rounded-xl bg-ledger-green items-center justify-center disabled:opacity-50">
+                    <Pressable
+                      onPress={() => handleSavePinConfig()}
+                      disabled={newPin.length !== 4 || savingPin || (pinCurrentlyEnabled && currentPinInput.length !== 4)}
+                      className={`min-h-11 px-5 shrink-0 rounded-xl bg-ledger-green items-center justify-center ${newPin.length !== 4 || savingPin || (pinCurrentlyEnabled && currentPinInput.length !== 4) ? 'opacity-50' : ''}`}
+                    >
                       <Text className="font-body-semibold text-white text-sm">Save PIN</Text>
                     </Pressable>
                   </View>

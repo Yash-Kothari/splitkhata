@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, Alert } from 'react-native';
+import { View, Text, TextInput, Pressable } from 'react-native';
+import { notify } from '../lib/dialogs';
 import Card from './Card';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import { addTripToDb } from '../lib/firebase';
-import { DEFAULT_CURRENCIES, formatCurrency, isTripActive, normalizeLedger, todayISO } from '../lib/utils';
+import { DEFAULT_CURRENCIES, isTripActive, todayISO, isValidISODate, computeTripCashStats } from '../lib/utils';
 
 function currentYear() {
   return new Date().getFullYear();
@@ -41,20 +42,24 @@ export default function TripPicker({
 
   const cashStats = useMemo(() => {
     if (!selectedTrip) return { balance: 0, withdrawn: 0 };
-    const relevant = cashMovements.filter((m) => m.tripName === selectedTrip);
-    const opening = relevant.filter((m) => m.type === 'opening').reduce((sum, m) => sum + Number(m.amount || 0), 0);
-    const withdrawals = relevant.filter((m) => m.type === 'withdrawal').reduce((sum, m) => sum + Number(m.amount || 0), 0);
-    const cashSpent = entries
-      .filter((e) => normalizeLedger(e.ledger) === 'travel' && e.tripName === selectedTrip && e.paymentMethod === 'Cash')
-      .reduce((sum, e) => sum + Number(e.localAmount || 0), 0);
-    return { balance: opening + withdrawals - cashSpent, withdrawn: opening + withdrawals };
+    const stats = computeTripCashStats(entries, cashMovements, selectedTrip);
+    return { balance: stats.balance, withdrawn: stats.opening + stats.withdrawn };
   }, [cashMovements, entries, selectedTrip]);
 
   async function handleCreate() {
     const trimmed = name.trim();
     if (!trimmed) return;
     if (trips.some((t) => t.name.toLowerCase() === trimmed.toLowerCase())) {
-      Alert.alert('Trip already exists', `"${trimmed}" is already a trip.`);
+      notify('Trip already exists', `"${trimmed}" is already a trip.`);
+      return;
+    }
+    // Dates must be real YYYY-MM-DD dates, and the trip can't end before it starts.
+    if ((startDate && !isValidISODate(startDate)) || (endDate && !isValidISODate(endDate))) {
+      notify('Check the dates', 'Use the format YYYY-MM-DD.');
+      return;
+    }
+    if (startDate && endDate && endDate < startDate) {
+      notify('Check the dates', 'The end date is before the start date.');
       return;
     }
     setSaving(true);
@@ -70,7 +75,7 @@ export default function TripPicker({
       setAddingTrip(false);
     } catch (err) {
       onSaveError?.(err);
-      Alert.alert('Could not create trip', err?.message || String(err));
+      notify('Could not create trip', err?.message || String(err));
     } finally {
       setSaving(false);
     }

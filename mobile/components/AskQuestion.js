@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView } from 'react-native';
 import { usePathname } from 'expo-router';
+import { randomUUID } from 'expo-crypto';
+import { setAskPanelOpen } from '../lib/askPanelState';
 import { subscribeToExpenses, subscribeToCategories, subscribeToMembers, subscribeToTrips, generateStructured, generateDigest } from '../lib/firebase';
 import { buildAskQuestionSchema, buildAskQuestionPrompt, buildAskAnswerNarrationPrompt, resolveAskQuery, todayISO } from '../lib/utils';
 import { reportError } from '../lib/errorReporting';
@@ -24,6 +26,7 @@ const DEFAULT_EXAMPLES = ['Top 3 Biggest Expense of the month', 'How is Grocery 
 export default function AskQuestion() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  useEffect(() => setAskPanelOpen(open), [open]);
   const [question, setQuestion] = useState('');
   const [thread, setThread] = useState([]);
   const [householdEntries, setHouseholdEntries] = useState([]);
@@ -76,7 +79,7 @@ export default function AskQuestion() {
   async function askText(rawText) {
     const text = rawText.trim();
     if (!text) return;
-    const id = crypto.randomUUID();
+    const id = randomUUID();
     setThread((prev) => [...prev, { id, question: text, status: 'loading', answer: '', error: '' }]);
     setQuestion('');
     try {

@@ -20,11 +20,7 @@ import {
   excludeCashSpend,
   computeTripTotalSpend,
   getTripLastDate,
-  getLedgerCategories,
-  getStoredHouseholdCategories,
-  getStoredTrips,
   normalizeLedger,
-  setStoredHouseholdCategories,
   getPreviousMonthKey,
   getLast6MonthsData,
   getCategoryMoMComparison,
@@ -75,6 +71,21 @@ import {
   computeQuarterlyMilestoneBonusEarned,
   computeQuarterlyMilestoneLumps,
   getQuarterlyMilestoneCreditDate,
+  parseAmountInput,
+  isValidISODate,
+  isCashPaid,
+  getQuarterStartingSpend,
+  getAnnualStartingSpend,
+  decideInitialLock,
+  shouldRelockAfterBackground,
+  memberForUser,
+  computeTripCashStats,
+  defaultCardTxnFields,
+  statementDateToCycleDate,
+  shiftMonthKey,
+  recurringEntryId,
+  resolveMemberName,
+  findBalanceIssues,
   getAnnualMilestoneWindow,
   computeCardCapStatus,
   applyRewardOverrides,
@@ -164,9 +175,11 @@ test('computeSettlements reports every real debt, not just the largest one', () 
   assert.equal(byDebtor.Kruti.creditor, 'Guest');
   assert.equal(byDebtor.Kruti.amount, 1000);
 
-  // Sanity check against the actual bug: computeBalance's fallback drops one.
-  const lossyBalance = computeBalance(entries, 'travel', members);
-  assert.equal(lossyBalance.amount, 2000); // only sees one of the two 1000s owed
+  // computeBalance's 3+ member summary is the largest single real transfer
+  // (it used to report the creditor's whole net, 2000, as one person's debt).
+  const summary = computeBalance(entries, 'travel', members);
+  assert.equal(summary.amount, 1000);
+  assert.equal(summary.creditor, 'Guest');
 });
 
 test('computeSettlements nets out a three-way mix to the minimal transfers', () => {
@@ -292,45 +305,11 @@ test('computes category MoM comparison with percentage changes', () => {
   assert.equal(groceries.pctChange, 100);
 });
 
-test('returns the expected category list for travel and household ledgers', () => {
-  assert.deepEqual(getLedgerCategories('travel'), [
-    'Flight',
-    'Hotel',
-    'Food',
-    'Commute',
-    'Attraction',
-    'Souvenir',
-    'Insurance',
-    'Misc',
-  ]);
-  assert.deepEqual(getLedgerCategories('household'), [
-    'Groceries',
-    'Utilities',
-    'Rent',
-    'Eating Out',
-    'Transport',
-    'Household',
-    'Health',
-    'Entertainment',
-  ]);
-});
-
 test('normalizes legacy ledger values to household', () => {
   assert.equal(normalizeLedger('travel'), 'travel');
   assert.equal(normalizeLedger('Travel'), 'travel');
   assert.equal(normalizeLedger(undefined), 'household');
   assert.equal(normalizeLedger(null), 'household');
-});
-
-test('stores trips in local storage as a list', () => {
-  const trips = getStoredTrips();
-  assert.ok(Array.isArray(trips));
-});
-
-test('stores and retrieves custom household categories', () => {
-  const categories = ['Groceries', 'Rent', 'School'];
-  setStoredHouseholdCategories(categories);
-  assert.deepEqual(getStoredHouseholdCategories(), categories);
 });
 
 // --- Regression tests for the trip-balance double-counting bug ---
@@ -979,8 +958,85 @@ test('computeRecurringEntriesToGenerate skips inactive rules entirely', () => {
 
 test('computeRecurringEntriesToGenerate caps backfill so a long-dormant rule doesn\'t flood the ledger', () => {
   const rules = [{ id: 'r1', category: 'Rent', amount: 30000, payer: 'Yash', splitType: 'shared', dayOfMonth: 1, active: true, lastGeneratedMonth: '2020-01' }];
-  const { toCreate } = computeRecurringEntriesToGenerate(rules, '2026-08');
+  const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(rules, '2026-08');
   assert.ok(toCreate.length <= 6, `expected a bounded backfill, got ${toCreate.length} entries`);
+  // The newest months, always including the current one - the cap used to
+  // keep the oldest six (2020-02..2020-07) and never reach this month.
+  assert.deepEqual(toCreate.map((e) => e.date.slice(0, 7)), ['2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08']);
+  assert.equal(updatedRules[0].lastGeneratedMonth, '2026-08');
+  assert.deepEqual(toCreate.map((e) => e.id), toCreate.map((e) => `recurring_r1_${e.date.slice(0, 7)}`));
+});
+
+test('computeRecurringEntriesToGenerate: a quarterly rule only fires on its own cadence, anchored to when it was created', () => {
+  const rules = [
+    {
+      id: 'r1', category: 'Insurance', amount: 9000, payer: 'Yash', splitType: 'shared', dayOfMonth: 1, active: true,
+      frequency: 'quarterly', createdAt: '2026-01-15T00:00:00.000Z', lastGeneratedMonth: '2026-04',
+    },
+  ];
+  // Anchor month is 2026-01, so quarters land on Jan/Apr/Jul/Oct. Last
+  // generated was April; asking as of August should skip the off-cadence
+  // months in between (May, June) and generate exactly July - the next
+  // month that's actually on this rule's quarterly cycle.
+  const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(rules, '2026-08');
+  assert.deepEqual(toCreate.map((e) => e.date.slice(0, 7)), ['2026-07']);
+  assert.equal(updatedRules[0].lastGeneratedMonth, '2026-07');
+});
+
+test('computeRecurringEntriesToGenerate: a never-generated quarterly rule only fires once the current month itself is on cadence', () => {
+  const rule = {
+    id: 'r1', category: 'Insurance', amount: 9000, payer: 'Yash', splitType: 'shared', dayOfMonth: 1, active: true,
+    frequency: 'quarterly', createdAt: '2026-01-15T00:00:00.000Z', lastGeneratedMonth: null,
+  };
+  // Same "a brand-new rule only ever generates for the current month, never
+  // backfilling to before it was truly due" rule that a monthly rule
+  // already follows - August isn't a quarter month (Jan/Apr/Jul/Oct), so
+  // nothing generates yet even though the rule already existed in July.
+  const offCadence = computeRecurringEntriesToGenerate([rule], '2026-08');
+  assert.equal(offCadence.toCreate.length, 0);
+  const onCadence = computeRecurringEntriesToGenerate([rule], '2026-07');
+  assert.deepEqual(onCadence.toCreate.map((e) => e.date.slice(0, 7)), ['2026-07']);
+});
+
+test('computeRecurringEntriesToGenerate: a yearly rule fires once a year on its anchor month', () => {
+  const rules = [
+    { id: 'r1', category: 'Insurance', amount: 50000, payer: 'Yash', splitType: 'shared', dayOfMonth: 1, active: true, frequency: 'yearly', createdAt: '2025-03-01T00:00:00.000Z', lastGeneratedMonth: '2025-03' },
+  ];
+  const notDue = computeRecurringEntriesToGenerate(rules, '2025-09');
+  assert.equal(notDue.toCreate.length, 0, 'September is not the anchor month, so nothing is due yet');
+  const due = computeRecurringEntriesToGenerate(rules, '2026-03');
+  assert.deepEqual(due.toCreate.map((e) => e.date.slice(0, 7)), ['2026-03']);
+});
+
+test('computeRecurringEntriesToGenerate: an endDate stops generation past that month but never touches earlier entries', () => {
+  const rules = [
+    { id: 'r1', category: 'EMI', amount: 4000, payer: 'Yash', splitType: 'shared', dayOfMonth: 5, active: true, endDate: '2026-06-30', lastGeneratedMonth: '2026-05' },
+  ];
+  const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(rules, '2026-08');
+  assert.deepEqual(toCreate.map((e) => e.date.slice(0, 7)), ['2026-06'], 'only June is on/before the end date');
+  assert.equal(updatedRules[0].lastGeneratedMonth, '2026-06');
+});
+
+test('computeRecurringEntriesToGenerate: a rule already past its endDate generates nothing', () => {
+  const rules = [
+    { id: 'r1', category: 'EMI', amount: 4000, payer: 'Yash', splitType: 'shared', dayOfMonth: 5, active: true, endDate: '2026-06-30', lastGeneratedMonth: '2026-06' },
+  ];
+  const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(rules, '2026-08');
+  assert.equal(toCreate.length, 0);
+  assert.equal(updatedRules, null);
+});
+
+test('computeRecurringEntriesToGenerate carries a rule\'s payment method onto every entry it creates', () => {
+  const rules = [
+    {
+      id: 'r1', category: 'Subscriptions', amount: 999, payer: 'Yash', splitType: 'shared', dayOfMonth: 1, active: true,
+      lastGeneratedMonth: null, paymentMethod: 'Yash Diners', paymentInstrumentId: 'method:abc', paymentType: 'credit',
+    },
+  ];
+  const { toCreate } = computeRecurringEntriesToGenerate(rules, '2026-08');
+  assert.equal(toCreate[0].paymentMethod, 'Yash Diners');
+  assert.equal(toCreate[0].paymentInstrumentId, 'method:abc');
+  assert.equal(toCreate[0].paymentType, 'credit');
 });
 
 // --- Month forecast ("can we afford this?") ---
@@ -2437,4 +2493,436 @@ test('rankByUsage sorts most used first, keeping the existing order for ties and
   assert.deepEqual(rankByUsage(items, counts, (i) => i.name).map((i) => [i.name, i.count]), [
     ['Groceries', 3], ['Eating Out', 2], ['Rent', 1], ['Health', 0], ['Travel', 0],
   ]);
+});
+
+test('parseAmountInput reads grouped and spaced amounts, rejects garbage and extra decimals', () => {
+  assert.equal(parseAmountInput('1,200'), 1200);
+  assert.equal(parseAmountInput(' 1 200.50 '), 1200.5);
+  assert.equal(parseAmountInput('1,00,000'), 100000, 'Indian lakh grouping');
+  assert.equal(parseAmountInput('.5'), 0.5);
+  assert.equal(parseAmountInput('0'), 0, 'callers reject zero separately');
+  assert.equal(parseAmountInput('1,200.505'), null, 'no more than 2 decimals');
+  assert.equal(parseAmountInput('abc'), null);
+  assert.equal(parseAmountInput('12a'), null);
+  assert.equal(parseAmountInput(''), null);
+  assert.equal(parseAmountInput(null), null);
+});
+
+test('parseAmountInput only accepts negatives when asked (card refunds, points earned)', () => {
+  assert.equal(parseAmountInput('-50'), null);
+  assert.equal(parseAmountInput('-50', { allowNegative: true }), -50);
+  assert.equal(parseAmountInput('-1,500.25', { allowNegative: true }), -1500.25);
+});
+
+test('isValidISODate accepts only real YYYY-MM-DD dates', () => {
+  assert.equal(isValidISODate('2026-09-24'), true);
+  assert.equal(isValidISODate('2028-02-29'), true, 'leap year');
+  assert.equal(isValidISODate('2026-02-29'), false, 'not a leap year');
+  assert.equal(isValidISODate('2026-13-01'), false);
+  assert.equal(isValidISODate('24/09/2026'), false);
+  assert.equal(isValidISODate('2026-9-24'), false);
+  assert.equal(isValidISODate(''), false);
+  assert.equal(isValidISODate(undefined), false);
+});
+
+test('isCashPaid goes by the saved instrument type, falling back to the legacy label', () => {
+  assert.equal(isCashPaid({ paymentType: 'cash', paymentMethod: 'Wallet' }), true, 'renamed cash method');
+  assert.equal(isCashPaid({ paymentType: 'credit', paymentMethod: 'Cash' }), false, 'type wins over label');
+  assert.equal(isCashPaid({ paymentMethod: 'Cash' }), true, 'legacy entry');
+  assert.equal(isCashPaid({ paymentMethod: 'Cash · Kruti' }), true, 'legacy entry with an owner suffix');
+  assert.equal(isCashPaid({ paymentMethod: 'HDFC Diners' }), false);
+  assert.equal(isCashPaid({ isWithdrawal: true, paymentType: 'cash', paymentMethod: 'Cash' }), false, 'a withdrawal is never cash spend');
+  assert.equal(isCashPaid(null), false);
+});
+
+test('renaming the cash method does not bring back trip cash double counting', () => {
+  const members = ['Yash', 'Kruti'];
+  const withLabel = (label, type) => [
+    { amount: 2000, localAmount: 100, payer: 'Yash', split: true, splitType: 'shared', isWithdrawal: true, paymentMethod: 'Forex', paymentType: 'forex', ledger: 'travel' },
+    { amount: 1000, localAmount: 50, payer: 'Yash', split: true, splitType: 'shared', paymentMethod: label, paymentType: type, ledger: 'travel' },
+  ];
+  const legacy = withLabel('Cash', undefined);
+  const renamed = withLabel('Wallet', 'cash');
+  assert.equal(computeTripTotalSpend(renamed), computeTripTotalSpend(legacy));
+  assert.equal(computeTripTotalSpend(renamed), 2000, 'only the withdrawal carries the money');
+  assert.deepEqual(computeBalance(excludeCashSpend(renamed), 'travel', members), computeBalance(excludeCashSpend(legacy), 'travel', members));
+});
+
+test('a trip settle-up is not counted as anyone\'s spending in per-person totals', () => {
+  const members = ['Yash', 'Kruti'];
+  const entries = [
+    { amount: 1000, payer: 'Yash', split: true, splitType: 'shared', ledger: 'travel' },
+    { amount: 500, payer: 'Kruti', owedBy: 'Yash', split: true, splitType: 'settlement', ledger: 'travel' },
+  ];
+  assert.deepEqual(computeMemberTotals(entries, members), { Yash: 500, Kruti: 500 });
+  assert.equal(computeTripTotalSpend(entries), 1000);
+  assert.equal(computeBalance(entries, 'travel', members).status, 'settled');
+});
+
+test('an "owed" entry owed by its own payer is skipped and reported, not a phantom debt', () => {
+  const members = ['Yash', 'Kruti'];
+  const entries = [{ id: 'e1', amount: 100, payer: 'Yash', owedBy: 'Yash', split: true, splitType: 'owed', ledger: 'household' }];
+  assert.equal(computeBalance(entries, 'household', members).status, 'settled');
+  assert.deepEqual(findBalanceIssues(entries, members).map((i) => i.reason), ['debtor_is_payer']);
+});
+
+test('unknown names are skipped and reported instead of being credited to the first member', () => {
+  const members = ['Yash', 'Kruti'];
+  const entries = [
+    { id: 'p', amount: 900, payer: 'Priya', split: true, splitType: 'shared', ledger: 'travel' },
+    { id: 'c', amount: 100, payer: 'Yash', split: true, splitType: 'custom', splitShares: { Priya: 100 }, ledger: 'travel' },
+  ];
+  assert.equal(computeBalance(entries, 'travel', members).status, 'settled');
+  assert.deepEqual(findBalanceIssues(entries, members).map((i) => i.reason), ['unknown_payer', 'custom_no_members']);
+  assert.equal(resolveMemberName('kruti', members), 'Kruti', 'case-insensitive match');
+  assert.equal(resolveMemberName('Wife', members), 'Kruti', 'legacy value');
+  assert.equal(resolveMemberName('Priya', members), null);
+});
+
+test('a name repeated in splitAmong is only charged once', () => {
+  const members = ['Yash', 'Kruti'];
+  const entries = [{ amount: 100, payer: 'Yash', split: true, splitType: 'shared', splitAmong: ['Yash', 'Yash', 'Kruti'], ledger: 'household' }];
+  const balance = computeBalance(entries, 'household', members);
+  assert.equal(balance.debtor, 'Kruti');
+  assert.equal(balance.amount, 50);
+});
+
+test('balances always net to zero across many mixed entries', () => {
+  const members = ['Yash', 'Kruti', 'Guest'];
+  let seed = 7;
+  const rand = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const types = ['shared', 'owed', 'custom', 'settlement'];
+  const entries = Array.from({ length: 50 }, (_, i) => {
+    const payer = members[Math.floor(rand() * 3)];
+    const splitType = types[Math.floor(rand() * types.length)];
+    const amount = Math.round(rand() * 100000) / 100 + 0.01;
+    const other = members.find((m) => m !== payer);
+    return {
+      id: String(i), amount, payer, split: true, splitType, ledger: 'travel',
+      owedBy: splitType === 'owed' || splitType === 'settlement' ? other : null,
+      splitShares: splitType === 'custom' ? { [payer]: 1, [other]: 2 } : null,
+      splitAmong: splitType === 'shared' && rand() < 0.3 ? [payer, other] : null,
+    };
+  });
+  const settlements = computeSettlements(entries, 'travel', members);
+  const net = Object.fromEntries(members.map((m) => [m, 0]));
+  settlements.forEach((s) => { net[s.debtor] -= s.amount; net[s.creditor] += s.amount; });
+  const total = Object.values(net).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(total) < 1e-6, `settlements must balance, got ${total}`);
+});
+
+test('trip total leaves out the entries the balance skips when given the members', () => {
+  const members = ['Yash', 'Kruti'];
+  const entries = [
+    { amount: 1000, payer: 'Yash', split: true, splitType: 'shared', ledger: 'travel' },
+    { amount: 900, payer: 'Priya', split: true, splitType: 'shared', ledger: 'travel' },
+  ];
+  assert.equal(computeTripTotalSpend(entries), 1900, 'without members, unchanged');
+  assert.equal(computeTripTotalSpend(entries, members), 1000);
+  const totals = computeMemberTotals(entries, members);
+  assert.equal(totals.Yash + totals.Kruti, computeTripTotalSpend(entries, members));
+});
+
+test('shiftMonthKey moves across year ends in both directions', () => {
+  assert.equal(shiftMonthKey('2026-01', -1), '2025-12');
+  assert.equal(shiftMonthKey('2025-11', 3), '2026-02');
+  assert.equal(shiftMonthKey('2026-08', -5), '2026-03');
+  assert.equal(shiftMonthKey('2026-08', 0), '2026-08');
+});
+
+test('recurring entry ids are fixed per rule and month', () => {
+  assert.equal(recurringEntryId('rule_ab12', '2026-09'), 'recurring_rule_ab12_2026-09');
+  const rules = [{ id: 'r1', category: 'Rent', amount: 100, payer: 'Yash', splitType: 'shared', dayOfMonth: 5, active: true, lastGeneratedMonth: '2026-07' }];
+  const first = computeRecurringEntriesToGenerate(rules, '2026-09').toCreate.map((e) => e.id);
+  const again = computeRecurringEntriesToGenerate(rules, '2026-09').toCreate.map((e) => e.id);
+  assert.deepEqual(first, ['recurring_r1_2026-08', 'recurring_r1_2026-09']);
+  assert.deepEqual(again, first, 'planning twice gives the same ids, so writing twice cannot duplicate');
+});
+
+test('an untouched card form means the same thing the pickers show', () => {
+  assert.deepEqual(defaultCardTxnFields({ rewardStrategy: 'hdfc_diners_slab_milestone' }), { category: 'regular' });
+  assert.deepEqual(defaultCardTxnFields({ rewardStrategy: 'hsbc_premier_flat_capped' }), { category: 'regular' });
+  assert.deepEqual(defaultCardTxnFields({ rewardStrategy: 'sbi_two_channel_cashback' }), { channel: 'online' });
+  assert.deepEqual(defaultCardTxnFields({ rewardStrategy: 'hsbc_tiered_cashback_aggregate' }), { isBonusEligible: true });
+  assert.deepEqual(defaultCardTxnFields({ rewardStrategy: 'axis_supermoney_dual_pool' }), { isBonusEligible: true });
+  assert.deepEqual(defaultCardTxnFields({ rewardStrategy: 'annual_milestone_only' }), {});
+  const sbi = {
+    id: 's1', rewardStrategy: 'sbi_two_channel_cashback', billingCycleDay: 10,
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }],
+  };
+  const preview = previewTransactionReward(sbi, [], { date: '2026-08-15', amount: 10000, ...defaultCardTxnFields(sbi) });
+  assert.equal(preview.earned, 500, 'a hand-entered SBI spend used to save channel null and earn 0');
+});
+
+test('a grocery refund with no earlier grocery purchase this month reverses nothing (P0-10: bounded by what the bucket earned), and the ledger still adds up', () => {
+  const card = dinersCard();
+  const txns = [
+    { id: 'r', cardId: 'd1', date: '2026-08-15', amount: 3000, category: 'regular' },
+    { id: 'g', cardId: 'd1', date: '2026-08-16', amount: -1500, category: 'grocery' },
+  ];
+  const ledger = computeCardRewardLedger(card, txns, '2026-12-31');
+  assert.equal(ledger.total, 100, 'the ungrounded refund earns 0, not -50 - nothing to reverse');
+  assert.equal(ledger.credited, ledger.total, 'grocery lump (0) is still folded into credited, not double counted');
+});
+
+test('a grocery refund of an earlier purchase this month reverses exactly what that purchase earned', () => {
+  const card = dinersCard();
+  const txns = [
+    { id: 'g1', cardId: 'd1', date: '2026-08-15', amount: 1500, category: 'grocery' }, // 50 pts
+    { id: 'g2', cardId: 'd1', date: '2026-08-16', amount: -1500, category: 'grocery' }, // refunds it
+  ];
+  const ledger = computeCardRewardLedger(card, txns, '2026-12-31');
+  assert.equal(ledger.total, 0);
+  assert.equal(ledger.credited, 0);
+});
+
+test('a stale SmartBuy multiplier on a regular Diners transaction is ignored', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { totalReward } = computeDinersCycleReward(params, [{ id: 'a', date: '2026-08-11', amount: 1500, category: 'regular', travelMultiplier: 5 }]);
+  assert.equal(totalReward, 50);
+});
+
+test('a points card with no transactions still reports points as its unit', () => {
+  assert.equal(computeCardRewardLedger(dinersCard(), [], '2026-09-24').unit, 'points');
+});
+
+test('a statement dated on the billing day lands in the cycle it closes', () => {
+  assert.equal(statementDateToCycleDate('2026-09-10', 10), '2026-09-09');
+  assert.equal(statementDateToCycleDate('2026-09-12', 10), '2026-09-12', 'not the billing day: unchanged');
+  assert.equal(statementDateToCycleDate('2026-02-28', 31), '2026-02-27', 'billing day clamped to a short month');
+  assert.equal(statementDateToCycleDate('2026-03-01', 1), '2026-02-28');
+});
+
+test('trip cash on hand comes from withdrawal entries, with a movements fallback for older trips', () => {
+  const entries = [
+    { tripName: 'T', ledger: 'travel', isWithdrawal: true, amount: 17000, localAmount: 30000, paymentType: 'forex' },
+    { tripName: 'T', ledger: 'travel', amount: 6800, localAmount: 12000, paymentType: 'cash' },
+    { tripName: 'Other', ledger: 'travel', amount: 500, localAmount: 900, paymentType: 'cash' },
+  ];
+  const movements = [
+    { tripName: 'T', type: 'opening', amount: 20000 },
+    { tripName: 'T', type: 'withdrawal', amount: 99999 }, // an orphan left behind by a deleted withdrawal entry
+  ];
+  assert.deepEqual(computeTripCashStats(entries, movements, 'T'), { opening: 20000, withdrawn: 30000, spent: 12000, balance: 38000 });
+  const legacy = computeTripCashStats(entries.filter((e) => !e.isWithdrawal), [{ tripName: 'T', type: 'withdrawal', amount: 30000 }], 'T');
+  assert.equal(legacy.withdrawn, 30000, 'movement-only trips still count their withdrawals');
+});
+
+test('Recent chips skip settlements, trip rollups and withdrawals', () => {
+  const entries = [
+    { date: '2026-09-20', category: 'Settlement', payer: 'Yash', splitType: 'settlement' },
+    { date: '2026-09-19', category: 'Trip', payer: 'Kruti', splitType: 'owed', isTripRollup: true },
+    { date: '2026-09-18', category: 'Groceries', payer: 'Yash', paymentMethod: 'UPI' },
+  ];
+  assert.deepEqual(getRecentCombinations(entries).map((c) => c.category), ['Groceries']);
+});
+
+test('Ask: smallest expense ignores refunds', () => {
+  const entries = [
+    { amount: 500, category: 'Groceries', date: '2026-09-10', ledger: 'household', split: true, payer: 'Yash', note: 'veg' },
+    { amount: -200, category: 'Refund', date: '2026-09-11', ledger: 'household', split: true, payer: 'Yash', note: 'return' },
+  ];
+  const answer = resolveAskQuery({ scope: 'household', metric: 'smallest_expense', count: 1, month: '2026-09' }, entries, ['Yash', 'Kruti']);
+  assert.ok(answer.includes('500'), answer);
+  assert.ok(!answer.includes('-'), answer);
+});
+
+test('Ask: a person\'s trip total does not count cash purchases on top of the withdrawal', () => {
+  const entries = [
+    { amount: 2000, localAmount: 100, payer: 'Yash', split: true, splitType: 'shared', isWithdrawal: true, paymentType: 'forex', ledger: 'travel', tripName: 'T', date: '2026-09-01', category: 'Misc' },
+    { amount: 1000, localAmount: 50, payer: 'Yash', split: true, splitType: 'shared', paymentType: 'cash', paymentMethod: 'Cash', ledger: 'travel', tripName: 'T', date: '2026-09-02', category: 'Food' },
+  ];
+  const answer = resolveAskQuery({ scope: 'travel', trip: 'T', metric: 'member_total', member: 'Kruti' }, entries, ['Yash', 'Kruti']);
+  assert.ok(answer.includes('1,000.00'), answer);
+});
+
+test('the signed-in user maps to a member by first name', () => {
+  assert.equal(memberForUser({ displayName: 'Yash Kothari' }, ['Yash', 'Kruti']), 'Yash');
+  assert.equal(memberForUser({ displayName: 'kruti sheth' }, ['Yash', 'Kruti']), 'Kruti');
+  assert.equal(memberForUser({ displayName: 'Someone Else' }, ['Yash', 'Kruti']), null);
+  assert.equal(memberForUser(null, ['Yash', 'Kruti']), null);
+});
+
+test('a reward-points transfer does not reset the payment reminder clock', () => {
+  const entries = [
+    { ledger: 'household', date: '2026-06-01', amount: 500, splitType: 'shared' },
+    { ledger: 'household', date: '2026-07-01', amount: 1000, splitType: 'settlement' },
+    { ledger: 'household', date: '2026-09-01', amount: 0, rewardPoints: 500, splitType: 'settlement' },
+  ];
+  assert.equal(getUnsettledSinceDate(entries, 'household'), '2026-07-01');
+});
+
+// --- P0-11: calendar-month caps survive across billing cycles (not per-cycle) ---
+
+test('P0-11: a Diners monthly cap (grocery) is shared by both cycles a calendar month spans, not reset by each', () => {
+  const card = dinersCard(); // billingCycleDay 10
+  const txns = [
+    { id: 'a', cardId: 'd1', date: '2026-08-05', amount: 60000, category: 'grocery' }, // cycle 2026-07-10..08-10: 2,000 pts, cap hit
+    { id: 'b', cardId: 'd1', date: '2026-08-15', amount: 60000, category: 'grocery' }, // cycle 2026-08-10..09-10, same calendar month
+  ];
+  const ledger = computeCardRewardLedger(card, txns, '2026-12-31');
+  assert.equal(ledger.total, 2000, 'the 2,000/month cap covers both purchases together, not 2,000 each');
+});
+
+test('P0-11: HSBC Live+ ₹1,200/month bonus cap is shared across a mid-month statement date', () => {
+  const card = {
+    id: 'h1', rewardStrategy: 'hsbc_tiered_cashback_aggregate', billingCycleDay: 15,
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }],
+  };
+  const txns = [
+    { id: 'a', cardId: 'h1', date: '2026-08-05', amount: 12000, isBonusEligible: true }, // cycle 07-15..08-15
+    { id: 'b', cardId: 'h1', date: '2026-08-20', amount: 12000, isBonusEligible: true }, // cycle 08-15..09-15, same calendar month
+  ];
+  const ledger = computeCardRewardLedger(card, txns, '2026-12-31');
+  assert.equal(ledger.total, 1200, 'one ₹1,200 cap for the whole of August, not ₹1,200 twice');
+});
+
+test('P0-11: statement_cycle capScope opts out and resets with each cycle', () => {
+  const params = {
+    ...CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone,
+    categories: CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone.categories.map((c) =>
+      c.key === 'grocery' ? { ...c, capScope: 'statement_cycle' } : c),
+  };
+  const card = dinersCard({ strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params }] });
+  const txns = [
+    { id: 'a', cardId: 'd1', date: '2026-08-05', amount: 60000, category: 'grocery' },
+    { id: 'b', cardId: 'd1', date: '2026-08-15', amount: 60000, category: 'grocery' },
+  ];
+  const ledger = computeCardRewardLedger(card, txns, '2026-12-31');
+  assert.equal(ledger.total, 4000, 'each statement gets its own 2,000-point cap');
+});
+
+test('P0-11: computeCardRewardLedger without a shared ctx (single fresh call) behaves exactly as a lone computeDinersCycleReward call', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const txns = [{ id: 'a', date: '2026-08-05', amount: 60000, category: 'grocery' }];
+  const a = computeDinersCycleReward(params, txns);
+  const b = computeDinersCycleReward(params, txns, {});
+  assert.equal(a.totalReward, b.totalReward);
+  assert.equal(a.totalReward, 2000);
+});
+
+test('P0-11: Caps card and ledger agree for a calendar-month Diners category that spans two cycles', () => {
+  const card = dinersCard();
+  const txns = [
+    { id: 'a', cardId: 'd1', date: '2026-08-05', amount: 60000, category: 'grocery' },
+    { id: 'b', cardId: 'd1', date: '2026-08-15', amount: 60000, category: 'grocery' },
+  ];
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const status = computeCardCapStatus(card, txns, txns, '2026-08-20').find((s) => s.key === 'grocery');
+  assert.equal(status.earned, 2000);
+  assert.equal(status.remaining, 0);
+});
+
+test('P0-11: a statement_cycle-scoped Diners cap reads only the open cycle in the Caps card', () => {
+  const params = {
+    ...CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone,
+    categories: CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone.categories.map((c) =>
+      c.key === 'grocery' ? { ...c, capScope: 'statement_cycle' } : c),
+  };
+  const card = dinersCard({ strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params }] });
+  const allTxns = [
+    { id: 'a', cardId: 'd1', date: '2026-08-05', amount: 60000, category: 'grocery' }, // prior cycle
+    { id: 'b', cardId: 'd1', date: '2026-08-15', amount: 60000, category: 'grocery' }, // open cycle
+  ];
+  const openCycleTxns = [allTxns[1]];
+  const status = computeCardCapStatus(card, allTxns, openCycleTxns, '2026-08-20').find((s) => s.key === 'grocery');
+  assert.equal(status.earned, 2000, 'only the open cycle counts, so the full 2,000/statement is used by one purchase');
+});
+
+test('P0-11: previewTransactionReward carries a calendar-month cap in from an earlier cycle', () => {
+  const card = dinersCard();
+  const existing = [{ id: 'a', cardId: 'd1', date: '2026-08-05', amount: 60000, category: 'grocery' }]; // prior cycle, hits the 2,000/month cap
+  const preview = previewTransactionReward(card, existing, { date: '2026-08-15', amount: 60000, category: 'grocery' }); // next cycle, same month
+  assert.equal(preview.earned, 0, 'the month\'s cap room is already used up by the earlier cycle');
+});
+
+// --- P0-10: milestone rules and starting spend, per period ---
+
+test('P0-10: a rule-version change does not rewrite an already-credited quarterly milestone', () => {
+  const historyBase = [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone }];
+  const cardBefore = dinersCard({ strategyParamsHistory: historyBase });
+  const txns = [{ id: 'a', cardId: 'd1', date: '2026-02-01', amount: 450000, category: 'regular' }]; // Q1: crosses the 400,000 target
+  const before = computeCardRewardLedger(cardBefore, txns, '2026-06-30');
+  assert.ok(before.credited > 0, 'Q1 bonus already landed by the time Q3 starts');
+
+  // A new rule version, effective from Q3, raises the target to 600,000.
+  const cardAfter = dinersCard({
+    strategyParamsHistory: [
+      ...historyBase,
+      { effectiveFrom: '2026-07-01', params: { ...CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone, quarterlyMilestoneTarget: 600000 } },
+    ],
+  });
+  const after = computeCardRewardLedger(cardAfter, txns, '2026-07-01');
+  assert.equal(after.credited, before.credited, 'Q1 was evaluated under the target that was live in Q1, not the one added for Q3');
+});
+
+test('P0-10: editing a card keeps an earlier quarter\'s starting spend (map, not one shared field)', () => {
+  const card = dinersCard({
+    quarterlyStartingSpend: { '2026-07-01': 390000 }, // Q3 carry-over, recorded before this app tracked the card
+    // The legacy single field now names a DIFFERENT (later) quarter, as it
+    // would after editing the card in Q4 - it used to silently overwrite Q3's.
+    quarterlyMilestoneStartingQuarter: '2026-10-01',
+    quarterlyMilestoneStartingSpend: 0,
+  });
+  assert.equal(getQuarterStartingSpend(card, '2026-07-01'), 390000);
+  assert.equal(getQuarterStartingSpend(card, '2026-10-01'), 0);
+  const txns = [{ id: 'a', cardId: 'd1', date: '2026-08-05', amount: 20000 }]; // + the 390,000 carry-over crosses 400,000 in Q3
+  const lumps = computeQuarterlyMilestoneLumps(card, txns, 400000, 10000, '2026-09-20');
+  assert.equal(lumps.length, 1);
+  assert.equal(lumps[0].quarterStart, '2026-07-01');
+});
+
+test('P0-10: legacy cards with only the old single starting-spend field still work', () => {
+  const card = dinersCard({ quarterlyMilestoneStartingSpend: 390000, quarterlyMilestoneStartingQuarter: '2026-07-01' });
+  assert.equal(getQuarterStartingSpend(card, '2026-07-01'), 390000);
+  assert.equal(getQuarterStartingSpend(card, '2026-04-01'), 0, 'the legacy field only ever names the one quarter');
+});
+
+test('P0-10: annual starting spend falls back to the window the card was created in', () => {
+  const card = dinersCard({ annualMilestoneStartingSpend: 250000, createdAt: { toDate: () => new Date(2026, 2, 15) }, annualMilestoneAnchorMonth: 1 });
+  assert.equal(getAnnualStartingSpend(card, '2026-01-01'), 250000, 'created 15 Mar 2026, inside the Jan-anchored 2026 window');
+  assert.equal(getAnnualStartingSpend(card, '2025-01-01'), 0);
+  const withMap = dinersCard({ annualStartingSpend: { '2027-01-01': 100000 } });
+  assert.equal(getAnnualStartingSpend(withMap, '2027-01-01'), 100000);
+});
+
+// --- P0-13: PIN lock fails closed and re-locks after time away ---
+
+test('decideInitialLock: a real server answer locks or not exactly as it says, and is trustworthy', () => {
+  const enabled = decideInitialLock({ lastKnown: null, snapshot: { enabled: true, pinHash: 'h', fromCache: false, exists: true, error: false } });
+  assert.deepEqual(enabled, { locked: true, config: { enabled: true, pinHash: 'h', legacyPin: null }, trustworthy: true });
+  const disabled = decideInitialLock({ lastKnown: { enabled: true, pinHash: 'h' }, snapshot: { enabled: false, fromCache: false, exists: true } });
+  assert.deepEqual(disabled, { locked: false, config: null, trustworthy: true });
+});
+
+test('decideInitialLock: a cache-only empty read (offline first launch) locks if the device last knew it was enabled, not by default unlocked', () => {
+  const wasEnabled = decideInitialLock({ lastKnown: { enabled: true, pinHash: 'h' }, snapshot: { fromCache: true, exists: false } });
+  assert.equal(wasEnabled.locked, true);
+  assert.equal(wasEnabled.trustworthy, false, 'never overwrite deviceStore with an unproven guess');
+  const neverKnew = decideInitialLock({ lastKnown: null, snapshot: { fromCache: true, exists: false } });
+  assert.equal(neverKnew.locked, false, 'nothing was ever confirmed enabled, so there is nothing to fail closed on');
+});
+
+test('decideInitialLock: a read error is treated the same as an unproven cache miss', () => {
+  const result = decideInitialLock({ lastKnown: { enabled: true, legacyPin: '1234' }, snapshot: { error: true } });
+  assert.equal(result.locked, true);
+  assert.equal(result.trustworthy, false);
+});
+
+test('decideInitialLock: a config with enabled true but no pin at all never locks (nothing to type)', () => {
+  const result = decideInitialLock({ lastKnown: null, snapshot: { enabled: true, fromCache: false, exists: true } });
+  assert.equal(result.locked, false);
+});
+
+test('shouldRelockAfterBackground: native re-locks after 60s hidden, the website after 5 minutes', () => {
+  const lastKnown = { enabled: true, pinHash: 'h' };
+  assert.equal(shouldRelockAfterBackground({ lastKnown, hiddenForMs: 30 * 1000, platform: 'ios' }), false);
+  assert.equal(shouldRelockAfterBackground({ lastKnown, hiddenForMs: 61 * 1000, platform: 'ios' }), true);
+  assert.equal(shouldRelockAfterBackground({ lastKnown, hiddenForMs: 4 * 60 * 1000, platform: 'web' }), false);
+  assert.equal(shouldRelockAfterBackground({ lastKnown, hiddenForMs: 6 * 60 * 1000, platform: 'web' }), true);
+});
+
+test('shouldRelockAfterBackground: never re-locks when the PIN was never enabled', () => {
+  assert.equal(shouldRelockAfterBackground({ lastKnown: null, hiddenForMs: 999999, platform: 'ios' }), false);
+  assert.equal(shouldRelockAfterBackground({ lastKnown: { enabled: false }, hiddenForMs: 999999, platform: 'ios' }), false);
 });

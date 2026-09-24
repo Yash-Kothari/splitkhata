@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
+import { notify } from '../lib/dialogs';
 import * as ImagePicker from 'expo-image-picker';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import Card from './Card';
 import CustomSplitEditor from './CustomSplitEditor';
-import { addExpense, addExpensesBatch, updateExpense, addCardTransaction, generateStructured, extractReceiptFromImage } from '../lib/firebase';
+import { addExpense, addExpensesBatch, addCardTransactionAndLink, generateStructured, extractReceiptFromImage } from '../lib/firebase';
 import { reportError } from '../lib/errorReporting';
 import {
   buildPaymentInstruments,
@@ -31,6 +32,9 @@ import {
   inferCardRewardFields,
   resolveStrategyParamsForDate,
   formatCurrency,
+  parseAmountInput,
+  isValidISODate,
+  isCashPaid,
 } from '../lib/utils';
 
 const SPLIT_TYPE_OPTIONS = [
@@ -90,7 +94,7 @@ export default function AddEntryForm({
   const [owedBy, setOwedBy] = useState(() => membersList.find((p) => p !== (deviceName || membersList[0])) || '');
   const [splitAmong, setSplitAmong] = useState(membersList);
   const [customShares, setCustomShares] = useState({});
-  const customSharesCheck = checkCustomSharesTotal(customShares, parseFloat(amount) || 0);
+  const customSharesCheck = checkCustomSharesTotal(customShares, parseAmountInput(amount) || 0);
   const customSplitInvalid = splitType === 'custom' && !customSharesCheck.ok;
   const [paymentMethod, setPaymentMethod] = useState(paymentMethodOptions[0] || 'Cash');
   const selectedInstrument = instruments.find((i) => i.label === paymentMethod) || null;
@@ -109,11 +113,11 @@ export default function AddEntryForm({
 
   const tripWithdrawals = useMemo(() => tripEntries.filter((e) => e.isWithdrawal), [tripEntries]);
   const otherCashEntries = useMemo(
-    () => tripEntries.filter((e) => !e.isWithdrawal && e.paymentMethod === 'Cash'),
+    () => tripEntries.filter(isCashPaid),
     [tripEntries],
   );
   const fifoResult = useMemo(() => {
-    const parsedLocal = parseFloat(localAmount);
+    const parsedLocal = parseAmountInput(localAmount);
     if (!parsedLocal || parsedLocal <= 0) return null;
     return computeFifoCashAmount(tripWithdrawals, otherCashEntries, { id: null, date, createdAt: null, localAmount: parsedLocal });
   }, [tripWithdrawals, otherCashEntries, date, localAmount]);
@@ -121,14 +125,14 @@ export default function AddEntryForm({
     () => (fifoResult ? formatFifoBreakdownSummary(fifoResult.breakdown, currentCurrency) : ''),
     [fifoResult, currentCurrency],
   );
-  const amountLocked = isTravel && paymentMethod === 'Cash' && fifoResult != null;
+  const amountLocked = isTravel && selectedInstrument?.type === 'cash' && fifoResult != null;
 
   // Which tracked card would earn the most on this specific entry, right
   // where the amount/category are being typed - the reward engine already
   // models every card's real terms, this just surfaces it at the moment
   // it's actually useful instead of only in the Cards tab after the fact.
   const rankedCards = useMemo(
-    () => rankCardsForEntry(creditCards, cardTransactions, parseFloat(amount) || 0, category, date),
+    () => rankCardsForEntry(creditCards, cardTransactions, parseAmountInput(amount) || 0, category, date),
     [creditCards, cardTransactions, amount, category, date],
   );
 
@@ -171,7 +175,7 @@ export default function AddEntryForm({
   }, [paymentMethodOptions.join('|')]);
 
   useEffect(() => {
-    if (!isTravel || paymentMethod !== 'Cash' || fifoResult == null) return;
+    if (!isTravel || selectedInstrument?.type !== 'cash' || fifoResult == null) return;
     setAmount(fifoResult.amount.toString());
   }, [fifoResult, paymentMethod, isTravel]);
 
@@ -190,7 +194,9 @@ export default function AddEntryForm({
   // same as if they'd typed it all by hand.
   async function handleQuickAdd() {
     const text = quickAddText.trim();
-    if (!text) return;
+    // The keyboard's return key also calls this - ignore it while a request is
+    // already running, or repeated presses fired duplicate AI calls.
+    if (!text || quickAddStatus.state === 'loading') return;
     setQuickAddStatus({ state: 'loading', error: '' });
     try {
       const schema = buildQuickAddSchema({
@@ -235,7 +241,7 @@ export default function AddEntryForm({
   async function handleScanReceipt() {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Camera access needed', 'Allow camera access to scan a receipt.');
+      notify('Camera access needed', 'Allow camera access to scan a receipt.');
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
@@ -291,83 +297,25 @@ export default function AddEntryForm({
     if (owner && membersList.includes(owner)) setPayer(owner);
   }
 
+  // Shown under each field and block Add - bad input used to either save
+  // wrong ("1,200" as ₹1, a typed date that no month view could find) or
+  // make Add silently do nothing.
+  const amountInvalid = amount !== '' && !(parseAmountInput(amount) > 0);
+  const localAmountInvalid = isTravel && localAmount !== '' && !(parseAmountInput(localAmount) > 0);
+  const pointsInvalid = isTravel && rewardPoints !== '' && parseAmountInput(rewardPoints, { allowNegative: true }) == null;
+  const dateInvalid = !isValidISODate(date);
+  const inputInvalid = amountInvalid || localAmountInvalid || pointsInvalid || dateInvalid;
+
   async function handleSubmit() {
-    const parsed = parseFloat(amount);
-    if (!parsed || parsed <= 0) return;
+    const parsed = parseAmountInput(amount);
+    if (!parsed || parsed <= 0 || inputInvalid) return;
+    if (splitType === 'owed' && (!owedBy || owedBy === payer)) {
+      notify('Pick who owes', 'The person who owes must be different from who paid.');
+      return;
+    }
     setSaving(true);
-    try {
-      const trimmedNote = note.trim();
-      const months = !isTravel && splitAcrossMonths ? Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2)) : 1;
-      const parsedLocal = isTravel && localAmount ? parseFloat(localAmount) : null;
-      const parsedPoints = isTravel && rewardPoints ? parseFloat(rewardPoints) : null;
-      const effectiveSplitAmong =
-        splitType === 'shared' && splitAmong.length > 0 && splitAmong.length < membersList.length ? splitAmong : null;
 
-      if (months > 1) {
-        const installmentAmounts = splitAmountEvenly(parsed, months);
-        const installments = Array.from({ length: months }, (_, i) => ({
-          amount: installmentAmounts[i],
-          payer,
-          category,
-          split: splitType !== 'personal',
-          splitType,
-          owedBy: splitType === 'owed' ? owedBy : null,
-          splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
-          splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
-          note: trimmedNote ? `${trimmedNote} (${i + 1}/${months})` : `Installment ${i + 1}/${months}`,
-          date: addMonthsToDateISO(date, i),
-          ledger,
-          tripName: isTravel ? tripName : '',
-          deviceName: deviceName || payer,
-        }));
-        await addExpensesBatch(installments);
-      } else {
-        const newEntryId = await addExpense({
-          amount: parsed,
-          payer,
-          category,
-          split: splitType !== 'personal',
-          splitType,
-          owedBy: splitType === 'owed' ? owedBy : null,
-          splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
-          splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
-          note: trimmedNote,
-          date,
-          ledger,
-          tripName: isTravel ? tripName : '',
-          paymentMethod: paymentMethod || null,
-          paymentInstrumentId: selectedInstrument?.id || null,
-          localAmount: parsedLocal,
-          rewardPoints: parsedPoints,
-          deviceName: deviceName || payer,
-        });
-
-        // When the payment method names a tracked card, create the card
-        // transaction as a side effect of saving the expense - one form,
-        // two records, joined by id - instead of making that a second,
-        // separate act of discipline in the Cards tab. Best-effort: a
-        // failure here shouldn't undo the expense that already saved fine.
-        // A statement-only card tracks just its statement amounts - copying every entry would double-count them.
-        const linkedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
-        const matchedCard = isStatementOnlyCard(linkedCard) ? null : linkedCard;
-        if (matchedCard) {
-          try {
-            const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, date);
-            const fields = inferCardRewardFields(matchedCard, category, params);
-            const cardTransactionId = await addCardTransaction({
-              cardId: matchedCard.id,
-              amount: parsed,
-              date,
-              description: trimmedNote || category,
-              linkedEntryId: newEntryId,
-              ...fields,
-            });
-            await updateExpense(newEntryId, { cardTransactionId });
-          } catch (err) {
-            reportError(err, 'Saved the entry, but could not link it to the card');
-          }
-        }
-      }
+    const resetForm = () => {
       setAmount('');
       setLocalAmount('');
       setRewardPoints('');
@@ -377,11 +325,113 @@ export default function AddEntryForm({
       setCustomShares({});
       setMonthsCount('6');
       setSplitAmong(membersList);
-    } catch (err) {
-      onSaveError?.(err);
-      Alert.alert('Could not save', err?.message || String(err));
-    } finally {
-      setSaving(false);
+    };
+
+    const savePromise = doSave();
+    // Firestore applies a write to its local cache (and this form's job is
+    // done from the user's point of view) well before the awaited promise
+    // below actually resolves - that only happens once the server
+    // acknowledges it, which can hang indefinitely while offline. Rather
+    // than let the button spin forever for a write that already "happened"
+    // locally, give it a few seconds, then hand off and let it keep going
+    // in the background (still visible via ConnectionBanner's pending-write
+    // count) instead of freezing the form.
+    const settled = savePromise.then(() => ({ status: 'done' })).catch((error) => ({ status: 'error', error }));
+    const timedOut = new Promise((resolve) => setTimeout(() => resolve({ status: 'timeout' }), 4000));
+    const outcome = await Promise.race([settled, timedOut]);
+
+    setSaving(false);
+    if (outcome.status === 'error') {
+      onSaveError?.(outcome.error);
+      notify('Could not save', outcome.error?.message || String(outcome.error));
+      return;
+    }
+    resetForm();
+    if (outcome.status === 'timeout') {
+      settled.then((result) => {
+        if (result.status === 'error') {
+          onSaveError?.(result.error);
+          notify('Could not save', result.error?.message || String(result.error));
+        }
+      });
+    }
+  }
+
+  async function doSave() {
+    const parsed = parseAmountInput(amount);
+    const trimmedNote = note.trim();
+    const months = !isTravel && splitAcrossMonths ? Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2)) : 1;
+    const parsedLocal = isTravel && localAmount ? parseAmountInput(localAmount) : null;
+    const parsedPoints = isTravel && rewardPoints ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
+    const effectiveSplitAmong =
+      splitType === 'shared' && splitAmong.length > 0 && splitAmong.length < membersList.length ? splitAmong : null;
+
+    if (months > 1) {
+      const installmentAmounts = splitAmountEvenly(parsed, months);
+      const installments = Array.from({ length: months }, (_, i) => ({
+        amount: installmentAmounts[i],
+        payer,
+        category,
+        split: splitType !== 'personal',
+        splitType,
+        owedBy: splitType === 'owed' ? owedBy : null,
+        splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
+        splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
+        note: trimmedNote ? `${trimmedNote} (${i + 1}/${months})` : `Installment ${i + 1}/${months}`,
+        date: addMonthsToDateISO(date, i),
+        ledger,
+        tripName: isTravel ? tripName : '',
+        paymentMethod: paymentMethod || null,
+        paymentInstrumentId: selectedInstrument?.id || null,
+        paymentType: selectedInstrument?.type || null,
+        deviceName: deviceName || payer,
+      }));
+      await addExpensesBatch(installments);
+    } else {
+      const newEntryId = await addExpense({
+        amount: parsed,
+        payer,
+        category,
+        split: splitType !== 'personal',
+        splitType,
+        owedBy: splitType === 'owed' ? owedBy : null,
+        splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
+        splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
+        note: trimmedNote,
+        date,
+        ledger,
+        tripName: isTravel ? tripName : '',
+        paymentMethod: paymentMethod || null,
+        paymentInstrumentId: selectedInstrument?.id || null,
+        paymentType: selectedInstrument?.type || null,
+        localAmount: parsedLocal,
+        rewardPoints: parsedPoints,
+        deviceName: deviceName || payer,
+      });
+
+      // When the payment method names a tracked card, create the card
+      // transaction as a side effect of saving the expense - one form,
+      // two records, joined by id - instead of making that a second,
+      // separate act of discipline in the Cards tab. Best-effort: a
+      // failure here shouldn't undo the expense that already saved fine.
+      // A statement-only card tracks just its statement amounts - copying every entry would double-count them.
+      const linkedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
+      const matchedCard = isStatementOnlyCard(linkedCard) ? null : linkedCard;
+      if (matchedCard) {
+        try {
+          const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, date);
+          const fields = inferCardRewardFields(matchedCard, category, params);
+          await addCardTransactionAndLink(newEntryId, {
+            cardId: matchedCard.id,
+            amount: parsed,
+            date,
+            description: trimmedNote || category,
+            ...fields,
+          });
+        } catch (err) {
+          reportError(err, 'Saved the entry, but could not link it to the card');
+        }
+      }
     }
   }
 
@@ -512,6 +562,7 @@ export default function AddEntryForm({
               {amountLocked && fifoBreakdownText ? (
                 <Text className="font-body text-2xs text-muted-text mt-1">{fifoBreakdownText}</Text>
               ) : null}
+              {amountInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter an amount like 1200 or 1200.50</Text> : null}
             </View>
 
             {isTravel && (
@@ -527,6 +578,7 @@ export default function AddEntryForm({
                     placeholder="Optional"
                     className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
                   />
+                  {localAmountInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter an amount like 1200 or 1200.50</Text> : null}
                 </View>
 
                 <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
@@ -540,6 +592,7 @@ export default function AddEntryForm({
                     placeholder="Optional"
                     className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
                   />
+                  {pointsInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter whole or decimal points, e.g. 1500 or -250</Text> : null}
                 </View>
               </>
             )}
@@ -595,6 +648,7 @@ export default function AddEntryForm({
                 onChange={setDate}
                 className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
               />
+              {dateInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Use the format YYYY-MM-DD</Text> : null}
             </View>
 
             <View className="w-full lg:w-[calc(33.333%-9.333px)]">
@@ -623,7 +677,7 @@ export default function AddEntryForm({
           )}
 
           {splitType === 'custom' && (
-            <CustomSplitEditor members={membersList} total={parseFloat(amount) || 0} shares={customShares} onChange={setCustomShares} />
+            <CustomSplitEditor members={membersList} total={parseAmountInput(amount) || 0} shares={customShares} onChange={setCustomShares} />
           )}
 
           {splitType === 'shared' && membersList.length > 2 && (
@@ -667,9 +721,9 @@ export default function AddEntryForm({
                     keyboardType="number-pad"
                     className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2 bg-paper shadow-2xs"
                   />
-                  {amount && parseFloat(amount) > 0 && (
+                  {parseAmountInput(amount) > 0 && (
                     <Text className="font-body text-2xs text-muted-text mt-1">
-                      ~{(parseFloat(amount) / Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2))).toFixed(2)} / month
+                      ~{(parseAmountInput(amount) / Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2))).toFixed(2)} / month
                     </Text>
                   )}
                 </View>
@@ -679,8 +733,8 @@ export default function AddEntryForm({
 
           <Pressable
             onPress={handleSubmit}
-            disabled={saving || !amount || customSplitInvalid}
-            className={`mt-3 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && (!amount || customSplitInvalid) ? 'opacity-40' : ''}`}
+            disabled={saving || !amount || customSplitInvalid || inputInvalid}
+            className={`mt-3 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && (!amount || customSplitInvalid || inputInvalid) ? 'opacity-40' : ''}`}
             style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 }}
           >
             {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-sm text-white">Add to Ledger</Text>}

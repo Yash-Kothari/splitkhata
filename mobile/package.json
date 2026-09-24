@@ -2,7 +2,7 @@
   "name": "splitkhata-mobile",
   "description": "Splitkhata native iPhone app",
   "private": true,
-  "version": "1.8.1",
+  "version": "2.0.0",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo-google-fonts/fraunces": "^0.4.1",
@@ -11,6 +11,7 @@
     "@expo/metro-runtime": "~57.0.15",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-native-community/netinfo": "^12.0.1",
+    "@sentry/react-native": "^8.28.0",
     "expo": "~57.0.15",
     "expo-auth-session": "~57.0.8",
     "expo-constants": "~57.0.13",
@@ -41,9 +42,15 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "node --test tests/**/*.test.mjs"
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "test:cov": "node --test --experimental-test-coverage \"tests/**/*.test.mjs\"",
+    "lint": "expo lint",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
-    "babel-preset-expo": "^57.0.7"
+    "babel-preset-expo": "^57.0.7",
+    "eslint": "^9.0.0",
+    "eslint-config-expo": "~57.0.2",
+    "typescript": "^6.0.3"
   }
 }

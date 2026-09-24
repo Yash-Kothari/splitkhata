@@ -103,9 +103,17 @@ export function getUnlinkedCards(paymentMethodDocs = [], creditCards = []) {
   return creditCards.filter((c) => !c.paymentMethodId || !methodIds.has(c.paymentMethodId));
 }
 
+/** @typedef {import('./types').Entry} Entry */
+/** @typedef {import('./types').Card} Card */
+/** @typedef {import('./types').CardTransaction} CardTransaction */
+
 // Entries saved before instruments existed only carry a name string, so
 // resolve by id first, then by exact label, then by bare name (first match -
 // the same thing the old name lookup did).
+/**
+ * @param {Array<{id?: string, cardId?: string, label?: string, name?: string}>} instruments
+ * @param {Pick<Entry, 'paymentInstrumentId' | 'paymentMethod'>} [entry]
+ */
 export function resolveInstrument(instruments, { paymentInstrumentId, paymentMethod } = {}) {
   if (paymentInstrumentId) {
     const byId = instruments.find((i) => i.id === paymentInstrumentId);
@@ -381,61 +389,112 @@ export function checkCustomSharesTotal(shares, total) {
 //
 // Shared by computeBalance and computeSettlements so the two can never
 // disagree on the same entries.
+// One rule for turning a stored name into a member. Unknown names return null
+// (never members[0]) so the entry is skipped and reported, instead of a
+// deleted guest's payments being silently credited to whoever is first.
+// 'Husband'/'Wife' are pre-2026 legacy values.
+export function resolveMemberName(name, members) {
+  if (!name) return null;
+  if (members.includes(name)) return name;
+  const lower = String(name).toLowerCase();
+  const caseInsensitive = members.find((m) => m.toLowerCase() === lower);
+  if (caseInsensitive) return caseInsensitive;
+  if (name === 'Husband') return members[0] ?? null;
+  if (name === 'Wife') return members[1] ?? null;
+  return null;
+}
+
+// How one split entry moves value between members, in integer paise:
+// { payer, valuePaise, debits: { member: paise } }, or { skip: reason }.
+// Balances (computeNetByMemberScaled) and per-person totals
+// (computeMemberTotals) both go through this, so the two can't drift apart
+// again the way they had (settlements counted as spend, unknown names
+// handled three different ways, an "owed" entry owed by its own payer
+// creating a phantom debt). Shared-split debits stay fractional - callers
+// scale by LCM(1..n) first, see computeNetByMemberScaled.
+/**
+ * @param {Entry} entry
+ * @param {string[]} members
+ * @param {string} [valueField]
+ */
+export function classifyEntryForBalance(entry, members, valueField = 'amount') {
+  const valuePaise = toPaise(entry?.[valueField]);
+  if (!valuePaise) return { skip: 'zero' };
+  const payer = resolveMemberName(entry.payer, members);
+  if (!payer) return { skip: 'unknown_payer' };
+
+  if (entry.splitType === 'owed' || entry.splitType === 'settlement') {
+    if (!entry.owedBy) return { skip: 'missing_debtor' };
+    const debtor = resolveMemberName(entry.owedBy, members);
+    if (!debtor) return { skip: 'unknown_debtor' };
+    if (debtor === payer) return { skip: 'debtor_is_payer' };
+    return { payer, valuePaise, kind: 'owed', debits: { [debtor]: valuePaise } };
+  }
+
+  if (entry.splitType === 'custom') {
+    const portions = customSharePortions(valuePaise, entry.splitShares, members);
+    if (!Object.keys(portions).length) return { skip: 'custom_no_members' };
+    return { payer, valuePaise, kind: 'custom', debits: portions };
+  }
+
+  // splitAmong narrows a shared entry to only some of the members (e.g.
+  // one trip guest wasn't part of this particular expense) - absent on
+  // every entry that predates this field, which is exactly why it
+  // defaults to "everyone" rather than needing a migration.
+  const splitSet = entry.splitAmong && entry.splitAmong.length > 0
+    ? [...new Set(entry.splitAmong.map((m) => resolveMemberName(m, members)).filter(Boolean))]
+    : members;
+  if (splitSet.length === 0) return { skip: 'split_no_members' };
+  return { payer, valuePaise, kind: 'shared', splitSet };
+}
+
 function computeNetByMemberScaled(entries, ledger, members, valueField) {
   const targetLedger = ledger ? normalizeLedger(ledger) : null;
   const scale = lcmRange(members.length);
-
   const netByMemberScaled = Object.fromEntries(members.map((member) => [member, 0]));
-  const resolveMember = (name) => {
-    if (members.includes(name)) return name;
-    if (name === 'Husband') return members[0];
-    if (name === 'Wife') return members[1];
-    return members[0];
-  };
 
   for (const entry of entries) {
     if (!entry || !entry.split) continue;
     if (targetLedger && normalizeLedger(entry.ledger) !== targetLedger) continue;
-
-    const payer = resolveMember(entry.payer);
-    const valuePaise = toPaise(entry[valueField]);
-
-    if (!valuePaise || !payer) continue;
-    netByMemberScaled[payer] += valuePaise * scale;
-
-    if ((entry.splitType === 'owed' || entry.splitType === 'settlement') && entry.owedBy) {
-      const debtor = resolveMember(entry.owedBy);
-      if (debtor && debtor !== payer) netByMemberScaled[debtor] -= valuePaise * scale;
-      continue;
+    const c = classifyEntryForBalance(entry, members, valueField);
+    if (c.skip) continue;
+    netByMemberScaled[c.payer] += c.valuePaise * scale;
+    if (c.kind === 'shared') {
+      const share = (c.valuePaise * scale) / c.splitSet.length;
+      c.splitSet.forEach((member) => {
+        netByMemberScaled[member] -= share;
+      });
+    } else {
+      Object.entries(c.debits).forEach(([member, paise]) => {
+        netByMemberScaled[member] -= paise * scale;
+      });
     }
-
-    if (entry.splitType === 'custom' && entry.splitShares) {
-      const portions = customSharePortions(valuePaise, entry.splitShares, members);
-      if (Object.keys(portions).length) {
-        Object.entries(portions).forEach(([member, paise]) => {
-          netByMemberScaled[member] -= paise * scale;
-        });
-        continue;
-      }
-    }
-
-    // splitAmong narrows a shared entry to only some of the members (e.g.
-    // one trip guest wasn't part of this particular expense) - absent on
-    // every entry that predates this field, which is exactly why it
-    // defaults to "everyone" rather than needing a migration.
-    const splitSet = entry.splitAmong && entry.splitAmong.length > 0
-      ? entry.splitAmong.filter((m) => members.includes(m))
-      : members;
-    if (splitSet.length === 0) continue;
-    const share = (valuePaise * scale) / splitSet.length;
-    splitSet.forEach((member) => {
-      netByMemberScaled[member] -= share;
-    });
   }
 
   return { netByMemberScaled, scale };
 }
 
+// Entries the balance maths had to leave out, and why - surfaced in the UI
+// so a removed guest or a broken "owed" entry shows up instead of silently
+// changing who owes whom.
+export function findBalanceIssues(entries, members) {
+  const issues = [];
+  for (const entry of entries || []) {
+    if (!entry || !entry.split) continue;
+    const c = classifyEntryForBalance(entry, members);
+    if (c.skip && c.skip !== 'zero') {
+      issues.push({ id: entry.id, note: entry.note || entry.category || '', amount: Number(entry.amount) || 0, date: entry.date, reason: c.skip });
+    }
+  }
+  return issues;
+}
+
+/**
+ * @param {Entry[]} entries
+ * @param {'household'|'travel'} ledger
+ * @param {string[]} dynamicMembers
+ * @param {string} valueField
+ */
 export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PERSONS, valueField = 'amount') {
   const members = dynamicMembers && dynamicMembers.length > 0 ? dynamicMembers : DEFAULT_PERSONS;
   const { netByMemberScaled, scale } = computeNetByMemberScaled(entries, ledger, members, valueField);
@@ -470,37 +529,12 @@ export function computeBalance(entries = [], ledger, dynamicMembers = DEFAULT_PE
     };
   }
 
-  let maxDebtor = null;
-  let maxCreditor = null;
-  let maxOwedScaled = 0;
-
-  for (const m of members) {
-    const net = netByMemberScaled[m];
-    if (net > maxOwedScaled) {
-      maxOwedScaled = net;
-      maxCreditor = m;
-    }
-  }
-
-  let minNetScaled = 0;
-  for (const m of members) {
-    const net = netByMemberScaled[m];
-    if (net < minNetScaled) {
-      minNetScaled = net;
-      maxDebtor = m;
-    }
-  }
-
-  if (maxOwedScaled === 0 || !maxDebtor || !maxCreditor) {
-    return { status: 'settled', amount: 0, debtor: null, creditor: null };
-  }
-
-  return {
-    status: 'owes',
-    amount: maxOwedScaled / (100 * scale),
-    debtor: maxDebtor,
-    creditor: maxCreditor,
-  };
+  // 3+ members: the largest single transfer from computeSettlements. The
+  // largest creditor's whole net used to be reported as one debt, which
+  // overstated it whenever more than one person owed them.
+  const [first] = computeSettlements(entries, ledger, members, valueField);
+  if (!first) return { status: 'settled', amount: 0, debtor: null, creditor: null };
+  return { status: 'owes', amount: first.amount, debtor: first.debtor, creditor: first.creditor };
 }
 
 // For 3+ people (e.g. a trip with a guest tagging along), there's no single
@@ -562,24 +596,24 @@ export function computeMemberTotals(entries, members, valueField = 'amount') {
   const scale = lcmRange(members.length);
   const totalsScaled = Object.fromEntries(members.map((m) => [m, 0]));
   for (const entry of entries) {
-    const amountPaise = toPaise(entry[valueField]);
-    if (!amountPaise) continue;
+    // A settle-up moves money between people; it isn't anyone's spending.
+    if (!entry || entry.splitType === 'settlement' || entry.isTripRollup) continue;
     if (!entry.split) {
-      if (members.includes(entry.payer)) totalsScaled[entry.payer] += amountPaise * scale;
-    } else if (entry.splitType === 'owed' && entry.owedBy) {
-      if (members.includes(entry.owedBy)) totalsScaled[entry.owedBy] += amountPaise * scale;
-    } else if (entry.splitType === 'custom' && Object.keys(customSharePortions(amountPaise, entry.splitShares, members)).length) {
-      Object.entries(customSharePortions(amountPaise, entry.splitShares, members)).forEach(([m, paise]) => {
-        totalsScaled[m] += paise * scale;
+      const payer = resolveMemberName(entry.payer, members);
+      const amountPaise = toPaise(entry[valueField]);
+      if (payer && amountPaise) totalsScaled[payer] += amountPaise * scale;
+      continue;
+    }
+    const c = classifyEntryForBalance(entry, members, valueField);
+    if (c.skip) continue;
+    if (c.kind === 'shared') {
+      const share = (c.valuePaise * scale) / c.splitSet.length;
+      c.splitSet.forEach((m) => {
+        totalsScaled[m] += share;
       });
     } else {
-      const splitSet = entry.splitAmong && entry.splitAmong.length > 0
-        ? entry.splitAmong.filter((m) => members.includes(m))
-        : members;
-      if (splitSet.length === 0) continue;
-      const share = (amountPaise * scale) / splitSet.length;
-      splitSet.forEach((m) => {
-        totalsScaled[m] += share;
+      Object.entries(c.debits).forEach(([m, paise]) => {
+        totalsScaled[m] += paise * scale;
       });
     }
   }
@@ -605,7 +639,20 @@ export function computeMemberTotals(entries, members, valueField = 'amount') {
 // double-counted until caught against their real Splitwise settlement
 // figures. See tests/utils.test.mjs for the regression cases.
 export function excludeCashSpend(entries) {
-  return entries.filter((e) => e.paymentMethod !== 'Cash');
+  return entries.filter((e) => !isCashPaid(e));
+}
+
+// Cash-ness comes from the instrument type saved on the entry (paymentType),
+// not its label - labels change on rename and gain " · Owner" suffixes when
+// two methods share a name, and either silently brought the double counting
+// above back. Entries saved before paymentType existed fall back to the old
+// label check. A withdrawal is never "cash spend": it's the card/forex charge
+// that carries the shared debt for the cash.
+export function isCashPaid(entry) {
+  if (!entry || entry.isWithdrawal) return false;
+  if (entry.paymentType) return entry.paymentType === 'cash';
+  const base = String(entry.paymentMethod || '').split(' · ')[0].trim().toLowerCase();
+  return base === 'cash';
 }
 
 // Same basis as computeMemberTotals, not Category Breakdown - card
@@ -614,9 +661,36 @@ export function excludeCashSpend(entries) {
 // equals the sum of computeMemberTotals' per-person figures; Category
 // Breakdown can legitimately total less when some withdrawn cash is
 // still unspent, and that's not a mismatch to reconcile.
-export function computeTripTotalSpend(entries) {
+// Pass the trip's members to leave out the same entries the balance maths
+// skips (see findBalanceIssues), so the total still equals the per-person sum.
+// Cash on hand for a trip, in its local currency. Withdrawals come from the
+// trip's withdrawal entries (which carry localAmount) - a separate cash
+// movement used to be written alongside each one with no link between them,
+// so deleting or editing the entry left the tile counting cash that was
+// never withdrawn. Trips with no withdrawal entries (older data) fall back
+// to the movements.
+export function computeTripCashStats(entries, cashMovements, tripName) {
+  const tripEntries = (entries || []).filter((e) => normalizeLedger(e.ledger) === 'travel' && e.tripName === tripName);
+  const tripMovements = (cashMovements || []).filter((m) => m.tripName === tripName);
+  const sumLocal = (list, field) => list.reduce((sum, x) => sum + toPaise(x[field]), 0) / 100;
+  const opening = sumLocal(tripMovements.filter((m) => m.type === 'opening'), 'amount');
+  const withdrawalEntries = tripEntries.filter((e) => e.isWithdrawal);
+  const withdrawn = withdrawalEntries.length
+    ? sumLocal(withdrawalEntries, 'localAmount')
+    : sumLocal(tripMovements.filter((m) => m.type === 'withdrawal'), 'amount');
+  const spent = sumLocal(tripEntries.filter(isCashPaid), 'localAmount');
+  return { opening, withdrawn, spent, balance: Math.round((opening + withdrawn - spent) * 100) / 100 };
+}
+
+export function computeTripTotalSpend(entries, members = null) {
   const totalPaise = excludeCashSpend(entries)
     .filter((e) => e.splitType !== 'settlement' && !e.isTripRollup)
+    .filter((e) => {
+      if (!members) return true;
+      if (!e.split) return Boolean(resolveMemberName(e.payer, members));
+      const c = classifyEntryForBalance(e, members);
+      return !c.skip || c.skip === 'zero';
+    })
     .reduce((sum, e) => sum + toPaise(e.amount), 0);
   return totalPaise / 100;
 }
@@ -832,7 +906,12 @@ export function resolveAskQuery(spec, allEntries, members) {
     }
     case 'member_total': {
       if (!spec.member) return "I couldn't tell which person you meant.";
-      const monthScoped = month ? scoped.filter((e) => getMonthKey(e.date) === month) : scoped;
+      // Same basis as the trip screen's per-person totals: trip cash purchases
+      // are already carried by the ATM withdrawal, so counting them again
+      // inflated the answer (settlements/rollups are skipped inside
+      // computeMemberTotals).
+      const basis = scope === 'travel' ? excludeCashSpend(scoped) : scoped;
+      const monthScoped = month ? basis.filter((e) => getMonthKey(e.date) === month) : basis;
       const totals = computeMemberTotals(monthScoped, members);
       return `${spec.member}${tripLabel} (${scopeLabel}): ${formatCurrency(totals[spec.member] || 0, currency)}.`;
     }
@@ -854,7 +933,10 @@ export function resolveAskQuery(spec, allEntries, members) {
     }
     case 'biggest_expense':
     case 'smallest_expense': {
-      const pool = spec.category ? countable.filter((e) => e.category === spec.category) : countable;
+      // Refunds (negative amounts) aren't expenses - "smallest expense" used to
+      // answer with a -₹200 refund.
+      const positive = countable.filter((e) => Number(e.amount) > 0);
+      const pool = spec.category ? positive.filter((e) => e.category === spec.category) : positive;
       const label = spec.metric === 'biggest_expense' ? 'Biggest' : 'Smallest';
       const scopedIn = spec.category ? ` in ${spec.category}` : '';
       if (pool.length === 0) return `No expenses recorded${scopedIn}${tripLabel} (${scopeLabel}).`;
@@ -973,6 +1055,28 @@ export function splitAmountEvenly(total, count) {
   const base = Math.floor(totalCents / count);
   const remainder = totalCents - base * count;
   return Array.from({ length: count }, (_, i) => (base + (i < remainder ? 1 : 0)) / 100);
+}
+
+// User-typed money: "1200", "1,200.50", " 1 200 " -> a number rounded to
+// paise; anything else -> null. parseFloat('1,200') is 1, and the website
+// ignores the numeric-keyboard hint, so typing "1,200" used to save ₹1.
+// Negatives only where they mean something (card refunds, points earned).
+export function parseAmountInput(text, { allowNegative = false } = {}) {
+  if (text == null) return null;
+  const cleaned = String(text).replace(/[\s,]/g, '');
+  if (!/^-?(\d+(\.\d{1,2})?|\.\d{1,2})$/.test(cleaned)) return null;
+  const value = Number(cleaned);
+  if (!Number.isFinite(value) || (value < 0 && !allowNegative)) return null;
+  return Math.round(value * 100) / 100;
+}
+
+// True only for a real calendar date written YYYY-MM-DD. A free-text date on
+// the phone ("24/09/2026") used to save as-is and drop out of every month view.
+export function isValidISODate(text) {
+  if (typeof text !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+  const [y, m, d] = text.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.getFullYear() === y && date.getMonth() === m - 1 && date.getDate() === d;
 }
 
 export function todayISO() {
@@ -1236,28 +1340,6 @@ function setItem(key, value) {
   memoryStorage[key] = value;
 }
 
-export const DEVICE_NAME_KEY = 'household-ledger-device-name';
-export const HOUSEHOLD_CATEGORIES_KEY = 'household-ledger-categories';
-export const TRIPS_KEY = 'household-ledger-trips';
-export const CASH_MOVEMENTS_KEY = 'household-ledger-cash-movements';
-export const PAYMENT_METHODS_KEY = 'household-ledger-payment-methods';
-export const ACTIVE_LEDGER_KEY = 'household-ledger-active-ledger';
-export const TRAVEL_CATEGORIES_KEY = 'household-ledger-travel-categories';
-export const MEMBERS_KEY = 'household-ledger-members';
-export const CURRENCIES_KEY = 'household-ledger-currencies';
-
-export function getDeviceName() {
-  return getItem(DEVICE_NAME_KEY);
-}
-
-export function setDeviceName(name) {
-  if (name === null) {
-    setItem(DEVICE_NAME_KEY, '');
-  } else {
-    setItem(DEVICE_NAME_KEY, name);
-  }
-}
-
 // Per-device, not synced via Firestore like the household's shared settings
 // (budgets, PIN, recurring rules) - which theme looks right depends on this
 // device's own screen/room lighting, not a household-wide preference the
@@ -1273,138 +1355,43 @@ export function setStoredColorScheme(scheme) {
   setItem(COLOR_SCHEME_KEY, scheme === 'dark' ? 'dark' : 'light');
 }
 
-export function getStoredHouseholdCategories() {
-  const raw = getItem(HOUSEHOLD_CATEGORIES_KEY);
-  if (raw === null || raw === undefined) return DEFAULT_CATEGORIES;
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : DEFAULT_CATEGORIES;
-  } catch {
-    return DEFAULT_CATEGORIES;
+function isPinConfigEnabled(config) {
+  return Boolean(config?.enabled && (config?.pinHash || config?.legacyPin));
+}
+
+// Whether the very first render of a fresh app load should show the lock
+// screen, given the last config this device actually confirmed (from
+// deviceStore, survives a relaunch) and the live Firestore snapshot (which
+// may be the real server answer, a stale offline cache, or a read error).
+// Pure and synchronous so every branch can be tested directly, without a
+// real Firestore listener or AsyncStorage.
+//
+// The rule that matters most: fail CLOSED. A snapshot that can't yet prove
+// the PIN is off (a cache-only "document missing" read on a cold start
+// offline, or a permission/network error) must not be treated as "PIN
+// disabled" - that used to be exactly how opening the app offline skipped
+// the lock outright, and it never locked again once the real config finally
+// arrived, because only the FIRST snapshot was ever consulted.
+// `trustworthy: false` tells the caller not to overwrite deviceStore's
+// last-known record with this guess.
+export function decideInitialLock({ lastKnown, snapshot }) {
+  if (snapshot?.error || (snapshot?.fromCache && !snapshot?.exists)) {
+    const wasEnabled = isPinConfigEnabled(lastKnown);
+    return { locked: wasEnabled, config: wasEnabled ? lastKnown : null, trustworthy: false };
   }
+  const config = { enabled: Boolean(snapshot?.enabled), pinHash: snapshot?.pinHash || null, legacyPin: snapshot?.legacyPin || null };
+  const isEnabled = isPinConfigEnabled(config);
+  return { locked: isEnabled, config: isEnabled ? config : null, trustworthy: true };
 }
 
-export function setStoredHouseholdCategories(categories) {
-  setItem(HOUSEHOLD_CATEGORIES_KEY, JSON.stringify(categories));
-}
-
-export function getLedgerCategories(ledger) {
-  if (normalizeLedger(ledger) === 'travel') {
-    return getStoredTravelCategories();
-  }
-  return getStoredHouseholdCategories();
-}
-
-export function getStoredTrips() {
-  const raw = getItem(TRIPS_KEY);
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-export function setStoredTrips(trips) {
-  setItem(TRIPS_KEY, JSON.stringify(trips));
-}
-
-export function getStoredCashMovements() {
-  const raw = getItem(CASH_MOVEMENTS_KEY);
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-export function setStoredCashMovements(movements) {
-  setItem(CASH_MOVEMENTS_KEY, JSON.stringify(movements));
-}
-
-export function getStoredPaymentMethods() {
-  const raw = getItem(PAYMENT_METHODS_KEY);
-  if (raw === null || raw === undefined) return DEFAULT_PAYMENT_METHODS;
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_PAYMENT_METHODS;
-  } catch {
-    return DEFAULT_PAYMENT_METHODS;
-  }
-}
-
-export function setStoredPaymentMethods(methods) {
-  setItem(PAYMENT_METHODS_KEY, JSON.stringify(methods));
-}
-
-// This is the active *tab*, not an expense's `ledger` field - it has a
-// third value ('payments') that never appears on an actual entry, so it
-// can't reuse normalizeLedger (which only ever resolves to 'household' or
-// 'travel').
-export function getStoredActiveLedger() {
-  const raw = getItem(ACTIVE_LEDGER_KEY);
-  return raw === 'travel' || raw === 'payments' ? raw : 'household';
-}
-
-export function setStoredActiveLedger(ledger) {
-  setItem(ACTIVE_LEDGER_KEY, ledger === 'travel' || ledger === 'payments' ? ledger : 'household');
-}
-
-export function getStoredTravelCategories() {
-  const raw = getItem(TRAVEL_CATEGORIES_KEY);
-  if (raw === null || raw === undefined) return DEFAULT_TRAVEL_CATEGORIES;
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : DEFAULT_TRAVEL_CATEGORIES;
-  } catch {
-    return DEFAULT_TRAVEL_CATEGORIES;
-  }
-}
-
-export function setStoredTravelCategories(categories) {
-  setItem(TRAVEL_CATEGORIES_KEY, JSON.stringify(categories));
-}
-
-export function getStoredMembers() {
-  const raw = getItem(MEMBERS_KEY);
-  if (raw === null || raw === undefined) return DEFAULT_PERSONS;
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_PERSONS;
-  } catch {
-    return DEFAULT_PERSONS;
-  }
-}
-
-export function setStoredMembers(members) {
-  setItem(MEMBERS_KEY, JSON.stringify(members));
-}
-
-export const PIN_CONFIG_KEY = 'splitkhata_pin_config';
-
-export function getPinConfig() {
-  const raw = getItem(PIN_CONFIG_KEY);
-  if (!raw) return { pin: '', enabled: false };
-  try {
-    const parsed = JSON.parse(raw);
-    return {
-      pin: typeof parsed.pin === 'string' ? parsed.pin : '',
-      enabled: Boolean(parsed.enabled),
-    };
-  } catch {
-    return { pin: '', enabled: false };
-  }
-}
-
-export function setPinConfig(config) {
-  setItem(PIN_CONFIG_KEY, JSON.stringify(config));
-}
-
-export function verifyPin(inputPin) {
-  const { pin, enabled } = getPinConfig();
-  if (!enabled || !pin) return true;
-  return inputPin === pin;
+// Whether returning to the foreground after being hidden for `hiddenForMs`
+// should re-lock an already-unlocked session. Native gets a much shorter
+// leash than the website (60s vs 5min) - a phone left on a table unlocked
+// is a bigger exposure than a laptop tab.
+export function shouldRelockAfterBackground({ lastKnown, hiddenForMs, platform = 'web' }) {
+  if (!isPinConfigEnabled(lastKnown)) return false;
+  const thresholdMs = platform === 'web' ? 5 * 60 * 1000 : 60 * 1000;
+  return hiddenForMs >= thresholdMs;
 }
 
 export const HOUSEHOLD_BUDGETS_KEY = 'splitkhata_household_budgets';
@@ -1459,6 +1446,20 @@ function nextMonthKey(monthKey) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+// 'YYYY-MM' moved by `delta` months (negative goes back), across year ends.
+export function shiftMonthKey(monthKey, delta) {
+  const [year, month] = monthKey.split('-').map(Number);
+  const index = year * 12 + (month - 1) + delta;
+  return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`;
+}
+
+// A generated entry's document id is fixed by its rule and month, so two
+// devices (or a retry after a failed save) can never create the same month's
+// entry twice - the second write finds it already there.
+export function recurringEntryId(ruleId, monthKey) {
+  return `recurring_${ruleId}_${monthKey}`;
+}
+
 // Clamps the day to however many days the target month actually has (e.g.
 // day 31 in February becomes the 28th/29th) - same idea as
 // addMonthsToDateISO's day clamping above.
@@ -1470,32 +1471,64 @@ export function buildRecurringEntryDate(monthKey, dayOfMonth) {
 }
 
 // How many months a single dormant rule can backfill in one go - if the app
-// hasn't been opened in longer than this, older gaps are silently skipped
-// rather than dumping a year of back-dated entries into the ledger at once.
+// hasn't been opened in longer than this, only the newest months (always
+// including the current one) are created; older gaps are skipped rather than
+// dumping a year of back-dated entries into the ledger at once. Read as a
+// period count for quarterly/yearly rules too (so a long-dormant yearly rule
+// catches up at most 6 years, not an unbounded backlog) - the calendar-month
+// lookback below already keeps this conservative in practice for those.
 const RECURRING_MAX_BACKFILL_MONTHS = 6;
+
+// How many months apart two firings are, for a rule's frequency.
+function recurringStepMonths(frequency) {
+  return frequency === 'yearly' ? 12 : frequency === 'quarterly' ? 3 : 1;
+}
+
+// Difference in whole months between two 'YYYY-MM' keys (b - a).
+function monthsBetweenKeys(a, b) {
+  const [ay, am] = a.split('-').map(Number);
+  const [by, bm] = b.split('-').map(Number);
+  return (by - ay) * 12 + (bm - am);
+}
 
 // Pure planning step for recurring-expense generation: given the saved
 // rules and "what month is it now," works out which (rule, month) pairs
 // still need an entry, without touching Firestore/localStorage itself - the
 // caller does the actual writes, then persists updatedRules. A rule with no
 // lastGeneratedMonth yet only generates for the current month; it doesn't
-// backfill to before the rule existed.
+// backfill to before the rule existed. A paused rule (active: false) is
+// skipped entirely, same as before. A quarterly/yearly rule only fires on
+// months that land on its cadence relative to when it was created (so it
+// stays on a fixed quarter/year cycle instead of drifting); an endDate
+// stops any further generation past that month, but never touches entries
+// already created.
 export function computeRecurringEntriesToGenerate(rules, currentMonthKey) {
   const toCreate = [];
   let anyChanged = false;
 
   const updatedRules = (rules || []).map((rule) => {
     if (!rule?.active) return rule;
-    let cursor = rule.lastGeneratedMonth ? nextMonthKey(rule.lastGeneratedMonth) : currentMonthKey;
+    const step = recurringStepMonths(rule.frequency);
+    const anchorMonth = (rule.createdAt || currentMonthKey).slice(0, 7);
+    const endMonthKey = rule.endDate ? rule.endDate.slice(0, 7) : null;
+    // Start no earlier than MAX-1 months back, so a long gap fills the newest
+    // months - it used to fill the oldest six and never reach this month.
+    const earliest = shiftMonthKey(currentMonthKey, -(RECURRING_MAX_BACKFILL_MONTHS - 1));
+    const afterLast = rule.lastGeneratedMonth ? nextMonthKey(rule.lastGeneratedMonth) : currentMonthKey;
+    let cursor = afterLast > earliest ? afterLast : earliest;
+    // Snap forward to the next month actually on this rule's cadence -
+    // monthly (step 1) never needs to move.
+    while (monthsBetweenKeys(anchorMonth, cursor) % step !== 0) cursor = nextMonthKey(cursor);
     const months = [];
-    while (cursor <= currentMonthKey && months.length < RECURRING_MAX_BACKFILL_MONTHS) {
+    while (cursor <= currentMonthKey && (!endMonthKey || cursor <= endMonthKey) && months.length < RECURRING_MAX_BACKFILL_MONTHS) {
       months.push(cursor);
-      cursor = nextMonthKey(cursor);
+      for (let i = 0; i < step; i += 1) cursor = nextMonthKey(cursor);
     }
     if (months.length === 0) return rule;
 
     for (const monthKey of months) {
       toCreate.push({
+        id: recurringEntryId(rule.id, monthKey),
         amount: Number(rule.amount) || 0,
         payer: rule.payer,
         category: rule.category,
@@ -1508,7 +1541,9 @@ export function computeRecurringEntriesToGenerate(rules, currentMonthKey) {
         date: buildRecurringEntryDate(monthKey, rule.dayOfMonth),
         ledger: 'household',
         tripName: '',
-        paymentMethod: null,
+        paymentMethod: rule.paymentMethod || null,
+        paymentInstrumentId: rule.paymentInstrumentId || null,
+        paymentType: rule.paymentType || null,
         localAmount: null,
         rewardPoints: null,
         isRecurring: true,
@@ -1585,9 +1620,24 @@ export function setPaymentReminderConfig(config) {
 // (if the two of you have never settled up) the very first expense's date.
 // Not perfectly precise if new debt keeps piling on top of old, but close
 // enough for a nudge, not an audit.
+// The member a signed-in Google user is, by the first word of their display
+// name ("Yash Kothari" -> "Yash"), case-insensitive; null when nothing
+// matches. The full display name never matched a member, so the payer always
+// defaulted to the first member - even for Kruti.
+export function memberForUser(user, members) {
+  const first = String(user?.displayName || '').trim().split(/\s+/)[0];
+  if (!first) return null;
+  return (members || []).find((m) => m.toLowerCase() === first.toLowerCase()) || null;
+}
+
 export function getUnsettledSinceDate(entries, ledger) {
   const scoped = (entries || []).filter((e) => normalizeLedger(e.ledger) === normalizeLedger(ledger));
-  const settlementDates = scoped.filter((e) => e.splitType === 'settlement' && e.date).map((e) => e.date).sort();
+  // A reward-points transfer (amount 0, points set) isn't a rupee settle-up -
+  // it used to make "unsettled for 90 days" drop to 0.
+  const settlementDates = scoped
+    .filter((e) => e.splitType === 'settlement' && e.date && !(Number(e.amount || 0) === 0 && Number(e.rewardPoints || 0) !== 0))
+    .map((e) => e.date)
+    .sort();
   if (settlementDates.length) return settlementDates[settlementDates.length - 1];
   const allDates = scoped.filter((e) => e.date).map((e) => e.date).sort();
   return allDates.length ? allDates[0] : null;
@@ -1604,7 +1654,7 @@ export function computePaymentReminder(entries, ledger, members, config, today =
   if (balance.status !== 'owes' || balance.amount <= 0) return null;
   if (balance.amount < (config.amountThreshold || DEFAULT_PAYMENT_REMINDER_THRESHOLD)) return null;
   const sinceDate = getUnsettledSinceDate(entries, ledger);
-  const daysSince = sinceDate ? Math.floor((new Date(today) - new Date(sinceDate)) / 86400000) : null;
+  const daysSince = sinceDate ? Math.floor((new Date(today).getTime() - new Date(sinceDate).getTime()) / 86400000) : null;
   return { ...balance, daysSince, sinceDate };
 }
 
@@ -1641,21 +1691,6 @@ Extract the total amount, purchase date, the best-matching category, and a short
 Available categories (pick the single best match, never invent a new one): ${categories.join(', ')}
 If the receipt's date is unreadable or missing, use ${todayFallback} instead.
 If the receipt shows multiple totals (subtotal, tax, tip, grand total), use the final grand total actually charged.`;
-}
-
-export function getStoredCurrencies() {
-  const raw = getItem(CURRENCIES_KEY);
-  if (raw === null || raw === undefined) return DEFAULT_CURRENCIES;
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_CURRENCIES;
-  } catch {
-    return DEFAULT_CURRENCIES;
-  }
-}
-
-export function setStoredCurrencies(currencies) {
-  setItem(CURRENCIES_KEY, JSON.stringify(currencies));
 }
 
 // ============================================================================
@@ -1709,12 +1744,18 @@ export const CARD_STRATEGY_DEFAULTS = {
     categories: [
       { key: 'regular', label: 'Regular', multiplier: 1, capAmount: null, capPeriod: null },
       { key: 'weekend_dining', label: 'Weekend Dining', multiplier: 2, capAmount: 1000, capPeriod: 'day' },
-      { key: 'smartbuy_hotel', label: 'Smartbuy Booking', multiplier: 10, capAmount: 10000, capPeriod: 'month' },
+      // capScope: a 'month' cap is by calendar month by default (HDFC's own
+      // terms say "per month," not "per statement") - 'statement_cycle' resets
+      // the cap with each new statement instead, for a card whose bank really
+      // does mean the latter. Two purchases either side of a mid-month
+      // statement date used to get 2,000 points apiece on a "2,000/month"
+      // grocery cap, because the cap was reset by the cycle instead of the month.
+      { key: 'smartbuy_hotel', label: 'Smartbuy Booking', multiplier: 10, capAmount: 10000, capPeriod: 'month', capScope: 'calendar_month' },
       // creditOn: this category's points for a whole calendar month land together on the 1st of the next month, not with the statement.
-      { key: 'grocery', label: 'Grocery', multiplier: 1, capAmount: 2000, capPeriod: 'month', creditOn: 'first_of_next_month' },
-      { key: 'utility', label: 'Utility', multiplier: 1, capAmount: 2000, capPeriod: 'month' },
+      { key: 'grocery', label: 'Grocery', multiplier: 1, capAmount: 2000, capPeriod: 'month', capScope: 'calendar_month', creditOn: 'first_of_next_month' },
+      { key: 'utility', label: 'Utility', multiplier: 1, capAmount: 2000, capPeriod: 'month', capScope: 'calendar_month' },
       // Since 1 July 2025 HDFC caps insurance points at 5,000 a month (it used to be a per-day cap).
-      { key: 'insurance', label: 'Insurance', multiplier: 1, capAmount: 5000, capPeriod: 'month' },
+      { key: 'insurance', label: 'Insurance', multiplier: 1, capAmount: 5000, capPeriod: 'month', capScope: 'calendar_month' },
       { key: 'excluded', label: 'Excluded (Fuel / EMI / Rent / Govt / Cash Advance / Card Fee / Wallet)', multiplier: 0, capAmount: null, capPeriod: null },
     ],
     cycleCap: 75000,
@@ -1735,6 +1776,7 @@ export const CARD_STRATEGY_DEFAULTS = {
   hsbc_tiered_cashback_aggregate: {
     bonusRate: 10,
     bonusMonthlyCap: 1200,
+    bonusCapScope: 'calendar_month',
     baseRate: 1.5,
     annualMilestoneTarget: 200000,
     annualMilestoneLabel: 'Annual fee waived',
@@ -1754,7 +1796,9 @@ export const CARD_STRATEGY_DEFAULTS = {
   hsbc_premier_flat_capped: {
     baseRate: 3,
     categoryMonthlyCap: 100000,
+    categoryCapScope: 'calendar_month',
     travelBonusMonthlyCap: 18000,
+    travelBonusCapScope: 'calendar_month',
     annualMilestoneTarget: null,
     annualMilestoneLabel: '',
   },
@@ -1865,7 +1909,18 @@ function applyCycleCap(rawValue, alreadyEarned, cap) {
 // HDFC Diners Club Black Metal: 5 points per ₹150 (slab, not percentage),
 // times a per-category multiplier, with day/month sub-caps on specific
 // categories plus one overall per-cycle cap layered on top of everything.
-export function computeDinersCycleReward(params, transactions) {
+//
+// `ctx` is how a category's month cap survives past this one statement cycle,
+// for cards whose billing day isn't the 1st (so a calendar month spans two
+// cycles): pass the SAME ctx object into every cycle's call, in date order
+// (computeCardRewardLedger does this), and a 'calendar_month'-scoped
+// category's running total carries across cycle boundaries instead of
+// resetting with each one. Omit ctx (or call this directly, as every
+// existing single-cycle test does) and each call gets its own fresh buckets,
+// unchanged from before - only the ledger, which now shares one ctx across a
+// card's whole history, sees the fix. A 'statement_cycle'-scoped category
+// never touches ctx, so it always resets with the cycle, ctx or not.
+export function computeDinersCycleReward(params, transactions, ctx) {
   const categories = params.categories || [];
   const categoriesByKey = Object.fromEntries(categories.map((c) => [c.key, c]));
   // Falls back to an uncapped 1x category rather than crashing if a card's
@@ -1874,8 +1929,14 @@ export function computeDinersCycleReward(params, transactions) {
   const fallbackCategory = { key: 'regular', multiplier: 1, capAmount: null, capPeriod: null };
   const regularCategory = categoriesByKey.regular || categories[0] || fallbackCategory;
   const dayTotals = {};
-  const monthTotals = {};
-  const monthlyExtraTotals = {};
+  // 'statement_cycle'-scoped month caps stay local to this call, exactly like
+  // day caps always have been; 'calendar_month'-scoped ones (the default) use
+  // ctx so they're shared across every cycle that falls in the same month.
+  const localMonthTotals = {};
+  const localExtraTotals = {};
+  ctx = ctx || {};
+  ctx.monthBuckets = ctx.monthBuckets || {};
+  ctx.extraMonthBuckets = ctx.extraMonthBuckets || {};
   let cycleTotal = 0;
   const perTransaction = [];
 
@@ -1887,10 +1948,22 @@ export function computeDinersCycleReward(params, transactions) {
     // carry its own multiplier instead of always using the category's
     // default - falls back to the category's fixed rate when not set, so
     // existing transactions are unaffected.
-    const effectiveMultiplier = txn.travelMultiplier != null ? txn.travelMultiplier : category.multiplier;
+    // Only SmartBuy carries its own multiplier - a stale one left on a
+    // transaction switched to another category used to multiply it too
+    // (₹1,500 regular earning 250 instead of 50).
+    const effectiveMultiplier =
+      category.key === 'smartbuy_hotel' && txn.travelMultiplier != null && txn.travelMultiplier !== ''
+        ? Number(txn.travelMultiplier)
+        : category.multiplier;
     // A refund (negative amount) reverses points at the same rate, rounded toward zero.
     const basePoints = Math.trunc(txn.amount / params.unitAmount) * params.pointsPerUnit;
     let earned = basePoints * effectiveMultiplier;
+
+    // A month-period cap is by calendar month by default (ctx, shared across
+    // cycles) unless this category is explicitly statement_cycle-scoped
+    // (a call-local bucket, reset with every cycle) - see the capScope note
+    // on CARD_STRATEGY_DEFAULTS.
+    const monthScoped = (category.capScope || 'calendar_month') !== 'statement_cycle';
 
     // A category can carry a primary cap (per day or per month) and, on top,
     // a separate monthly cap (insurance: 5,000 a day AND 5,000 a month).
@@ -1899,27 +1972,37 @@ export function computeDinersCycleReward(params, transactions) {
     let allowed = Infinity;
     let dayOrMonthBucket = null;
     if (category.capAmount != null) {
-      const bucketKey = category.capPeriod === 'day' ? `${category.key}|${txn.date}` : `${category.key}|${getMonthKey(txn.date)}`;
-      const bucketTotals = category.capPeriod === 'day' ? dayTotals : monthTotals;
+      const isDay = category.capPeriod === 'day';
+      const bucketKey = isDay ? `${category.key}|${txn.date}` : `${category.key}|${getMonthKey(txn.date)}`;
+      const bucketTotals = isDay ? dayTotals : monthScoped ? ctx.monthBuckets : localMonthTotals;
       dayOrMonthBucket = { bucketKey, bucketTotals };
       allowed = Math.min(allowed, category.capAmount - (bucketTotals[bucketKey] || 0));
     }
     const extraKey = `${category.key}|${getMonthKey(txn.date)}`;
+    const extraTotals = monthScoped ? ctx.extraMonthBuckets : localExtraTotals;
     if (category.monthlyCapAmount != null) {
-      allowed = Math.min(allowed, category.monthlyCapAmount - (monthlyExtraTotals[extraKey] || 0));
+      allowed = Math.min(allowed, category.monthlyCapAmount - (extraTotals[extraKey] || 0));
     }
     if (earned >= 0) {
       earned = Math.max(0, Math.min(earned, allowed));
+    } else {
+      // A refund can only reverse what its own bucket(s) actually earned -
+      // unbounded, a refund on a purchase that hit a cap and earned 0 could
+      // still take points away, or a refund bigger than the original
+      // purchase could push a bucket, or the cycle, negative.
+      let floor = -Infinity;
+      if (dayOrMonthBucket) floor = Math.max(floor, -(dayOrMonthBucket.bucketTotals[dayOrMonthBucket.bucketKey] || 0));
+      if (category.monthlyCapAmount != null) floor = Math.max(floor, -(extraTotals[extraKey] || 0));
+      earned = Math.max(earned, floor === -Infinity ? earned : floor);
     }
-    // A reversal isn't held to any cap, and it frees the room it used.
     if (dayOrMonthBucket) {
       dayOrMonthBucket.bucketTotals[dayOrMonthBucket.bucketKey] = Math.max(0, (dayOrMonthBucket.bucketTotals[dayOrMonthBucket.bucketKey] || 0) + earned);
     }
     if (category.monthlyCapAmount != null) {
-      monthlyExtraTotals[extraKey] = Math.max(0, (monthlyExtraTotals[extraKey] || 0) + earned);
+      extraTotals[extraKey] = Math.max(0, (extraTotals[extraKey] || 0) + earned);
     }
 
-    earned = earned < 0 ? earned : applyCycleCap(earned, cycleTotal, params.cycleCap);
+    earned = earned < 0 ? Math.max(earned, -cycleTotal) : applyCycleCap(earned, cycleTotal, params.cycleCap);
     cycleTotal += earned;
     perTransaction.push({ id: txn.id, basePoints, categoryKey: category.key, multiplier: effectiveMultiplier, earned });
   }
@@ -1951,11 +2034,13 @@ export function computeSbiCycleReward(params, transactions) {
     }
     if (txn.channel === 'online') {
       const raw = isRefund ? Math.trunc((txn.amount * params.onlineRate) / 100) : Math.floor((txn.amount * params.onlineRate) / 100);
-      earned = isRefund ? raw : applyCycleCap(raw, onlineTotal, params.onlineCycleCap);
+      // A refund can only take back what the online pool actually has in it -
+      // unbounded, a refund could push the pool negative.
+      earned = isRefund ? Math.max(raw, -onlineTotal) : applyCycleCap(raw, onlineTotal, params.onlineCycleCap);
       onlineTotal += earned;
     } else if (txn.channel === 'offline') {
       const raw = isRefund ? Math.trunc((txn.amount * params.offlineRate) / 100) : Math.floor((txn.amount * params.offlineRate) / 100);
-      earned = isRefund ? raw : applyCycleCap(raw, offlineTotal, params.offlineCycleCap);
+      earned = isRefund ? Math.max(raw, -offlineTotal) : applyCycleCap(raw, offlineTotal, params.offlineCycleCap);
       offlineTotal += earned;
     }
     perTransaction.push({ id: txn.id, earned, channel: txn.channel });
@@ -1974,7 +2059,18 @@ export function computeSbiCycleReward(params, transactions) {
 // buckets its own month-scoped category caps, since a billing cycle whose
 // start day isn't the 1st spans two calendar months and would otherwise let
 // one cap cover both (or split one month's cap across two cycles).
-export function computeHsbcCycleReward(params, transactions) {
+// `ctx` (optional, shared across cycles by computeCardRewardLedger, same
+// convention as computeDinersCycleReward) is what lets the ₹1,200/calendar-
+// month bonus cap survive past one billing cycle: without it, a card whose
+// billing day isn't the 1st could apply the cap twice to one calendar month
+// (once per cycle it spans). Only the capped bonus tier needs this - the
+// uncapped base tier is unaffected either way, so it's still computed fresh
+// from just the transactions this call was given.
+export function computeHsbcCycleReward(params, transactions, ctx) {
+  const scope = params.bonusCapScope || 'calendar_month';
+  ctx = ctx || {};
+  ctx.hsbcBonusByMonth = ctx.hsbcBonusByMonth || {};
+
   const byMonth = {};
   for (const t of transactions) {
     if (t.channel === 'excluded') continue;
@@ -1988,16 +2084,31 @@ export function computeHsbcCycleReward(params, transactions) {
   let baseSum = 0;
   let bonusEarned = 0;
   let baseEarned = 0;
-  for (const { eligible, base } of Object.values(byMonth)) {
+  for (const [monthKey, { eligible, base }] of Object.entries(byMonth)) {
     eligibleSum += eligible;
     baseSum += base;
-    const bonusRaw = Math.round((eligible * params.bonusRate) / 100);
+    baseEarned += Math.round((base * params.baseRate) / 100);
+
+    if (scope === 'statement_cycle') {
+      // Resets with every cycle - exactly the old call-local behaviour.
+      const bonusRaw = Math.round((eligible * params.bonusRate) / 100);
+      bonusEarned += bonusRaw < 0 ? bonusRaw : applyCycleCap(bonusRaw, 0, params.bonusMonthlyCap);
+      continue;
+    }
+    // calendar_month (default): carry this month's running eligible spend and
+    // bonus already paid across cycles via ctx, and only book the delta this
+    // cycle adds - so a purchase either side of a mid-month statement date
+    // shares one cap instead of getting one each.
+    const prior = ctx.hsbcBonusByMonth[monthKey] || { eligible: 0, bonusPaid: 0 };
+    const newEligible = prior.eligible + eligible;
+    const rawTotal = Math.round((newEligible * params.bonusRate) / 100);
     // Routed through applyCycleCap (not a bare Math.min) so a blank/cleared
     // cap field is treated as "uncapped," not "capped at zero" - Math.min(x,
     // null) coerces null to 0 in JS, which would silently wipe out every
     // bonus-tier reward if someone cleared this field while adding a card.
-    bonusEarned += bonusRaw < 0 ? bonusRaw : applyCycleCap(bonusRaw, 0, params.bonusMonthlyCap);
-    baseEarned += Math.round((base * params.baseRate) / 100);
+    const cappedTotal = rawTotal < 0 ? rawTotal : applyCycleCap(rawTotal, 0, params.bonusMonthlyCap);
+    bonusEarned += cappedTotal - prior.bonusPaid;
+    ctx.hsbcBonusByMonth[monthKey] = { eligible: newEligible, bonusPaid: cappedTotal };
   }
 
   const perTransaction = transactions.map((t) => ({
@@ -2064,46 +2175,79 @@ export function computeSuperMoneyCycleReward(params, transactions) {
 // but stops earning points. `travel_bonus` lets a Travel-with-Points
 // booking's real multiplier (6-36% depending on the booking) be entered
 // per-transaction rather than hardcoding the portal's tiered table.
-export function computeHsbcPremierCycleReward(params, transactions) {
-  let cappedCategorySpend = 0;
-  let travelBonusEarned = 0;
+// `ctx` (optional, shared across cycles - same convention as
+// computeDinersCycleReward) carries the capped-category spend total and the
+// Travel-with-Points bonus total past one billing cycle, each bucketed by
+// calendar month, for a card whose billing day isn't the 1st. Both used to
+// be tracked as a single running scalar across whatever transactions one
+// call happened to receive - correct only when every transaction that call
+// saw fell in the same calendar month, which a real billing cycle never
+// guarantees.
+export function computeHsbcPremierCycleReward(params, transactions, ctx) {
+  const cappedScope = params.categoryCapScope || 'calendar_month';
+  const travelScope = params.travelBonusCapScope || 'calendar_month';
+  ctx = ctx || {};
+  ctx.premierCappedByMonth = ctx.premierCappedByMonth || {};
+  ctx.premierTravelByMonth = ctx.premierTravelByMonth || {};
+  const localCapped = {};
+  const localTravel = {};
+  const getCapped = (month) => (cappedScope === 'calendar_month' ? ctx.premierCappedByMonth : localCapped)[month] || 0;
+  const setCapped = (month, value) => {
+    (cappedScope === 'calendar_month' ? ctx.premierCappedByMonth : localCapped)[month] = value;
+  };
+  const getTravel = (month) => (travelScope === 'calendar_month' ? ctx.premierTravelByMonth : localTravel)[month] || 0;
+  const setTravel = (month, value) => {
+    (travelScope === 'calendar_month' ? ctx.premierTravelByMonth : localTravel)[month] = value;
+  };
+
   let totalPoints = 0;
   // HSBC's own Rewards T&C worked example carries a sub-₹100 remainder
   // forward to the next qualifying transaction rather than dropping it
   // (₹130 -> 3pts + ₹30 carried, ₹270+₹30=₹300 -> 6pts, ...) - this pool is
   // shared by regular and capped-category spend since both earn at the same
   // baseRate; Travel with Points is a separate booking product with its own
-  // multiplier and cap, so it doesn't participate.
+  // multiplier and cap, so it doesn't participate. Call-local, same as
+  // before: it's a rounding carry within this cycle's own statement, not a
+  // calendar-month cap.
   let carry = 0;
   const perTransaction = [];
 
   for (const txn of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
+    const month = getMonthKey(txn.date);
     let points = 0;
     if (txn.category === 'fuel_excluded') {
       points = 0;
     } else if (txn.amount < 0) {
-      // A refund reverses points at the base rate (rounded toward zero), skipping the carry pool.
+      // A refund reverses points at the base rate (rounded toward zero),
+      // skipping the carry pool, and bounded by what that month's bucket has
+      // actually earned so far - a refund can't take back more than was given.
       const rate = txn.category === 'travel_bonus' ? params.baseRate * (txn.travelMultiplier || 1) : params.baseRate;
-      points = Math.trunc(txn.amount / 100) * rate;
-      if (txn.category === 'travel_bonus') travelBonusEarned += points;
-      if (txn.category === 'capped_category') cappedCategorySpend += txn.amount;
+      const raw = Math.trunc(txn.amount / 100) * rate;
+      if (txn.category === 'travel_bonus') {
+        points = Math.max(raw, -getTravel(month));
+        setTravel(month, getTravel(month) + points);
+      } else {
+        points = raw;
+      }
+      if (txn.category === 'capped_category') setCapped(month, getCapped(month) + txn.amount);
     } else if (txn.category === 'travel_bonus') {
       const multiplier = txn.travelMultiplier || 1;
       const raw = Math.floor((txn.amount * params.baseRate) / 100) * multiplier;
-      points = applyCycleCap(raw, travelBonusEarned, params.travelBonusMonthlyCap);
-      travelBonusEarned += points;
+      points = applyCycleCap(raw, getTravel(month), params.travelBonusMonthlyCap);
+      setTravel(month, getTravel(month) + points);
     } else {
       let eligibleAmount = txn.amount;
       if (txn.category === 'capped_category') {
+        const spentSoFar = getCapped(month);
         // A blank/cleared categoryMonthlyCap means "no cap," not "no room
-        // left" - `null - cappedCategorySpend` would otherwise coerce to a
-        // negative number and Math.max(0, ...) would floor allowedSpend at
-        // 0, silently earning nothing on every transaction in this category.
+        // left" - `null - spentSoFar` would otherwise coerce to a negative
+        // number and Math.max(0, ...) would floor allowedSpend at 0, silently
+        // earning nothing on every transaction in this category.
         const allowedSpend = params.categoryMonthlyCap == null
           ? txn.amount
-          : Math.max(0, params.categoryMonthlyCap - cappedCategorySpend);
+          : Math.max(0, params.categoryMonthlyCap - spentSoFar);
         eligibleAmount = Math.min(txn.amount, allowedSpend);
-        cappedCategorySpend += txn.amount;
+        setCapped(month, spentSoFar + txn.amount);
       }
       const total = carry + eligibleAmount;
       const wholeUnits = Math.floor(total / 100);
@@ -2143,11 +2287,18 @@ export function resolveStrategyParamsForDate(strategyParamsHistory, date) {
 export function resolveCardParams(card, date) {
   const params = resolveStrategyParamsForDate(card?.strategyParamsHistory, date);
   const defaults = CARD_STRATEGY_DEFAULTS[card?.rewardStrategy];
-  if (!defaults?.categories || !params.categories) return params;
+  if (!defaults) return params;
+  // Top-level cap-scope fields (HSBC's bonusCapScope, Premier's two) predate
+  // this field too - fill them from the strategy's default the same way.
+  const withScopeDefaults = { ...params };
+  for (const key of ['bonusCapScope', 'categoryCapScope', 'travelBonusCapScope']) {
+    if (withScopeDefaults[key] === undefined && defaults[key] !== undefined) withScopeDefaults[key] = defaults[key];
+  }
+  if (!defaults.categories || !withScopeDefaults.categories) return withScopeDefaults;
   const defaultByKey = Object.fromEntries(defaults.categories.map((c) => [c.key, c]));
   return {
-    ...params,
-    categories: params.categories.map((c) => {
+    ...withScopeDefaults,
+    categories: withScopeDefaults.categories.map((c) => {
       const d = defaultByKey[c.key] || {};
       // A rule set saved before HDFC moved insurance to a monthly cap.
       const legacyInsurance = c.key === 'insurance' && c.capPeriod === 'day' && date >= '2025-07-01';
@@ -2156,6 +2307,7 @@ export function resolveCardParams(card, date) {
         ...(legacyInsurance ? { capPeriod: 'month' } : {}),
         ...(c.monthlyCapAmount === undefined && d.monthlyCapAmount !== undefined ? { monthlyCapAmount: d.monthlyCapAmount } : {}),
         ...(c.creditOn === undefined && d.creditOn !== undefined ? { creditOn: d.creditOn } : {}),
+        ...(c.capScope === undefined && d.capScope !== undefined ? { capScope: d.capScope } : {}),
       };
     }),
   };
@@ -2167,19 +2319,30 @@ export function resolveCardParams(card, date) {
 // specific billing cycle should pass that cycle's start date so the whole
 // cycle is evaluated under the one rule that was active when it opened,
 // even if the card's rules have since been revised.
-export function computeCardCycleReward(card, cycleTransactions, asOfDate) {
+// `ctx` is optional and only meaningful for strategies with a calendar-month
+// cap (Diners, HSBC Live+, HSBC Premier) - pass the SAME object across every
+// cycle of a card's history, in date order, to let a monthly cap survive
+// past one billing cycle (see computeDinersCycleReward). Omitted, each
+// strategy builds its own fresh ctx internally, exactly as before.
+/**
+ * @param {Card} card
+ * @param {CardTransaction[]} cycleTransactions
+ * @param {string} [asOfDate]
+ * @param {Object} [ctx]
+ */
+export function computeCardCycleReward(card, cycleTransactions, asOfDate, ctx) {
   const params = resolveCardParams(card, asOfDate ?? todayISO());
   switch (card?.rewardStrategy) {
     case 'hdfc_diners_slab_milestone':
-      return computeDinersCycleReward(params, cycleTransactions);
+      return computeDinersCycleReward(params, cycleTransactions, ctx);
     case 'sbi_two_channel_cashback':
       return computeSbiCycleReward(params, cycleTransactions);
     case 'hsbc_tiered_cashback_aggregate':
-      return computeHsbcCycleReward(params, cycleTransactions);
+      return computeHsbcCycleReward(params, cycleTransactions, ctx);
     case 'axis_supermoney_dual_pool':
       return computeSuperMoneyCycleReward(params, cycleTransactions);
     case 'hsbc_premier_flat_capped':
-      return computeHsbcPremierCycleReward(params, cycleTransactions);
+      return computeHsbcPremierCycleReward(params, cycleTransactions, ctx);
     default:
       return { totalReward: 0, perTransaction: [], unit: 'inr' };
   }
@@ -2192,15 +2355,53 @@ export function computeCardCycleReward(card, cycleTransactions, asOfDate) {
 // existing transaction's id when editing (so it's excluded from "the other
 // transactions" and replaced by the draft's own values), or be omitted/any
 // placeholder when adding a brand new one.
+// What an untouched card-transaction form means for each strategy - the
+// pickers show these as their defaults, so the saved transaction and the
+// preview must use them too. A hand-entered SBI transaction used to save
+// channel: null (the picker showed "Online 5%") and earn ₹0.
+export function defaultCardTxnFields(card) {
+  switch (card?.rewardStrategy) {
+    case 'hdfc_diners_slab_milestone':
+    case 'hsbc_premier_flat_capped':
+      return { category: 'regular' };
+    case 'sbi_two_channel_cashback':
+      return { channel: 'online' };
+    case 'hsbc_tiered_cashback_aggregate':
+    case 'axis_supermoney_dual_pool':
+      return { isBonusEligible: true };
+    default:
+      return {};
+  }
+}
+
+// A statement-only card's amount is entered with its statement date, but a
+// transaction dated on the billing day belongs to the cycle that starts that
+// day (see getCardCycleForDate) - so it's saved the day before, inside the
+// cycle the statement actually closes.
+export function statementDateToCycleDate(statementDate, billingCycleDay) {
+  const [y, m, d] = statementDate.split('-').map(Number);
+  const clampedDay = Math.min(billingCycleDay, daysInMonth(y, m));
+  if (d !== clampedDay) return statementDate;
+  const prev = new Date(y, m - 1, d - 1);
+  return `${prev.getFullYear()}-${pad2(prev.getMonth() + 1)}-${pad2(prev.getDate())}`;
+}
+
 export function previewTransactionReward(card, existingCardTxns, draftTxn) {
   if (!card || !draftTxn?.date || !draftTxn?.amount) return null;
   const { cycleStart, cycleEnd } = getCardCycleForDate(draftTxn.date, card.billingCycleDay ?? 1);
   const previewId = draftTxn.id || '__preview__';
-  const othersInCycle = (existingCardTxns || []).filter(
-    (t) => t.id !== previewId && t.date >= cycleStart && t.date < cycleEnd,
-  );
+  const others = (existingCardTxns || []).filter((t) => t.id !== previewId);
+  const othersInCycle = others.filter((t) => t.date >= cycleStart && t.date < cycleEnd);
+  // A calendar-month cap (Diners' grocery/utility/insurance/SmartBuy, HSBC
+  // Live+'s bonus tier, HSBC Premier's two caps) can already be partly used
+  // up by an earlier cycle in the same month - without replaying that
+  // history first, the preview (and the "best card" ranking that reads it)
+  // offered the cap's full room again every cycle, on a card whose billing
+  // day isn't the 1st. `capUsage` from a ledger built over everything before
+  // this cycle carries that state in.
+  const priorLedger = computeCardRewardLedger(card, others.filter((t) => t.date < cycleStart), cycleStart);
   const combined = [...othersInCycle, { ...draftTxn, id: previewId }];
-  const result = computeCardCycleReward(card, combined, cycleStart);
+  const result = computeCardCycleReward(card, combined, cycleStart, priorLedger.capUsage);
   return result.perTransaction.find((p) => p.id === previewId) || null;
 }
 
@@ -2298,7 +2499,9 @@ export function getRecentCombinations(entries, limit = 5, windowSize = 40) {
   const recent = [...entries].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, windowSize);
   const combos = new Map();
   for (const e of recent) {
-    if (!e.category || !e.payer) continue;
+    // Settlements, trip rollups and withdrawals aren't something you'd add
+    // again - they used to show up as "Settlement · Yash" chips.
+    if (!e.category || !e.payer || e.splitType === 'settlement' || e.isTripRollup || e.isWithdrawal) continue;
     const key = `${e.category}|${e.payer}|${e.paymentMethod || ''}`;
     const existing = combos.get(key);
     if (existing) {
@@ -2344,28 +2547,84 @@ export function computeCardMilestoneProgress(transactions, cardId, periodStart, 
 // credit date per quarter, which needs the card - this helper doesn't).
 function findCrossedMilestoneQuarters(transactions, cardId, target, bonus, asOfDate, starting = {}) {
   if (!target || !bonus) return [];
+  const startingByQuarter = starting.spend > 0 && starting.quarterStart ? { [starting.quarterStart]: starting.spend } : {};
+  return findCrossedMilestoneQuartersPerQuarter(transactions, cardId, () => ({ target, bonus }), asOfDate, startingByQuarter);
+}
+
+// Same sweep as above, but `getParams(quarterStart)` resolves the target and
+// bonus fresh for each quarter it visits - the version of the rules that was
+// actually in effect then. Without this, adding a new rule version (a higher
+// quarterly target, say) rewrote whether an already-passed quarter counts as
+// having crossed it, silently taking back (or granting) points that were
+// never really in question.
+//
+// `startingByQuarter` is `{ [quarterStart]: spend }`, one entry per quarter
+// that had spend before this app started tracking the card - a single
+// (spend, quarterStart) pair used to be all a card could ever record, so
+// editing the card in a later quarter had nowhere to put THAT quarter's own
+// starting spend except by overwriting the one slot, wiping out whichever
+// earlier quarter it used to hold (see getQuarterStartingSpend).
+function findCrossedMilestoneQuartersPerQuarter(transactions, cardId, getParams, asOfDate, startingByQuarter = {}) {
   const cardTxns = transactions.filter((t) => t.cardId === cardId);
-  // Spend made in the current quarter before this app started tracking the
-  // card only counts for that one quarter (starting.quarterStart).
-  const startingSpend = starting.spend || 0;
-  if (cardTxns.length === 0 && !(startingSpend > 0 && starting.quarterStart)) return [];
-  const dates = cardTxns.map((t) => t.date);
-  if (startingSpend > 0 && starting.quarterStart) dates.push(starting.quarterStart);
+  const startingQuarters = Object.keys(startingByQuarter).filter((q) => startingByQuarter[q] > 0);
+  if (cardTxns.length === 0 && startingQuarters.length === 0) return [];
+  const dates = cardTxns.map((t) => t.date).concat(startingQuarters);
   const firstDate = dates.reduce((min, d) => (d < min ? d : min), dates[0]);
   const crossed = [];
   let cursor = firstDate;
   let guard = 0;
   while (cursor <= asOfDate && guard < 400) {
     const { quarterStart, quarterEnd } = getQuarterBounds(cursor);
-    const progress = computeCardMilestoneProgress(
-      transactions, cardId, quarterStart, quarterEnd, target,
-      starting.quarterStart === quarterStart ? startingSpend : 0,
-    );
-    if (progress.spent >= target) crossed.push({ quarterStart, quarterEnd, amount: bonus });
+    const { target, bonus } = getParams(quarterStart) || {};
+    if (target && bonus) {
+      const progress = computeCardMilestoneProgress(
+        transactions, cardId, quarterStart, quarterEnd, target,
+        startingByQuarter[quarterStart] || 0,
+      );
+      if (progress.spent >= target) crossed.push({ quarterStart, quarterEnd, amount: bonus });
+    }
     cursor = quarterEnd;
     guard += 1;
   }
   return crossed;
+}
+
+// Reads a quarter's starting spend from the card's per-quarter map, falling
+// back to the legacy single (spend, quarterStart) pair only for the one
+// quarter it names - so an old card that hasn't been edited since this map
+// was added still works exactly as before.
+export function getQuarterStartingSpend(card, quarterStart) {
+  const map = card?.quarterlyStartingSpend;
+  if (map && map[quarterStart] != null) return Number(map[quarterStart]) || 0;
+  if (card?.quarterlyMilestoneStartingQuarter === quarterStart) return Number(card?.quarterlyMilestoneStartingSpend) || 0;
+  return 0;
+}
+
+function buildQuarterlyStartingMap(card) {
+  const map = { ...(card?.quarterlyStartingSpend || {}) };
+  if (card?.quarterlyMilestoneStartingQuarter && map[card.quarterlyMilestoneStartingQuarter] == null) {
+    map[card.quarterlyMilestoneStartingQuarter] = Number(card.quarterlyMilestoneStartingSpend) || 0;
+  }
+  return map;
+}
+
+// The annual milestone's equivalent: a window is named by its `periodStart`
+// (see getAnnualMilestoneWindow), and the map is keyed the same way.
+export function getAnnualStartingSpend(card, periodStart) {
+  const map = card?.annualStartingSpend;
+  if (map && map[periodStart] != null) return Number(map[periodStart]) || 0;
+  // Legacy fallback: the single old field only ever meant the window the
+  // card was created in, since there was nowhere else to record which
+  // window it was for.
+  if (card?.createdAt) {
+    const createdDate = typeof card.createdAt.toDate === 'function' ? card.createdAt.toDate() : new Date(card.createdAt);
+    if (!Number.isNaN(createdDate.getTime())) {
+      const createdISO = `${createdDate.getFullYear()}-${pad2(createdDate.getMonth() + 1)}-${pad2(createdDate.getDate())}`;
+      const { periodStart: createdWindowStart } = getAnnualMilestoneWindow(card.annualMilestoneAnchorMonth, createdISO);
+      if (createdWindowStart === periodStart) return Number(card?.annualMilestoneStartingSpend) || 0;
+    }
+  }
+  return 0;
 }
 
 // The date a quarter's milestone bonus lands: not a fixed calendar day, but
@@ -2391,8 +2650,24 @@ export function getQuarterlyMilestoneCreditDate(card, quarterEnd) {
 // drops a quarter's spend back under target, that quarter simply stops
 // producing a lump the next time this runs, withdrawing the bonus whether it
 // was still pending or already counted as credited.
+// `target`/`bonus` are the fallback used only for a quarter the card's own
+// rule history says nothing about (no strategyParamsHistory at all, in a
+// hand-built test card, say) - every quarter otherwise gets the target and
+// bonus that were actually in effect when it happened, via resolveCardParams,
+// so a later rule-version edit can't rewrite what an earlier quarter earned.
 export function computeQuarterlyMilestoneLumps(card, transactions, target, bonus, asOfDate, starting = {}) {
-  return findCrossedMilestoneQuarters(transactions, card?.id, target, bonus, asOfDate, starting).map((q) => ({
+  const getParams = (quarterStart) => {
+    const p = resolveCardParams(card, quarterStart);
+    return { target: p.quarterlyMilestoneTarget ?? target, bonus: p.quarterlyMilestoneBonus ?? bonus };
+  };
+  const startingByQuarter = buildQuarterlyStartingMap(card);
+  // The explicit `starting` argument (still accepted for callers that pass
+  // it directly rather than reading it off the card) fills in only if the
+  // card itself has no record for that quarter.
+  if (starting.spend > 0 && starting.quarterStart && startingByQuarter[starting.quarterStart] == null) {
+    startingByQuarter[starting.quarterStart] = starting.spend;
+  }
+  return findCrossedMilestoneQuartersPerQuarter(transactions, card?.id, getParams, asOfDate, startingByQuarter).map((q) => ({
     date: getQuarterlyMilestoneCreditDate(card, q.quarterEnd),
     amount: q.amount,
     quarterStart: q.quarterStart,
@@ -2428,16 +2703,23 @@ export function getAnnualMilestoneWindow(anchorMonth, dateStr) {
 // containing `today` - lets the UI show "SmartBuy: 4,200 of 10,000 pts used
 // this month" directly, instead of the cap only being visible indirectly
 // when a transaction unexpectedly earns less than its raw rate would give.
-function computeDinersCapStatus(params, cardTransactions, today) {
+function computeDinersCapStatus(params, cardTransactions, currentCycleTxns, today) {
   const results = [];
   for (const c of params.categories || []) {
+    const scope = c.capScope || 'calendar_month';
     const limits = [];
     if (c.capAmount != null) limits.push({ amount: c.capAmount, period: c.capPeriod === 'day' ? 'day' : 'month' });
     if (c.monthlyCapAmount != null) limits.push({ amount: c.monthlyCapAmount, period: 'month' });
     for (const [index, limit] of limits.entries()) {
-      const periodTxns = cardTransactions.filter((t) =>
-        limit.period === 'day' ? t.date === today : getMonthKey(t.date) === getMonthKey(today),
-      );
+      // A day cap is always unambiguous (a day never spans two cycles). A
+      // statement_cycle-scoped month cap reads the open cycle only, matching
+      // what the ledger itself resets with each statement for that category.
+      const periodTxns =
+        limit.period === 'day'
+          ? cardTransactions.filter((t) => t.date === today)
+          : scope === 'statement_cycle'
+            ? currentCycleTxns
+            : cardTransactions.filter((t) => getMonthKey(t.date) === getMonthKey(today));
       const { perTransaction } = computeDinersCycleReward(params, periodTxns);
       const earned = perTransaction.filter((p) => p.categoryKey === c.key).reduce((s, p) => s + p.earned, 0);
       results.push({
@@ -2454,10 +2736,11 @@ function computeDinersCapStatus(params, cardTransactions, today) {
   return results;
 }
 
-function computeHsbcLiveCapStatus(params, cardTransactions, today) {
+function computeHsbcLiveCapStatus(params, cardTransactions, currentCycleTxns, today) {
   if (params.bonusMonthlyCap == null) return [];
-  const monthTxns = cardTransactions.filter((t) => getMonthKey(t.date) === getMonthKey(today));
-  const { bonusEarned } = computeHsbcCycleReward(params, monthTxns);
+  const scope = params.bonusCapScope || 'calendar_month';
+  const periodTxns = scope === 'statement_cycle' ? currentCycleTxns : cardTransactions.filter((t) => getMonthKey(t.date) === getMonthKey(today));
+  const { bonusEarned } = computeHsbcCycleReward(params, periodTxns);
   return [{
     key: 'bonus',
     label: 'Bonus category cashback',
@@ -2489,19 +2772,21 @@ function computeSbiCapStatus(params, currentCycleTxns) {
   return results;
 }
 
-function computeHsbcPremierCapStatus(params, cardTransactions, today) {
+function computeHsbcPremierCapStatus(params, cardTransactions, currentCycleTxns, today) {
   const results = [];
+  const cappedScope = params.categoryCapScope || 'calendar_month';
+  const travelScope = params.travelBonusCapScope || 'calendar_month';
   if (params.categoryMonthlyCap != null) {
-    const monthSpend = cardTransactions
-      .filter((t) => getMonthKey(t.date) === getMonthKey(today) && t.category === 'capped_category')
-      .reduce((s, t) => s + t.amount, 0);
+    const periodTxns = cappedScope === 'statement_cycle' ? currentCycleTxns : cardTransactions.filter((t) => getMonthKey(t.date) === getMonthKey(today));
+    const monthSpend = periodTxns.filter((t) => t.category === 'capped_category').reduce((s, t) => s + t.amount, 0);
     results.push({
       key: 'capped_category', label: 'Capped-category spend', capAmount: params.categoryMonthlyCap, capPeriod: 'month',
       earned: monthSpend, remaining: Math.max(0, params.categoryMonthlyCap - monthSpend), unit: 'inr',
     });
   }
   if (params.travelBonusMonthlyCap != null) {
-    const monthTxns = cardTransactions.filter((t) => getMonthKey(t.date) === getMonthKey(today) && t.category === 'travel_bonus');
+    const periodTxns = travelScope === 'statement_cycle' ? currentCycleTxns : cardTransactions.filter((t) => getMonthKey(t.date) === getMonthKey(today));
+    const monthTxns = periodTxns.filter((t) => t.category === 'travel_bonus');
     const { totalReward } = computeHsbcPremierCycleReward(params, monthTxns);
     results.push({
       key: 'travel_bonus', label: 'Travel with Points', capAmount: params.travelBonusMonthlyCap, capPeriod: 'month',
@@ -2522,13 +2807,13 @@ export function computeCardCapStatus(card, cardTransactions, currentCycleTxns, t
   const params = resolveCardParams(card, today);
   switch (card?.rewardStrategy) {
     case 'hdfc_diners_slab_milestone':
-      return computeDinersCapStatus(params, cardTransactions, today);
+      return computeDinersCapStatus(params, cardTransactions, currentCycleTxns, today);
     case 'hsbc_tiered_cashback_aggregate':
-      return computeHsbcLiveCapStatus(params, cardTransactions, today);
+      return computeHsbcLiveCapStatus(params, cardTransactions, currentCycleTxns, today);
     case 'sbi_two_channel_cashback':
       return computeSbiCapStatus(params, currentCycleTxns);
     case 'hsbc_premier_flat_capped':
-      return computeHsbcPremierCapStatus(params, cardTransactions, today);
+      return computeHsbcPremierCapStatus(params, cardTransactions, currentCycleTxns, today);
     default:
       return [];
   }
@@ -2551,7 +2836,11 @@ export function computeCardCapStatus(card, cardTransactions, currentCycleTxns, t
 // cap still applies correctly to whatever's left) and the override values
 // are added on top, since the user is supplying a known real figure for
 // those, not asking the formula to guess.
-export function applyRewardOverrides(cycleReward, transactions, card, asOfDate) {
+// `ctx` (optional) is only used for the HSBC Live+ branch below, and only
+// when the caller wants its calendar-month bonus cap carried the same way
+// computeCardRewardLedger carries every other cycle's - see
+// computeDinersCycleReward's note on `ctx`.
+export function applyRewardOverrides(cycleReward, transactions, card, asOfDate, ctx) {
   const overrides = new Map(
     transactions.filter((t) => t.rewardOverride != null).map((t) => [t.id, t.rewardOverride]),
   );
@@ -2560,7 +2849,7 @@ export function applyRewardOverrides(cycleReward, transactions, card, asOfDate) 
   if (card?.rewardStrategy === 'hsbc_tiered_cashback_aggregate') {
     const params = resolveStrategyParamsForDate(card.strategyParamsHistory, asOfDate ?? todayISO());
     const nonOverridden = transactions.filter((t) => !overrides.has(t.id));
-    const { totalReward: recomputedTotal } = computeHsbcCycleReward(params, nonOverridden);
+    const { totalReward: recomputedTotal } = computeHsbcCycleReward(params, nonOverridden, ctx);
     const overrideTotal = [...overrides.values()].reduce((sum, v) => sum + v, 0);
     const perTransaction = cycleReward.perTransaction.map((p) => {
       const override = overrides.get(p.id);
@@ -2616,6 +2905,11 @@ const CARD_STATEMENT_ROUNDED = new Set(['hdfc_diners_slab_milestone']);
 // Most rewards land on a card-specific day around the statement; Diners'
 // grocery points are the exception: a calendar month's worth lands together
 // on the 1st of the next month, whichever statement they were spent in.
+/**
+ * @param {Card} card
+ * @param {CardTransaction[]} cardTxns
+ * @param {string} [today]
+ */
 export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
   const billingDay = card?.billingCycleDay ?? 1;
   const byCycle = new Map();
@@ -2630,10 +2924,28 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
   const lumps = [];
   let billCarry = 0;
   let total = 0;
-  let unit = 'inr';
+  // From the card's strategy, not the first cycle's result - a points card
+  // with no transactions yet read as "Total cashback" in rupees.
+  let unit = CARD_REWARD_STRATEGIES.find((s) => s.key === card?.rewardStrategy)?.unit || 'inr';
+  // Shared across every cycle below, in date order, so a calendar-month cap
+  // (Diners' grocery/utility/insurance/SmartBuy, HSBC Live+'s bonus tier,
+  // HSBC Premier's two caps) survives past whichever one cycle it started in
+  // - see computeDinersCycleReward's note on `ctx`. Exposed as `capUsage` so
+  // the Caps card and the entry-form preview read the exact same running
+  // totals the ledger itself used, instead of a separate recomputation that
+  // could (and did) disagree with it.
+  const ctx = {};
   for (const cycle of [...byCycle.values()].sort((a, b) => a.cycleStart.localeCompare(b.cycleStart))) {
-    const raw = computeCardCycleReward(card, cycle.txns, cycle.cycleStart);
-    const adjusted = applyRewardOverrides(raw, cycle.txns, card, cycle.cycleStart);
+    // For an HSBC Live+ cycle with overrides, applyRewardOverrides below is
+    // the one that mutates the shared ctx (from just the non-overridden
+    // transactions, which is the figure that actually counts) - so this
+    // first pass gets a disposable ctx instead of the real one, or the
+    // overridden transactions' amounts would land in the shared calendar-
+    // month bucket twice.
+    const hasHsbcOverrides =
+      card?.rewardStrategy === 'hsbc_tiered_cashback_aggregate' && cycle.txns.some((t) => t.rewardOverride != null);
+    const raw = computeCardCycleReward(card, cycle.txns, cycle.cycleStart, hasHsbcOverrides ? {} : ctx);
+    const adjusted = applyRewardOverrides(raw, cycle.txns, card, cycle.cycleStart, ctx);
     cycleRewards[cycle.cycleStart] = adjusted;
     // The statement total, carrying the sub-rupee difference forward if this
     // card's statements are rounded to whole rupees.
@@ -2660,7 +2972,9 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
         byMonth[getMonthKey(txn.date)] = (byMonth[getMonthKey(txn.date)] || 0) + p.earned;
       }
       for (const [monthKey, amount] of Object.entries(byMonth)) {
-        if (amount > 0) lumps.push({ date: firstOfNextMonth(monthKey), amount });
+        // Negative too: a grocery refund was taken off the statement lump but
+        // never added back here, so credited ran ahead of the total.
+        if (amount !== 0) lumps.push({ date: firstOfNextMonth(monthKey), amount });
         separate += amount;
       }
     }
@@ -2683,7 +2997,6 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
     for (const m of milestoneLumps) {
       lumps.push({ date: m.date, amount: m.amount });
       total += m.amount;
-      unit = unit || 'points';
     }
   }
 
@@ -2696,7 +3009,7 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
     .map(([date, amount]) => ({ date, amount }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  return { total, credited, pending, cycleRewards, cycleBills, unit };
+  return { total, credited, pending, cycleRewards, cycleBills, unit, capUsage: ctx };
 }
 
 export const CREDIT_CARDS_KEY = 'splitkhata_credit_cards';
@@ -2785,7 +3098,6 @@ export const LEDGER_CSV_COLUMNS = [
   'tripName',
   'category',
   'amount',
-  'currency',
   'localAmount',
   'payer',
   'splitType',
@@ -2795,7 +3107,9 @@ export const LEDGER_CSV_COLUMNS = [
   'paymentMethod',
   'note',
   'rewardPoints',
-  'isCashWithdrawal',
+  'isWithdrawal',
+  'isTripRollup',
+  'cardTransactionId',
   'id',
 ];
 
