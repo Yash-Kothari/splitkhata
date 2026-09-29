@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>%WEB_TITLE%</title>
+    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="expo-reset">
+      /* These styles make the body full-height */
+      html,
+      body {
+        height: 100%;
+      }
+      /* These styles disable body scrolling if you are using <ScrollView> */
+      body {
+        overflow: hidden;
+      }
+      /* These styles make the root element full-height */
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+    </style>
+    <!-- P2-1: installable web app - this project uses expo.web.output
+         "single" (an SPA shell, not Expo Router's separate static-rendering
+         mode), so app/+html.js is never read; @expo/cli's dev/export server
+         reads this file from public/index.html in place of its own built-in
+         default template instead (see webTemplate.js's
+         getTemplateIndexHtmlAsync) - the %LANG_ISO_CODE%/%WEB_TITLE%
+         placeholders and the reset styles above are kept identical to that
+         default so its usual string-replacement/script-and-css-injection
+         still works unchanged; everything below is this project's addition.
+         Relative paths (not "/manifest.json") so they resolve correctly
+         under this app's experiments.baseUrl ("/splitkhata") without
+         needing to know that path here. -->
+    <link rel="manifest" href="manifest.json" />
+    <!-- iOS Safari's "Add to Home Screen" reads this, not the manifest. -->
+    <link rel="apple-touch-icon" href="icon-192.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Splitkhata" />
+  </head>
+
+  <body>
+    <!-- Use static rendering with Expo Router to support running without JavaScript. -->
+    <noscript>
+      You need to enable JavaScript to run this app.
+    </noscript>
+    <!-- The root element for your Expo app. -->
+    <div id="root"></div>
+  </body>
+</html>

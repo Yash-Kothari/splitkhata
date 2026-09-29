@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, Modal, ScrollView, Switch, useWindowDimensions, Platform } from 'react-native';
+import { View, Text, TextInput, Pressable, Modal, ScrollView, Switch, useWindowDimensions, Platform, KeyboardAvoidingView } from 'react-native';
 import { notify, confirmAsync } from '../lib/dialogs';
 import { randomUUID } from 'expo-crypto';
 import { useColorScheme } from 'nativewind';
@@ -22,6 +22,9 @@ import {
   subscribeToHouseholdBudgets,
   saveHouseholdBudget,
   deleteHouseholdBudget,
+  subscribeToOverallBudget,
+  saveOverallBudget,
+  deleteOverallBudget,
   subscribeToPaymentReminderConfig,
   savePaymentReminderConfigToDb,
   subscribeToRecurringRules,
@@ -77,6 +80,7 @@ import {
   normalizeInstrumentType,
   toCsv,
   buildFullBackupJson,
+  getStoredColorScheme,
   setStoredColorScheme,
   LEDGER_CSV_COLUMNS,
   CARD_TRANSACTION_CSV_COLUMNS,
@@ -180,6 +184,20 @@ const TABS = [
   { key: 'security', label: '🔒 Security PIN' },
 ];
 
+// P1-11: 11 flat tabs crammed into one scrolling row read as cramped,
+// especially on phone width - grouped into a short list of sections
+// instead. Purely navigational: each group just names which of the TABS
+// above it contains, none of those tabs' own content/logic changes.
+const TAB_GROUPS = [
+  { key: 'ledger', label: 'Ledger', icon: '📒', description: 'Categories, budgets, recurring bills, reminders', tabs: ['categories', 'budgets', 'recurring', 'reminders'] },
+  { key: 'payments', label: 'Payments & Cards', icon: '💳', description: 'Currencies, payment methods, credit cards', tabs: ['currencies', 'paymentMethods'] },
+  { key: 'people', label: 'People', icon: '👥', description: 'Household members', tabs: ['members'] },
+  { key: 'data', label: 'Data & Backup', icon: '☁️', description: 'Sync status, export', tabs: ['database', 'export'] },
+  { key: 'general', label: 'General', icon: '⚙️', description: 'Appearance, security PIN', tabs: ['appearance', 'security'] },
+];
+const HOME_TAB = '__home__';
+const TAB_TO_GROUP = Object.fromEntries(TAB_GROUPS.flatMap((g) => g.tabs.map((t) => [t, g])));
+
 function Tag({ label, onRemove, onEdit, removable = true, labelWeight = 'font-body-medium' }) {
   return (
     <View className="flex-row items-center gap-1.5 rounded-xl border border-ink/15 bg-paper px-3 py-1.5 mr-1.5 mb-1.5 shadow-2xs">
@@ -213,12 +231,23 @@ const input = 'font-body text-sm text-ink border border-ink/15 rounded-xl px-3 p
 // 4 screens to thread half a dozen datasets down to it.
 export default function SettingsModal({ visible, onClose }) {
   const { height: windowHeight } = useWindowDimensions();
-  const [activeTab, setActiveTab] = useState('categories');
+  const [activeTab, setActiveTab] = useState(HOME_TAB);
+  // Land on the group picker every time Settings reopens, rather than
+  // wherever the last session's activeTab happened to be - a predictable
+  // entry point, same as the sub-tab bar reset it replaces.
+  useEffect(() => {
+    if (visible) setActiveTab(HOME_TAB);
+  }, [visible]);
   const { colorScheme, setColorScheme } = useColorScheme();
+  // NativeWind's own colorScheme only ever reports the *resolved* light/dark
+  // (never the literal string 'system'), so which button reads as "selected"
+  // is tracked from the stored preference instead.
+  const [selectedScheme, setSelectedScheme] = useState(() => getStoredColorScheme());
 
   function handleSetColorScheme(scheme) {
     setColorScheme(scheme);
     setStoredColorScheme(scheme);
+    setSelectedScheme(scheme);
   }
 
   const [householdEntries, setHouseholdEntries] = useState([]);
@@ -226,6 +255,7 @@ export default function SettingsModal({ visible, onClose }) {
   const [currencies, setCurrencies] = useState({ currencies: DEFAULT_CURRENCIES, rawDocs: [] });
   const [membersData, setMembersData] = useState({ members: DEFAULT_PERSONS, rawDocs: [] });
   const [householdBudgets, setHouseholdBudgetsState] = useState({});
+  const [overallBudget, setOverallBudgetState] = useState(null);
   const [reminderConfig, setReminderConfigState] = useState({ enabled: true, amountThreshold: DEFAULT_PAYMENT_REMINDER_THRESHOLD });
   const [recurringRules, setRecurringRules] = useState([]);
   const [pinConfig, setPinConfigState] = useState({ enabled: false, pinHash: null, legacyPin: null });
@@ -241,22 +271,23 @@ export default function SettingsModal({ visible, onClose }) {
   const dbMembers = membersData.members;
   const dbPaymentMethods = paymentMethodsData.methods;
 
-  useEffect(() => subscribeToExpenses('household', (data) => setHouseholdEntries(data), (err) => reportError(err, 'Could not load household entries')), []);
-  useEffect(() => subscribeToExpenses('travel', (data) => setTravelEntries(data), (err) => reportError(err, 'Could not load travel entries')), []);
-  useEffect(() => subscribeToCategories((data) => setCategories(data), (err) => reportError(err, 'Could not load categories')), []);
-  useEffect(() => subscribeToCurrencies((data) => setCurrencies(data), (err) => reportError(err, 'Could not load currencies')), []);
-  useEffect(() => subscribeToMembers((data) => setMembersData(data), (err) => reportError(err, 'Could not load members')), []);
-  useEffect(() => subscribeToHouseholdBudgets(setHouseholdBudgetsState), []);
-  useEffect(() => subscribeToPaymentReminderConfig(setReminderConfigState), []);
-  useEffect(() => subscribeToRecurringRules(setRecurringRules), []);
-  useEffect(() => subscribeToPinConfig(setPinConfigState), []);
-  useEffect(() => subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')), []);
-  useEffect(() => subscribeToTrips((data) => setDbTrips(data), (err) => reportError(err, 'Could not load trips')), []);
-  useEffect(() => subscribeToCashMovements((data) => setCashMovements(data), (err) => reportError(err, 'Could not load cash movements')), []);
-  useEffect(() => subscribeToCardTransactions((data) => setCardTransactions(data), (err) => reportError(err, 'Could not load card transactions')), []);
-  useEffect(() => subscribeToCardBillingCycles((data) => setCardBillingCycles(data), (err) => reportError(err, 'Could not load billing cycles')), []);
-  useEffect(() => subscribeToPaymentMethods((data) => setPaymentMethodsData(data), (err) => reportError(err, 'Could not load payment methods')), []);
-  useEffect(() => subscribeToGuests((data) => setGuests(data.rawDocs), (err) => reportError(err, 'Could not load guests')), []);
+  useEffect(() => (visible ? subscribeToExpenses('household', (data) => setHouseholdEntries(data), (err) => reportError(err, 'Could not load household entries')) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToExpenses('travel', (data) => setTravelEntries(data), (err) => reportError(err, 'Could not load travel entries')) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToCategories((data) => setCategories(data), (err) => reportError(err, 'Could not load categories')) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToCurrencies((data) => setCurrencies(data), (err) => reportError(err, 'Could not load currencies')) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToMembers((data) => setMembersData(data), (err) => reportError(err, 'Could not load members')) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToHouseholdBudgets(setHouseholdBudgetsState) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToOverallBudget(setOverallBudgetState) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToPaymentReminderConfig(setReminderConfigState) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToRecurringRules(setRecurringRules) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToPinConfig(setPinConfigState) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToTrips((data) => setDbTrips(data), (err) => reportError(err, 'Could not load trips')) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToCashMovements((data) => setCashMovements(data), (err) => reportError(err, 'Could not load cash movements')) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToCardTransactions((data) => setCardTransactions(data), (err) => reportError(err, 'Could not load card transactions')) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToCardBillingCycles((data) => setCardBillingCycles(data), (err) => reportError(err, 'Could not load billing cycles')) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToPaymentMethods((data) => setPaymentMethodsData(data), (err) => reportError(err, 'Could not load payment methods')) : undefined), [visible]);
+  useEffect(() => (visible ? subscribeToGuests((data) => setGuests(data.rawDocs), (err) => reportError(err, 'Could not load guests')) : undefined), [visible]);
 
   const cardNameById = useMemo(() => Object.fromEntries(creditCards.map((c) => [c.id, c.name || c.id])), [creditCards]);
 
@@ -287,7 +318,12 @@ export default function SettingsModal({ visible, onClose }) {
   }
 
   function handleExportTravelCsv() {
-    downloadTextFile('splitkhata-travel.csv', toCsv(travelEntries, LEDGER_CSV_COLUMNS), 'text/csv');
+    // tripName isn't written to new entries any more (P1-4 - tripId is the
+    // real join key) - resolve the current name live, same pattern the
+    // card-transactions export already uses for cardName.
+    const tripsById = Object.fromEntries(dbTrips.map((t) => [t.id, t]));
+    const rows = travelEntries.map((e) => (e.tripId ? { ...e, tripName: tripsById[e.tripId]?.name ?? e.tripName } : e));
+    downloadTextFile('splitkhata-travel.csv', toCsv(rows, LEDGER_CSV_COLUMNS), 'text/csv');
   }
 
   function handleExportCardsCsv() {
@@ -369,6 +405,8 @@ export default function SettingsModal({ visible, onClose }) {
   const [newBudgetAmount, setNewBudgetAmount] = useState('');
   const [budgetMessage, setBudgetMessage] = useState('');
   const [savingBudgetCat, setSavingBudgetCat] = useState(null);
+  const [overallBudgetDraft, setOverallBudgetDraft] = useState('');
+  const [focusedOverallBudget, setFocusedOverallBudget] = useState(false);
   // Which category's amount field (if any) the user is actively typing in -
   // budgetDrafts doubles as that live-typing buffer, so a live update (from
   // another device, or from this same session - e.g. a category rename
@@ -389,6 +427,27 @@ export default function SettingsModal({ visible, onClose }) {
       return next;
     });
   }, [householdBudgets, visible, focusedBudgetCategory]);
+
+  // Same "don't clobber an in-progress keystroke" rule as the per-category
+  // drafts above, for the single overall-budget field.
+  useEffect(() => {
+    if (!visible || focusedOverallBudget) return;
+    setOverallBudgetDraft(overallBudget != null ? String(overallBudget) : '');
+  }, [overallBudget, visible, focusedOverallBudget]);
+
+  async function persistOverallBudget() {
+    const amount = parseAmountInput(overallBudgetDraft);
+    setBudgetMessage('');
+    try {
+      if (amount > 0) {
+        await saveOverallBudget(amount);
+      } else if (overallBudget != null) {
+        await deleteOverallBudget();
+      }
+    } catch (err) {
+      setBudgetMessage(`Failed to save: ${err?.message || err}`);
+    }
+  }
 
   const householdBudgetStatus = useMemo(() => {
     const currentMonth = getMonthKey(todayISO());
@@ -845,6 +904,8 @@ export default function SettingsModal({ visible, onClose }) {
   const [newCardParams, setNewCardParams] = useState(() => ({ ...CARD_STRATEGY_DEFAULTS[CARD_REWARD_STRATEGIES[0].key] }));
   const [newCardBillingDay, setNewCardBillingDay] = useState('1');
   const [newCardDueOffset, setNewCardDueOffset] = useState('20');
+  const [newCardAnnualFee, setNewCardAnnualFee] = useState('');
+  const [newCardRenewalDate, setNewCardRenewalDate] = useState('');
   const [newCardAnnualAnchorMonth, setNewCardAnnualAnchorMonth] = useState('1');
   const [newCardAnnualStartingSpend, setNewCardAnnualStartingSpend] = useState('0');
   const [newCardQuarterlyStartingSpend, setNewCardQuarterlyStartingSpend] = useState('0');
@@ -903,6 +964,8 @@ export default function SettingsModal({ visible, onClose }) {
         strategyParamsHistory: [{ effectiveFrom: todayISO(), params: coercedParams }],
         billingCycleDay: Math.min(31, Math.max(1, Math.round(Number(newCardBillingDay)) || 1)),
         dueDateOffsetDays: Math.max(0, Math.round(Number(newCardDueOffset)) || 0),
+        annualFee: newCardAnnualFee ? Math.max(0, parseAmountInput(newCardAnnualFee) || 0) : null,
+        renewalDate: newCardRenewalDate || null,
         annualMilestoneAnchorMonth: Math.min(12, Math.max(1, Math.round(Number(newCardAnnualAnchorMonth)) || 1)),
         // Keyed by period (quarterlyStartingSpend / annualStartingSpend), not
         // one shared field per card - see getQuarterStartingSpend.
@@ -920,6 +983,8 @@ export default function SettingsModal({ visible, onClose }) {
       });
       setNewCardMethodName('');
       setNewCardQuarterlyStartingSpend('0');
+      setNewCardAnnualFee('');
+      setNewCardRenewalDate('');
       setCardMessage(`${trimmed} added.`);
       setShowAddCardForm(false);
     } catch (err) {
@@ -936,6 +1001,8 @@ export default function SettingsModal({ visible, onClose }) {
       owner: card.owner || '',
       billingCycleDay: String(card.billingCycleDay ?? 1),
       dueDateOffsetDays: String(card.dueDateOffsetDays ?? 20),
+      annualFee: card.annualFee ? String(card.annualFee) : '',
+      renewalDate: card.renewalDate || '',
       annualMilestoneAnchorMonth: String(card.annualMilestoneAnchorMonth ?? 1),
       annualMilestoneStartingSpend: String(
         getAnnualStartingSpend(card, getAnnualMilestoneWindow(card.annualMilestoneAnchorMonth ?? 1, todayISO()).periodStart),
@@ -964,6 +1031,8 @@ export default function SettingsModal({ visible, onClose }) {
       await updateCreditCardInDb(cardId, {
         billingCycleDay: Math.min(31, Math.max(1, Math.round(Number(editCardDrafts.billingCycleDay)) || 1)),
         dueDateOffsetDays: Math.max(0, Math.round(Number(editCardDrafts.dueDateOffsetDays)) || 0),
+        annualFee: editCardDrafts.annualFee ? Math.max(0, parseAmountInput(editCardDrafts.annualFee) || 0) : null,
+        renewalDate: editCardDrafts.renewalDate || null,
         annualMilestoneAnchorMonth: newAnchorMonth,
         annualStartingSpend,
         ...(CARD_STRATEGY_DEFAULTS[strategyKey]?.quarterlyMilestoneTarget ? { quarterlyStartingSpend } : {}),
@@ -1090,6 +1159,7 @@ export default function SettingsModal({ visible, onClose }) {
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <View className="flex-1 bg-black/40 items-center justify-center px-2.5">
         <View
           className="w-full rounded-2xl bg-paper-card border border-ink/15 overflow-hidden"
@@ -1111,27 +1181,51 @@ export default function SettingsModal({ visible, onClose }) {
           </Pressable>
         </View>
 
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          className="border-b border-ink/10 bg-paper/30"
-          contentContainerStyle={{ paddingHorizontal: 12, alignItems: 'center' }}
-          style={{ flexGrow: 0, flexShrink: 0, height: 44 }}
-        >
-          {TABS.map((t) => (
-            <Pressable
-              key={t.key}
-              onPress={() => setActiveTab(t.key)}
-              className={`px-3 py-3 border-b-2 ${activeTab === t.key ? 'border-ledger-green' : 'border-transparent'}`}
-            >
-              <Text className={`font-body-semibold text-xs ${activeTab === t.key ? 'text-ledger-green' : 'text-muted-text'}`}>
-                {t.label}
-              </Text>
+        {activeTab !== HOME_TAB && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            className="border-b border-ink/10 bg-paper/30"
+            contentContainerStyle={{ paddingHorizontal: 12, alignItems: 'center', gap: 4 }}
+            style={{ flexGrow: 0, flexShrink: 0, height: 44 }}
+            keyboardShouldPersistTaps="handled"
+          >
+            <Pressable onPress={() => setActiveTab(HOME_TAB)} className="px-2 py-3 mr-1">
+              <Text className="font-body-semibold text-xs text-muted-text">← All settings</Text>
             </Pressable>
-          ))}
-        </ScrollView>
+            {(TAB_TO_GROUP[activeTab]?.tabs || [activeTab]).map((key) => {
+              const t = TABS.find((tab) => tab.key === key);
+              if (!t) return null;
+              return (
+                <Pressable
+                  key={t.key}
+                  onPress={() => setActiveTab(t.key)}
+                  className={`px-3 py-3 border-b-2 ${activeTab === t.key ? 'border-ledger-green' : 'border-transparent'}`}
+                >
+                  <Text className={`font-body-semibold text-xs ${activeTab === t.key ? 'text-ledger-green' : 'text-muted-text'}`}>
+                    {t.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
 
-        <ScrollView className="flex-1" contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
+        <ScrollView className="flex-1" contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+          {activeTab === HOME_TAB && (
+            <View className="flex-row flex-wrap" style={{ gap: 10 }}>
+              {TAB_GROUPS.map((g) => (
+                <Pressable
+                  key={g.key}
+                  onPress={() => setActiveTab(g.tabs[0])}
+                  className="w-full sm:w-[calc(50%-5px)] rounded-xl border border-ink/15 bg-paper p-4"
+                >
+                  <Text className="font-display text-base text-ink mb-0.5">{g.icon} {g.label}</Text>
+                  <Text className="font-body text-xs text-muted-text">{g.description}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
           {activeTab === 'categories' && (
             <View>
               <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Categories Database</Text>
@@ -1206,6 +1300,36 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'budgets' && (
             <View>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Overall Monthly Budget</Text>
+              <Text className="font-body text-xs text-muted-text mb-3">
+                Optional - a single whole-month cap across every category, on top of (not instead of) the per-category limits below. Feeds This Month's Forecast on the Household tab.
+              </Text>
+              <View className="flex-row gap-2 mb-5">
+                <TextInput
+                  value={overallBudgetDraft}
+                  onChangeText={setOverallBudgetDraft}
+                  onFocus={() => setFocusedOverallBudget(true)}
+                  onBlur={() => {
+                    setFocusedOverallBudget(false);
+                    persistOverallBudget();
+                  }}
+                  keyboardType="decimal-pad"
+                  placeholder="e.g. 60000"
+                  className={`${input} flex-1 mb-0 h-11`}
+                />
+                {overallBudget != null && (
+                  <Pressable
+                    onPress={() => {
+                      setOverallBudgetDraft('');
+                      deleteOverallBudget().catch((err) => setBudgetMessage(`Failed to save: ${err?.message || err}`));
+                    }}
+                    className="h-11 px-4 rounded-xl border border-ink/15 items-center justify-center"
+                  >
+                    <Text className="font-body-semibold text-ink text-sm">Clear</Text>
+                  </Pressable>
+                )}
+              </View>
+
               <Text className="font-body-semibold text-sm text-ink mb-0.5">Household Category Budgets</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
                 Pick a category and set a monthly limit - it applies every month, not just this one. Nothing is flagged until you set one. Warns at 80% of the limit, alerts once it's exceeded.
@@ -1732,6 +1856,22 @@ export default function SettingsModal({ visible, onClose }) {
                       </View>
                     </View>
 
+                    <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Annual fee (optional)</Text>
+                    <Text className="font-body text-2xs text-muted-text mb-2">
+                      Leave blank if this card has no fee, or you don't want to track it - powers the fee-vs-rewards view and
+                      renewal reminders.
+                    </Text>
+                    <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+                      <View className="w-full sm:w-[calc(50%-6px)]">
+                        <Text className={label}>Fee (₹)</Text>
+                        <TextInput value={newCardAnnualFee} onChangeText={setNewCardAnnualFee} keyboardType="decimal-pad" placeholder="e.g. 12500" className={input} />
+                      </View>
+                      <View className="w-full sm:w-[calc(50%-6px)]">
+                        <Text className={label}>Renewal date</Text>
+                        <DateField value={newCardRenewalDate} onChange={setNewCardRenewalDate} className={input} />
+                      </View>
+                    </View>
+
                     <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Milestone tracking</Text>
                     <Text className="font-body text-2xs text-muted-text mb-2">
                       The annual milestone (fee waiver / bonus) runs on the card's own 12-month cycle from the month below, not
@@ -1820,6 +1960,16 @@ export default function SettingsModal({ visible, onClose }) {
                             </View>
                           </View>
                           <View className="flex-row flex-wrap mt-3" style={{ gap: 8 }}>
+                            <View className="w-full sm:w-[calc(50%-4px)]">
+                              <Text className={label}>Annual fee (₹, optional)</Text>
+                              <TextInput value={editCardDrafts.annualFee} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, annualFee: v }))} keyboardType="decimal-pad" placeholder="e.g. 12500" className={input} />
+                            </View>
+                            <View className="w-full sm:w-[calc(50%-4px)]">
+                              <Text className={label}>Renewal date (optional)</Text>
+                              <DateField value={editCardDrafts.renewalDate} onChange={(v) => setEditCardDrafts((p) => ({ ...p, renewalDate: v }))} className={input} />
+                            </View>
+                          </View>
+                          <View className="flex-row flex-wrap mt-3" style={{ gap: 8 }}>
                             <View className="w-full sm:w-[calc(33.333%-5.333px)]">
                               <PickerField label="Annual milestone from" value={editCardDrafts.annualMilestoneAnchorMonth} options={MONTH_OPTIONS} onChange={(v) => setEditCardDrafts((p) => ({ ...p, annualMilestoneAnchorMonth: v }))} />
                             </View>
@@ -1857,6 +2007,13 @@ export default function SettingsModal({ visible, onClose }) {
                               <View className="rounded-md border border-ink/10 bg-paper px-2 py-0.5"><Text className="font-body-medium text-2xs text-muted-text">{card.owner}</Text></View>
                               <View className="rounded-md border border-ink/10 bg-paper px-2 py-0.5"><Text className="font-body-medium text-2xs text-muted-text">{strategyLabel}</Text></View>
                               <View className="rounded-md border border-ink/10 bg-paper px-2 py-0.5"><Text className="font-body-medium text-2xs text-muted-text">Billing day {card.billingCycleDay}</Text></View>
+                              {card.annualFee ? (
+                                <View className="rounded-md border border-ink/10 bg-paper px-2 py-0.5">
+                                  <Text className="font-body-medium text-2xs text-muted-text">
+                                    {formatCurrency(card.annualFee)}/yr{card.renewalDate ? ` · renews ${card.renewalDate}` : ''}
+                                  </Text>
+                                </View>
+                              ) : null}
                             </View>
                           </View>
                           <View className="flex-row items-center gap-1 shrink-0">
@@ -2110,15 +2267,21 @@ export default function SettingsModal({ visible, onClose }) {
               <View className="flex-row gap-2">
                 <Pressable
                   onPress={() => handleSetColorScheme('light')}
-                  className={`flex-1 min-h-9 rounded-lg items-center justify-center border ${colorScheme === 'light' ? 'bg-ledger-green border-ledger-green' : 'border-ink/15 bg-paper'}`}
+                  className={`flex-1 min-h-9 rounded-lg items-center justify-center border ${selectedScheme === 'light' ? 'bg-ledger-green border-ledger-green' : 'border-ink/15 bg-paper'}`}
                 >
-                  <Text className={`font-body-semibold text-xs ${colorScheme === 'light' ? 'text-white' : 'text-ink'}`}>☀️ Light</Text>
+                  <Text className={`font-body-semibold text-xs ${selectedScheme === 'light' ? 'text-white' : 'text-ink'}`}>☀️ Light</Text>
                 </Pressable>
                 <Pressable
                   onPress={() => handleSetColorScheme('dark')}
-                  className={`flex-1 min-h-9 rounded-lg items-center justify-center border ${colorScheme === 'dark' ? 'bg-ledger-green border-ledger-green' : 'border-ink/15 bg-paper'}`}
+                  className={`flex-1 min-h-9 rounded-lg items-center justify-center border ${selectedScheme === 'dark' ? 'bg-ledger-green border-ledger-green' : 'border-ink/15 bg-paper'}`}
                 >
-                  <Text className={`font-body-semibold text-xs ${colorScheme === 'dark' ? 'text-white' : 'text-ink'}`}>🌙 Dark</Text>
+                  <Text className={`font-body-semibold text-xs ${selectedScheme === 'dark' ? 'text-white' : 'text-ink'}`}>🌙 Dark</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => handleSetColorScheme('system')}
+                  className={`flex-1 min-h-9 rounded-lg items-center justify-center border ${selectedScheme === 'system' ? 'bg-ledger-green border-ledger-green' : 'border-ink/15 bg-paper'}`}
+                >
+                  <Text className={`font-body-semibold text-xs ${selectedScheme === 'system' ? 'text-white' : 'text-ink'}`}>💻 System</Text>
                 </Pressable>
               </View>
             </View>
@@ -2203,6 +2366,7 @@ export default function SettingsModal({ visible, onClose }) {
         </View>
         </View>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }

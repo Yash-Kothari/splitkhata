@@ -46,6 +46,7 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
 
   const billConfirmed = cycleRecord?.billConfirmedAt != null;
   const pointsConfirmed = cycleRecord?.pointsConfirmedAt != null;
+  const paid = cycleRecord?.paidAt != null;
   const amountMismatch = billConfirmed && cycleRecord.actualBillAmount != null
     ? Math.round((cycleRecord.actualBillAmount - expectedBill) * 100) / 100
     : null;
@@ -60,6 +61,17 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
     try {
       await saveCardBillingCycle(card.id, cycle.cycleStart, { actualBillAmount: amount, billConfirmedAt: new Date().toISOString() });
       setBillDraft('');
+    } catch (err) {
+      onSaveError?.(err);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function togglePaid() {
+    setSaving(true);
+    try {
+      await saveCardBillingCycle(card.id, cycle.cycleStart, { paidAt: paid ? null : new Date().toISOString() });
     } catch (err) {
       onSaveError?.(err);
     } finally {
@@ -117,6 +129,11 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
               </Pressable>
             </View>
           )}
+          <Pressable onPress={togglePaid} disabled={saving} className="flex-row items-center gap-1 mt-1.5">
+            <Text className={`text-xs ${paid ? 'text-ledger-green' : 'text-muted-text underline'}`}>
+              {paid ? `✓ Paid ${formatDate(cycleRecord.paidAt.slice(0, 10))}` : 'Mark as paid'}
+            </Text>
+          </Pressable>
         </View>
         {!isStatementOnlyCard(card) && (
         <View className="flex-1">

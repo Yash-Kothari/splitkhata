@@ -19,7 +19,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: mobile/package-lock.json
+          cache-dependency-path: |
+            mobile/package-lock.json
+            package-lock.json
 
       - name: Install mobile dependencies
         run: npm ci
@@ -36,3 +38,9 @@ jobs:
       - name: Test mobile app
         run: npm test
         working-directory: mobile
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Test Firestore rules
+        run: npm run test:rules

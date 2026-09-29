@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
 import { notify } from '../../lib/dialogs';
 import {
   subscribeToExpenses,
   subscribeToMembers,
   subscribeToPaymentReminderConfig,
+  subscribeToCreditCards,
   addExpense,
   deleteExpense,
   deleteCardTransaction,
   clearTripRollupPointer,
 } from '../../lib/firebase';
 import { useUndoDelete } from '../../lib/useUndoDelete';
+import { usePaymentInstruments } from '../../lib/usePaymentInstruments';
 import { DEFAULT_PERSONS, computeBalance, todayISO, formatCurrency, parseAmountInput, isValidISODate } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import AppHeader from '../../components/AppHeader';
@@ -95,7 +97,7 @@ function RewardPointsCardBody({ entries, travelEntries, dbMembers, onSaveError }
         note: note.trim(),
         date,
         ledger: 'household',
-        tripName: '',
+        tripId: null,
         rewardPoints: parsed,
       });
       setSettling(false);
@@ -224,6 +226,8 @@ export default function Payments() {
   const [travelEntries, setTravelEntries] = useState([]);
   const [members, setMembers] = useState(DEFAULT_PERSONS);
   const [reminderConfig, setReminderConfig] = useState({ enabled: true, amountThreshold: 2000 });
+  const [creditCards, setCreditCards] = useState([]);
+  const instruments = usePaymentInstruments(creditCards);
 
   // Mirrors household.js/travel.js - deleting a linked entry also deletes
   // the card transaction it created (see AddEntryForm's handleSubmit).
@@ -257,6 +261,7 @@ export default function Payments() {
     [],
   );
   useEffect(() => subscribeToPaymentReminderConfig(setReminderConfig), []);
+  useEffect(() => subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')), []);
 
   const paymentEntries = useMemo(
     () => (entries || []).filter((e) => e.splitType === 'settlement' || e.isTripRollup),
@@ -266,6 +271,7 @@ export default function Payments() {
   return (
     <View className="flex-1 bg-paper">
       <AppHeader badge="💰 Payments" />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={{ paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
         {/* BalanceStrip and RewardPointsCard both have their own internal
             sm:-breakpoint layouts (settlement forms meant to spread across
@@ -277,7 +283,7 @@ export default function Payments() {
             BalanceStrip's placement on the Travel tab. */}
         <View className="px-4">
           {entries && <PaymentReminderBanner entries={entries} dbMembers={members} config={reminderConfig} />}
-          {entries && <BalanceStrip entries={entries} ledger="household" dbMembers={members} />}
+          {entries && <BalanceStrip entries={entries} ledger="household" dbMembers={members} instruments={instruments} />}
           {entries && <RewardPointsCard entries={entries} travelEntries={travelEntries} dbMembers={members} />}
         </View>
 
@@ -291,6 +297,7 @@ export default function Payments() {
           onDelete={handleDelete}
         />
       </ScrollView>
+      </KeyboardAvoidingView>
 
       <UndoToast
         pendingDeleteList={pendingDeleteList}

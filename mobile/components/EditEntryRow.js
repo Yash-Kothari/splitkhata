@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable } from 'react-native';
+import { View, Text, TextInput, Pressable, Keyboard } from 'react-native';
 import { notify } from '../lib/dialogs';
 import PickerField from './PickerField';
 import DateField from './DateField';
@@ -20,6 +20,7 @@ import {
   parseAmountInput,
   isValidISODate,
   isCashPaid,
+  parseTagsInput,
 } from '../lib/utils';
 
 const SPLIT_TYPE_OPTIONS = [
@@ -90,6 +91,7 @@ export default function EditEntryRow({
   const selectedInstrument = instruments.find((i) => i.label === paymentMethod) || null;
   const [date, setDate] = useState(entry.date);
   const [note, setNote] = useState(entry.note || '');
+  const [tagsText, setTagsText] = useState((entry.tags || []).join(', '));
   const [saving, setSaving] = useState(false);
   const [slowSave, setSlowSave] = useState(false);
 
@@ -219,6 +221,7 @@ export default function EditEntryRow({
           splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
           splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
           note: note.trim(),
+          tags: parseTagsInput(tagsText),
           date,
           paymentMethod: paymentMethod || null,
           paymentInstrumentId: selectedInstrument?.id || null,
@@ -276,6 +279,8 @@ export default function EditEntryRow({
             <TextInput
               value={note}
               onChangeText={setNote}
+              returnKeyType="done"
+              onSubmitEditing={() => Keyboard.dismiss()}
               className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
             />
           </View>
@@ -426,6 +431,20 @@ export default function EditEntryRow({
             value={note}
             onChangeText={setNote}
             placeholder="What was this for?"
+            returnKeyType="done"
+            onSubmitEditing={() => Keyboard.dismiss()}
+            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+          />
+        </View>
+
+        <View className="w-full">
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Tags (optional)</Text>
+          <TextInput
+            value={tagsText}
+            onChangeText={setTagsText}
+            placeholder="vacation, reimbursable"
+            returnKeyType="done"
+            onSubmitEditing={() => Keyboard.dismiss()}
             className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
           />
         </View>

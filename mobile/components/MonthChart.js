@@ -6,7 +6,6 @@ import Card from './Card';
 import { getLast6MonthsData, formatCurrency } from '../lib/utils';
 import { themeColor } from '../lib/theme';
 
-const BAR_COLOR = themeColor('ledgerGreen', false);
 const BAR_COLOR_DIM_OPACITY = 0.56;
 const CHART_HEIGHT = 180;
 const AXIS_LEFT = 34;
@@ -61,6 +60,10 @@ export default function MonthChart({ entries, ledger }) {
   const isDark = colorScheme === 'dark';
   const axisTextColor = themeColor('mutedText', isDark);
   const baselineColor = themeColor('ink', isDark);
+  // Was a module-level constant frozen to light mode (themeColor('ledgerGreen',
+  // false)) - every bar rendered the light-mode green even in dark mode,
+  // reading as washed-out against the dark card background (P1-13).
+  const barColor = themeColor('ledgerGreen', isDark);
   const data = useMemo(() => getLast6MonthsData(entries, ledger), [entries, ledger]);
   const [width, setWidth] = useState(0);
   const [selected, setSelected] = useState(null);
@@ -140,7 +143,7 @@ export default function MonthChart({ entries, ledger }) {
                     <Path
                       key={d.month}
                       d={roundedTopBarPath(x, y, barWidth, Math.max(barH, d.total > 0 ? 1 : 0), BAR_RADIUS)}
-                      fill={BAR_COLOR}
+                      fill={barColor}
                       fillOpacity={isLatest ? 1 : BAR_COLOR_DIM_OPACITY}
                       onPress={() => setSelected(selected === i ? null : i)}
                     />

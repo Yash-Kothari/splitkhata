@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, ScrollView, Platform, useWindowDimensions } from 'react-native';
+import { View, ScrollView, Platform, useWindowDimensions, KeyboardAvoidingView } from 'react-native';
 import {
   subscribeToExpenses,
   subscribeToCategories,
   subscribeToMembers,
   subscribeToHouseholdBudgets,
+  subscribeToOverallBudget,
   subscribeToPaymentReminderConfig,
   subscribeToCreditCards,
   subscribeToCardTransactions,
@@ -24,9 +25,11 @@ import EntryList from '../../components/EntryList';
 import BudgetAlerts from '../../components/BudgetAlerts';
 import MonthForecast from '../../components/MonthForecast';
 import PaymentReminderBanner from '../../components/PaymentReminderBanner';
+import BalanceStrip from '../../components/BalanceStrip';
 import AppHeader from '../../components/AppHeader';
 import MonthChart from '../../components/MonthChart';
 import CategoryChart from '../../components/CategoryChart';
+import PersonSpendCard from '../../components/PersonSpendCard';
 import UndoToast from '../../components/UndoToast';
 
 export default function Household() {
@@ -36,6 +39,7 @@ export default function Household() {
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   const [members, setMembers] = useState(DEFAULT_PERSONS);
   const [budgets, setBudgets] = useState({});
+  const [overallBudget, setOverallBudget] = useState(null);
   const [reminderConfig, setReminderConfig] = useState({ enabled: true, amountThreshold: 2000 });
   const [creditCards, setCreditCards] = useState([]);
   const [cardTransactions, setCardTransactions] = useState([]);
@@ -83,6 +87,7 @@ export default function Household() {
     [],
   );
   useEffect(() => subscribeToHouseholdBudgets(setBudgets), []);
+  useEffect(() => subscribeToOverallBudget(setOverallBudget), []);
   useEffect(() => subscribeToPaymentReminderConfig(setReminderConfig), []);
   useEffect(() => subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')), []);
   useEffect(() => subscribeToCardTransactions(setCardTransactions, (err) => reportError(err, 'Could not load card transactions')), []);
@@ -90,9 +95,11 @@ export default function Household() {
 
   const availableMonths = useMemo(() => getAvailableMonths(entries || []), [entries]);
 
+  const [highlightEntryId, setHighlightEntryId] = useState(null);
   useEffect(() => {
     if (pendingJump?.ledger === 'household') {
       setSelectedMonth(pendingJump.monthKey || getMonthKey(todayISO()));
+      setHighlightEntryId(pendingJump.entryId || null);
       setPendingJump(null);
     }
   }, [pendingJump, setPendingJump]);
@@ -106,7 +113,20 @@ export default function Household() {
   return (
     <View className="flex-1 bg-paper">
       <AppHeader badge="🏠 Household Ledger" />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={{ paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+        {/* Balance + reminder live full-width above the two-column shell,
+            same stacking as payments.js - BalanceStrip's settle form breaks
+            when squeezed into the narrow lg:w-96 rail below (its own
+            sm:-breakpoint layout keys off viewport width, not the
+            container's actual width). Previously this balance only showed
+            on the Payments tab; P1-7 surfaces it here too so you don't have
+            to switch tabs to see who owes whom. */}
+        <View className="px-4">
+          {entries && <PaymentReminderBanner entries={entries} dbMembers={members} config={reminderConfig} />}
+          {entries && <BalanceStrip entries={entries} ledger="household" dbMembers={members} instruments={instruments} />}
+        </View>
+
         {/* Two-column shell above 1024px: the ledger (add entry + passbook)
             on the left, a context rail (alerts, forecast, charts) on the
             right - order-* keeps the rail's time-sensitive alerts appearing
@@ -139,6 +159,7 @@ export default function Household() {
               members={members}
               instruments={instruments}
               creditCards={creditCards}
+              highlightId={highlightEntryId}
               pendingDeletes={pendingDeletes}
               onDelete={handleDelete}
               excludePaymentEntries
@@ -147,8 +168,9 @@ export default function Household() {
 
           <View className="order-1 lg:order-2 w-full lg:w-96 px-4" style={{ gap: 16 }}>
             {entries && <BudgetAlerts entries={entries} ledger="household" month={getMonthKey(todayISO())} budgets={budgets} />}
-            {entries && <MonthForecast entries={entries} recurringRules={recurringRules} budgets={budgets} />}
-            {entries && <PaymentReminderBanner entries={entries} dbMembers={members} config={reminderConfig} />}
+            {entries && (
+              <MonthForecast entries={entries} recurringRules={recurringRules} budgets={budgets} overallBudget={overallBudget} />
+            )}
             {entries && <MonthChart entries={entries} ledger="household" />}
             {entries && (
               <CategoryChart
@@ -160,9 +182,13 @@ export default function Household() {
                 budgets={budgets}
               />
             )}
+            {entries && (
+              <PersonSpendCard entries={entries} members={members} deviceMemberName={memberForUser(user, members)} />
+            )}
           </View>
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
 
       <UndoToast
         pendingDeleteList={pendingDeleteList}

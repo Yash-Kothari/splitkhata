@@ -13,7 +13,23 @@
 // hit an error - matches Sentry's own recommended starting point.
 const dsn = process.env.EXPO_PUBLIC_SENTRY_DSN;
 
-export const SENTRY_ENABLED = Boolean(dsn);
+// __DEV__ (the same signal lib/firebase.js's IS_DEV_EMULATOR already keys
+// off) is true for anything running off the Metro dev server - `expo
+// start`/`--web`, Expo Go, a dev-client build - and false only for a real
+// release build (an EAS build, or `expo export`'s static bundle). Errors
+// from local/dev testing never leave the machine even when a real DSN is
+// configured in .env for convenience; only a genuine production build
+// reports to Sentry. Without this, every error triggered while testing
+// locally - including deliberately, to verify an error path - landed in the
+// same Sentry project as real user-facing crashes, indistinguishable from
+// them. `typeof` here, not a bare `__DEV__` reference - unlike firebase.js
+// (never reached from the test suite), this module IS imported transitively
+// by the Node test suite (errorReporting.test.mjs -> errorReporting.js ->
+// here), and plain Node has no __DEV__ global at all - a bare reference
+// would throw as soon as `dsn` is ever truthy there, rather than just being
+// (accidentally, fragile-ly) short-circuited away by an unset test-env DSN.
+const isDevBuild = typeof __DEV__ !== 'undefined' && __DEV__;
+export const SENTRY_ENABLED = Boolean(dsn) && !isDevBuild;
 
 // Dynamic import, not a static one - this file (via lib/errorReporting.js)
 // is also reachable from the plain-Node unit tests, where a static `import

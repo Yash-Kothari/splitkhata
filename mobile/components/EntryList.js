@@ -1,10 +1,14 @@
 import { useColorScheme } from 'nativewind';
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
 import Svg, { Line } from 'react-native-svg';
 import EditEntryRow from './EditEntryRow';
+import EditInstallmentGroupRow from './EditInstallmentGroupRow';
 import PickerField from './PickerField';
 import { cardShadow } from './Card';
+import { notify, confirmAsync } from '../lib/dialogs';
+import { deleteInstallmentGroup, updateExpense } from '../lib/firebase';
+import { reportError } from '../lib/errorReporting';
 import { formatCurrency, formatMonthLabel, PERSON_COLORS, isCashPaid } from '../lib/utils';
 import { themeRgba, themeColor } from '../lib/theme';
 
@@ -44,6 +48,7 @@ export default function EntryList({
   onDelete,
   onSaveError,
   excludePaymentEntries = false,
+  highlightId = null,
 }) {
   const isTravel = ledger === 'travel';
   const [searchTerm, setSearchTerm] = useState('');
@@ -52,6 +57,51 @@ export default function EntryList({
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
   const [editingId, setEditingId] = useState(null);
+  const [editingGroupId, setEditingGroupId] = useState(null);
+  const [deletingGroupId, setDeletingGroupId] = useState(null);
+
+  async function handleTogglePin(entry) {
+    try {
+      await updateExpense(entry.id, { pinned: !entry.pinned });
+    } catch (err) {
+      reportError(err, 'Could not update pin');
+      notify('Could not update pin', err?.message || String(err));
+    }
+  }
+
+  async function handleDeleteGroup(entry) {
+    const count = entry.installmentCount || 0;
+    const ok = await confirmAsync({
+      title: `Delete all ${count} installments?`,
+      message: `${entry.note ? `"${entry.note.replace(/\s*\(\d+\/\d+\)\s*$/, '')}"` : entry.category} - every installment in this set is deleted, not just this one. This can't be undone.`,
+      confirmLabel: 'Delete all',
+    });
+    if (!ok) return;
+    setDeletingGroupId(entry.installmentGroupId);
+    try {
+      await deleteInstallmentGroup(entry.installmentGroupId);
+    } catch (err) {
+      reportError(err, 'Could not delete the installment set');
+      notify('Could not delete', err?.message || String(err));
+    } finally {
+      setDeletingGroupId(null);
+    }
+  }
+
+  // GlobalSearch's "jump to entry" (P1-12) - a fresh highlightId floats that
+  // entry to the top of the list (real scroll-into-view isn't feasible here;
+  // this component is plain map()'d inside the screen's own ScrollView, not
+  // a FlatList with its own ref - see EntryList's own header comment) and
+  // fades after a few seconds. Clearing any in-progress local search term at
+  // the same time so a stale query can't hide the very entry being jumped to.
+  const [activeHighlightId, setActiveHighlightId] = useState(null);
+  useEffect(() => {
+    if (!highlightId) return undefined;
+    setSearchTerm('');
+    setActiveHighlightId(highlightId);
+    const timer = setTimeout(() => setActiveHighlightId(null), 4000);
+    return () => clearTimeout(timer);
+  }, [highlightId]);
 
   const filtered = useMemo(() => {
     const list = entries || [];
@@ -66,14 +116,20 @@ export default function EntryList({
         const matchCat = e.category?.toLowerCase().includes(term);
         const matchPayer = e.payer?.toLowerCase().includes(term);
         const matchAmount = String(e.amount).includes(term) || String(e.localAmount ?? '').includes(term);
-        return matchNote || matchCat || matchPayer || matchAmount;
+        const matchTags = (e.tags || []).some((t) => t.toLowerCase().includes(term));
+        return matchNote || matchCat || matchPayer || matchAmount || matchTags;
       })
       .sort((a, b) => {
+        if (activeHighlightId) {
+          if (a.id === activeHighlightId) return -1;
+          if (b.id === activeHighlightId) return 1;
+        }
+        if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
         const dateCmp = b.date.localeCompare(a.date);
         if (dateCmp !== 0) return dateCmp;
         return (b.createdAt ?? '').localeCompare(a.createdAt ?? '');
       });
-  }, [entries, searchTerm, selectedMonth, isTravel, pendingDeletes, excludePaymentEntries]);
+  }, [entries, searchTerm, selectedMonth, isTravel, pendingDeletes, excludePaymentEntries, activeHighlightId]);
 
   const loading = entries === null;
 
@@ -156,14 +212,35 @@ export default function EntryList({
             );
           }
 
+          if (editingGroupId === item.installmentGroupId) {
+            return (
+              <Fragment key={item.id}>
+                {divider}
+                <EditInstallmentGroupRow
+                  groupId={item.installmentGroupId}
+                  sampleEntry={item}
+                  categories={categories}
+                  members={members}
+                  count={item.installmentCount}
+                  onCancel={() => setEditingGroupId(null)}
+                  onSaved={() => setEditingGroupId(null)}
+                  onSaveError={(err) => {
+                    onSaveError?.(err);
+                  }}
+                />
+              </Fragment>
+            );
+          }
+
           const isSettlement = item.splitType === 'settlement';
           const hasPoints = (isTravel || item.isTripRollup || isSettlement) && Number(item.rewardPoints || 0) !== 0;
           const isCashPool = isTravel && !item.split && isCashPaid(item);
+          const isHighlighted = item.id === activeHighlightId;
 
           return (
             <Fragment key={item.id}>
               {divider}
-              <View className="relative pl-5 pr-2 py-3.5">
+              <View className={`relative pl-5 pr-2 py-3.5 ${isHighlighted ? 'bg-mustard/20' : ''}`}>
                 {/* RN's borderStyle:'dashed' logs "Unsupported dashed / dotted
                     border style" and silently renders solid on iOS when only
                     one side has width (confirmed via a real device/simulator
@@ -258,9 +335,44 @@ export default function EntryList({
                         {item.note}
                       </Text>
                     ) : null}
+
+                    {item.tags?.length > 0 && (
+                      <View className="flex-row flex-wrap gap-1 mt-1.5">
+                        {item.tags.map((tag) => (
+                          <Text key={tag} className="font-body-medium text-2xs text-muted-text bg-ink/5 rounded px-1.5 py-0.5">
+                            #{tag}
+                          </Text>
+                        ))}
+                      </View>
+                    )}
+
+                    {item.installmentGroupId && (
+                      <View className="flex-row items-center flex-wrap gap-2 mt-1.5">
+                        <Text className="font-body-medium text-2xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">
+                          Installment {item.installmentIndex} of {item.installmentCount}
+                        </Text>
+                        <Pressable onPress={() => setEditingGroupId(item.installmentGroupId)} hitSlop={4}>
+                          <Text className="font-body text-2xs text-muted-text underline">Edit set</Text>
+                        </Pressable>
+                        <Pressable onPress={() => handleDeleteGroup(item)} disabled={deletingGroupId === item.installmentGroupId} hitSlop={4}>
+                          <Text className="font-body text-2xs text-stamp-red/80 underline">
+                            {deletingGroupId === item.installmentGroupId ? 'Deleting set...' : 'Delete set'}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    )}
                   </View>
 
                   <View className="flex-row items-center gap-1 shrink-0">
+                    {!isSettlement && (
+                      <Pressable
+                        onPress={() => handleTogglePin(item)}
+                        hitSlop={8}
+                        className="min-w-8 min-h-8 items-center justify-center rounded-lg"
+                      >
+                        <Text className={`font-body-semibold text-xs ${item.pinned ? 'text-mustard' : 'text-muted-text/50'}`}>📌</Text>
+                      </Pressable>
+                    )}
                     <Pressable
                       onPress={() => setEditingId(item.id)}
                       hitSlop={8}

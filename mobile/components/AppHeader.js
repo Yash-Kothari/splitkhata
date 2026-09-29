@@ -5,8 +5,8 @@ import { useRouter } from 'expo-router';
 import { signOutUser, subscribeToPinConfig } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useLock } from '../lib/LockContext';
+import { useSettingsModal } from '../lib/SettingsModalContext';
 import { reportError } from '../lib/errorReporting';
-import SettingsModal from './SettingsModal';
 import GlobalSearch from './GlobalSearch';
 import TopNavBar from './TopNavBar';
 import { VERSION_LABEL, BUILD_SHA } from '../lib/version';
@@ -16,19 +16,13 @@ import { VERSION_LABEL, BUILD_SHA } from '../lib/version';
 // 🔎 search and ⚙️ settings buttons and the account menu (User pill ->
 // Lock app / Sign out). Shared across all four tabs so switching tabs
 // doesn't jar - web shows the same header shape on every ledger, just with
-// a different badge.
-//
-// showSettings/onShowSettingsChange are optional - most screens let this
-// component own that state itself, but cards.js also needs to open
-// Settings from its own empty-state CTA, so it can pass controlled state in
-// instead of getting two separate SettingsModal instances.
-export default function AppHeader({ badge, showSettings: controlledShowSettings, onShowSettingsChange }) {
+// a different badge. Settings itself lives once at the app root, not here -
+// see SettingsModalContext for why a per-AppHeader instance was a problem.
+export default function AppHeader({ badge }) {
   const { user } = useAuth();
   const { setIsLocked } = useLock();
   const router = useRouter();
-  const [uncontrolledShowSettings, setUncontrolledShowSettings] = useState(false);
-  const showSettings = controlledShowSettings !== undefined ? controlledShowSettings : uncontrolledShowSettings;
-  const setShowSettings = onShowSettingsChange || setUncontrolledShowSettings;
+  const { open: openSettings } = useSettingsModal();
   const [showSearch, setShowSearch] = useState(false);
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [accountMenuAnchor, setAccountMenuAnchor] = useState(null);
@@ -80,7 +74,7 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
           <Text className="font-body-semibold text-xs text-ink">🔎</Text>
         </Pressable>
         <Pressable
-          onPress={() => setShowSettings(true)}
+          onPress={openSettings}
           hitSlop={8}
           className="min-w-9 min-h-9 flex-row items-center justify-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-xl border border-ink/15 bg-paper shrink-0 shadow-2xs"
         >
@@ -156,7 +150,6 @@ export default function AppHeader({ badge, showSettings: controlledShowSettings,
         </Pressable>
       </Modal>
 
-      <SettingsModal visible={showSettings} onClose={() => setShowSettings(false)} />
       <GlobalSearch visible={showSearch} onClose={() => setShowSearch(false)} />
     </SafeAreaView>
   );

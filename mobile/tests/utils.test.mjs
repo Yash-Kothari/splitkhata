@@ -16,6 +16,8 @@ import {
   DEFAULT_PERSONS as PERSONS,
   computeBalance,
   computeMemberTotals,
+  computeMemberTotalsForPeriod,
+  getAvailableYears,
   computeSettlements,
   excludeCashSpend,
   computeTripTotalSpend,
@@ -46,6 +48,11 @@ import {
   computeMonthForecast,
   getPaymentReminderConfig,
   setPaymentReminderConfig,
+  getStoredColorScheme,
+  setStoredColorScheme,
+  hydrateMemoryStorage,
+  setNativeStorageWriter,
+  generateGroupId,
   getUnsettledSinceDate,
   computePaymentReminder,
   buildReceiptExtractionSchema,
@@ -55,6 +62,10 @@ import {
   getCardCycleForDate,
   getTransactionsInCycle,
   listRecentCardCycles,
+  addDaysToDateISO,
+  getCardDueCycle,
+  computeCardDueReminders,
+  computeCardAnnualValue,
   getQuarterBounds,
   computeDinersCycleReward,
   computeSbiCycleReward,
@@ -66,6 +77,7 @@ import {
   inferCardRewardFields,
   rankCardsForEntry,
   getRecentCombinations,
+  findPossibleDuplicateEntry,
   resolveStrategyParamsForDate,
   computeCardMilestoneProgress,
   computeQuarterlyMilestoneBonusEarned,
@@ -73,6 +85,7 @@ import {
   getQuarterlyMilestoneCreditDate,
   parseAmountInput,
   isValidISODate,
+  parseTagsInput,
   isCashPaid,
   getQuarterStartingSpend,
   getAnnualStartingSpend,
@@ -266,6 +279,41 @@ test('computeMemberTotals respects splitAmong the same way computeBalance does',
   assert.equal(totals.Yash, 150);
   assert.equal(totals.Kruti, 150);
   assert.equal(totals.Guest, 0);
+});
+
+// P1-16: "my share this month" and the yearly breakdown both scope
+// computeMemberTotals to a period via computeMemberTotalsForPeriod.
+test('computeMemberTotalsForPeriod scopes to a single month, honoring shared-split share math', () => {
+  const members = ['Yash', 'Kruti'];
+  const entries = [
+    { id: 'a', date: '2026-08-15', amount: 1000, payer: 'Yash', split: true, splitType: 'shared', ledger: 'household' },
+    { id: 'b', date: '2026-07-15', amount: 2000, payer: 'Kruti', split: true, splitType: 'shared', ledger: 'household' }, // different month, excluded
+  ];
+  const totals = computeMemberTotalsForPeriod(entries, members, { monthKey: '2026-08', ledger: 'household' });
+  assert.equal(totals.Yash, 500);
+  assert.equal(totals.Kruti, 500);
+});
+
+test('computeMemberTotalsForPeriod scopes to a whole calendar year, and excludes settlements/rollups/other ledgers', () => {
+  const members = ['Yash', 'Kruti'];
+  const entries = [
+    { id: 'a', date: '2026-02-01', amount: 1000, payer: 'Yash', split: true, splitType: 'shared', ledger: 'household' },
+    { id: 'b', date: '2026-11-30', amount: 500, payer: 'Kruti', split: false, splitType: 'personal', ledger: 'household' },
+    { id: 'c', date: '2025-12-31', amount: 9999, payer: 'Yash', split: true, splitType: 'shared', ledger: 'household' }, // wrong year
+    { id: 'd', date: '2026-05-01', amount: 300, payer: 'Yash', owedBy: 'Kruti', splitType: 'settlement', ledger: 'household' }, // settlement
+    { id: 'e', date: '2026-06-01', amount: 700, payer: 'Yash', split: true, splitType: 'shared', ledger: 'travel', tripName: 'Goa' }, // wrong ledger
+  ];
+  const totals = computeMemberTotalsForPeriod(entries, members, { year: '2026', ledger: 'household' });
+  assert.equal(totals.Yash, 500); // half of entry a
+  assert.equal(totals.Kruti, 500 + 500); // half of entry a + all of entry b
+});
+
+test('getAvailableYears lists years with entries, newest first, always including the current year', () => {
+  const entries = [{ date: '2024-06-01' }, { date: '2026-01-15' }, { date: '2024-12-31' }];
+  const years = getAvailableYears(entries);
+  assert.equal(years[0], String(new Date().getFullYear()));
+  assert.ok(years.includes('2026'));
+  assert.ok(years.includes('2024'));
 });
 
 test('computes previous month key correctly', () => {
@@ -571,6 +619,32 @@ test('buildAskQuestionSchema wraps a per-item schema in a queries array, constra
   assert.deepEqual(item.required, ['metric', 'scope']);
 });
 
+// P1-15: Gemini's structured-output API rejects an empty `enum` array
+// outright, so a new user with zero trips turned every Ask question into a
+// hard failure before the AI ever saw it - regardless of what was asked.
+test('buildAskQuestionSchema falls back to an open string (no enum) for an empty trips/categories/members list', () => {
+  const schema = buildAskQuestionSchema({ categories: [], members: [], trips: [] });
+  const item = schema.properties.queries.items;
+  assert.deepEqual(item.properties.trip, { type: 'string' });
+  assert.deepEqual(item.properties.category, { type: 'string' });
+  assert.deepEqual(item.properties.member, { type: 'string' });
+  // scope/metric are fixed vocabularies, not ledger data - always constrained.
+  assert.deepEqual(item.properties.scope.enum, ['household', 'travel']);
+});
+
+test('buildCategorySuggestionSchema falls back to an open string for an empty category list', () => {
+  const schema = buildCategorySuggestionSchema([]);
+  assert.deepEqual(schema.properties.category, { type: 'string' });
+});
+
+test('buildQuickAddSchema falls back to an open string for empty categories/members', () => {
+  const schema = buildQuickAddSchema({ categories: [], members: [], paymentMethods: [], isTravel: false });
+  assert.deepEqual(schema.properties.category, { type: 'string' });
+  assert.deepEqual(schema.properties.payer, { type: 'string' });
+  assert.deepEqual(schema.properties.owedBy, { type: 'string' });
+  assert.deepEqual(schema.properties.splitShares.items.properties.person, { type: 'string' });
+});
+
 test('buildAskQuestionPrompt includes the question, today\'s date, current context, and every allowed list', () => {
   const prompt = buildAskQuestionPrompt('how much did we spend on Food this month?', {
     categories: ['Food', 'Hotel'],
@@ -759,6 +833,29 @@ test('resolveAskQuery: trip_comparison ignores a trip filter, since comparing ac
   const answer = resolveAskQuery({ metric: 'trip_comparison', scope: 'travel', trip: 'Japan' }, entries, PERSONS);
   assert.match(answer, /Japan: ₹100\.00/);
   assert.match(answer, /Vietnam: ₹200\.00/);
+});
+
+test('resolveAskQuery: trip_comparison keeps two same-named trips separate when tripId is present (P1-4)', () => {
+  const entries = [
+    { amount: 3000, category: 'Food', date: '2024-01-01', ledger: 'travel', tripId: 'old-japan', tripName: 'Japan', splitType: 'shared' },
+    { amount: 1000, category: 'Food', date: '2026-08-01', ledger: 'travel', tripId: 'new-japan', tripName: 'Japan', splitType: 'shared' },
+  ];
+  const trips = [
+    { id: 'old-japan', name: 'Japan' },
+    { id: 'new-japan', name: 'Japan' },
+  ];
+  const answer = resolveAskQuery({ metric: 'trip_comparison', scope: 'travel' }, entries, PERSONS, trips);
+  assert.match(answer, /Japan: ₹3,000\.00, Japan: ₹1,000\.00/, 'two distinct trips, not merged into one ₹4,000 line');
+});
+
+test('resolveAskQuery: a trip filter resolves a name to its tripId, not just a legacy tripName match (P1-4)', () => {
+  const entries = [
+    { amount: 100, category: 'Food', date: '2026-08-01', ledger: 'travel', tripId: 'trip1', tripName: 'Japan', splitType: 'shared' },
+    { amount: 900, category: 'Food', date: '2026-08-01', ledger: 'travel', tripId: 'trip2', tripName: 'Japan (old)', splitType: 'shared' },
+  ];
+  const trips = [{ id: 'trip1', name: 'Japan' }];
+  const answer = resolveAskQuery({ metric: 'total_spend', scope: 'travel', trip: 'Japan' }, entries, PERSONS, trips);
+  assert.match(answer, /₹100\.00/);
 });
 
 test('resolveAskQuery: trip_comparison reports no trips when there are none', () => {
@@ -1084,11 +1181,103 @@ test('computeMonthForecast returns no categories when nothing has a budget set',
   assert.deepEqual(forecast.categories, []);
 });
 
+test('computeMonthForecast does not re-extrapolate a recurring bill already posted this month (the ₹4.5L rent bug)', () => {
+  // Rent generated in full on day 1, dated the 1st - by day 2, a naive
+  // (spent/daysElapsed)*totalDays projection would multiply it ~15x.
+  const entries = [
+    { date: '2026-08-01', category: 'Rent', amount: 30000, ledger: 'household', split: true, splitType: 'shared', isRecurring: true },
+  ];
+  const forecast = computeMonthForecast(entries, [], { Rent: 30000 }, '2026-08-02');
+  const rent = forecast.categories.find((c) => c.category === 'Rent');
+  assert.equal(rent.spent, 30000);
+  assert.equal(rent.projectedSpent, 30000, 'a known committed bill is carried through as-is, not scaled by days elapsed');
+});
+
+test('computeMonthForecast treats a future-dated entry this month as committed too, not just recurring ones', () => {
+  const entries = [
+    // A bill entered ahead of time for later this month.
+    { date: '2026-08-20', category: 'Insurance', amount: 12000, ledger: 'household', split: true, splitType: 'shared' },
+    // Real day-to-day spend so far, which should still scale normally.
+    { date: '2026-08-01', category: 'Insurance', amount: 1000, ledger: 'household', split: true, splitType: 'shared' },
+  ];
+  const forecast = computeMonthForecast(entries, [], { Insurance: 20000 }, '2026-08-02');
+  const insurance = forecast.categories.find((c) => c.category === 'Insurance');
+  assert.equal(insurance.spent, 13000);
+  // Committed 12000 carried as-is; the 1000 variable portion scaled 31/2 = 15500.
+  assert.equal(insurance.projectedSpent, 12000 + 1000 * (31 / 2));
+});
+
+test('computeMonthForecast mixes committed and variable spend within the same category correctly', () => {
+  const entries = [
+    { date: '2026-08-01', category: 'Groceries', amount: 3000, ledger: 'household', split: true, splitType: 'shared' },
+    { date: '2026-08-10', category: 'Groceries', amount: 3000, ledger: 'household', split: true, splitType: 'shared' },
+  ];
+  // Same fixture as the existing pace test above, just confirming `overall`
+  // is absent when no overallBudget is passed.
+  const forecast = computeMonthForecast(entries, [], { Groceries: 15000 }, '2026-08-10');
+  assert.equal(forecast.overall, null);
+});
+
+test('computeMonthForecast computes an overall projection against a whole-month budget, separate from per-category limits', () => {
+  const entries = [
+    { date: '2026-08-01', category: 'Rent', amount: 30000, ledger: 'household', split: true, splitType: 'shared', isRecurring: true },
+    { date: '2026-08-01', category: 'Groceries', amount: 2000, ledger: 'household', split: true, splitType: 'shared' },
+  ];
+  const forecast = computeMonthForecast(entries, [], {}, '2026-08-02', 60000);
+  assert.ok(forecast.overall, 'overall projection present when overallBudget is passed');
+  assert.equal(forecast.overall.spent, 32000);
+  assert.equal(forecast.overall.limit, 60000);
+  // Rent (30000) committed as-is; Groceries (2000) variable, scaled 31/2 = 31000.
+  assert.equal(forecast.overall.projectedSpent, 30000 + 2000 * (31 / 2));
+  assert.ok(forecast.overall.projectedPctUsed > 1, 'on pace to exceed the overall budget by month-end');
+});
+
 test('getPaymentReminderConfig/setPaymentReminderConfig round-trip through storage, defaulting to enabled/₹2000', () => {
   setPaymentReminderConfig({});
   assert.deepEqual(getPaymentReminderConfig(), { enabled: true, amountThreshold: 2000 });
   setPaymentReminderConfig({ enabled: false, amountThreshold: 5000 });
   assert.deepEqual(getPaymentReminderConfig(), { enabled: false, amountThreshold: 5000 });
+});
+
+// P1-13: this test file has no `localStorage` global (plain Node, not a DOM
+// environment), so getItem/setItem already exercise the same memoryStorage
+// fallback path native does - the exact path that used to reset every value
+// on every app launch until hydrateMemoryStorage/setNativeStorageWriter
+// let app/_layout.js back it with real (AsyncStorage) persistence.
+test('getStoredColorScheme/setStoredColorScheme round-trip, including the new "system" option', () => {
+  setStoredColorScheme('dark');
+  assert.equal(getStoredColorScheme(), 'dark');
+  setStoredColorScheme('system');
+  assert.equal(getStoredColorScheme(), 'system');
+  setStoredColorScheme('light');
+  assert.equal(getStoredColorScheme(), 'light');
+});
+
+test('setStoredColorScheme coerces an unrecognized value to "light"', () => {
+  setStoredColorScheme('not-a-real-scheme');
+  assert.equal(getStoredColorScheme(), 'light');
+});
+
+test('hydrateMemoryStorage seeds values as if they were already persisted, before any setItem call', () => {
+  hydrateMemoryStorage({ 'household-ledger-color-scheme': 'dark' });
+  assert.equal(getStoredColorScheme(), 'dark');
+});
+
+test('setNativeStorageWriter is called with the full in-memory store on every write, for app/_layout.js to persist', () => {
+  const writes = [];
+  setNativeStorageWriter((data) => writes.push(data));
+  setStoredColorScheme('dark');
+  assert.ok(writes.length > 0, 'the writer fired at least once');
+  assert.equal(writes[writes.length - 1]['household-ledger-color-scheme'], 'dark');
+  setNativeStorageWriter(null);
+});
+
+test('generateGroupId returns distinct, prefixed ids each call (P1-14 installment grouping)', () => {
+  const a = generateGroupId('inst');
+  const b = generateGroupId('inst');
+  assert.notEqual(a, b);
+  assert.match(a, /^inst_/);
+  assert.match(b, /^inst_/);
 });
 
 test('getUnsettledSinceDate uses the most recent settlement date when one exists', () => {
@@ -1197,6 +1386,46 @@ test('searchAllEntries matches on amount as a word', () => {
   assert.deepEqual(searchAllEntries(entries, '850').map((r) => r.id), ['e1']);
 });
 
+test('searchAllEntries matches a tag (P2-11)', () => {
+  const entries = [
+    { id: 'e1', ledger: 'household', category: 'Groceries', amount: 850, payer: 'Yash', date: '2026-07-01', tags: ['reimbursable'] },
+    { id: 'e2', ledger: 'household', category: 'Utilities', amount: 1200, payer: 'Kruti', date: '2026-07-02', tags: [] },
+  ];
+  assert.deepEqual(searchAllEntries(entries, 'reimbursable').map((r) => r.id), ['e1']);
+});
+
+test('searchAllEntries: a payer/category/paymentMethod/date-range filter narrows results even with no text term (P1-12)', () => {
+  const entries = [
+    { id: 'e1', ledger: 'household', category: 'Groceries', payer: 'Yash', paymentMethod: 'Cash', date: '2026-07-01' },
+    { id: 'e2', ledger: 'household', category: 'Groceries', payer: 'Kruti', paymentMethod: 'UPI', date: '2026-07-05' },
+    { id: 'e3', ledger: 'household', category: 'Utilities', payer: 'Yash', paymentMethod: 'Cash', date: '2026-08-01' },
+  ];
+  assert.deepEqual(searchAllEntries(entries, '', { payer: 'Yash' }).map((r) => r.id), ['e3', 'e1'], 'browsing by filter alone works with no text typed');
+  assert.deepEqual(searchAllEntries(entries, '', { category: 'Groceries' }).map((r) => r.id), ['e2', 'e1']);
+  assert.deepEqual(searchAllEntries(entries, '', { paymentMethod: 'UPI' }).map((r) => r.id), ['e2']);
+  assert.deepEqual(searchAllEntries(entries, '', { dateFrom: '2026-07-02', dateTo: '2026-07-31' }).map((r) => r.id), ['e2']);
+  assert.deepEqual(
+    searchAllEntries(entries, '', { payer: 'Yash', paymentMethod: 'Cash' }).map((r) => r.id).sort(),
+    ['e1', 'e3'],
+    'filters combine as AND',
+  );
+});
+
+test('searchAllEntries: filters and a text term combine, and filters alone still exclude settlements/rollups', () => {
+  const entries = [
+    { id: 'e1', ledger: 'household', category: 'Groceries', note: 'Big Bazaar run', payer: 'Yash', date: '2026-07-01' },
+    { id: 'e2', ledger: 'household', category: 'Groceries', note: 'Corner store', payer: 'Yash', date: '2026-07-02' },
+    { id: 'e3', ledger: 'household', splitType: 'settlement', payer: 'Yash', date: '2026-07-03' },
+  ];
+  assert.deepEqual(searchAllEntries(entries, 'bazaar', { payer: 'Yash' }).map((r) => r.id), ['e1']);
+  assert.deepEqual(searchAllEntries(entries, '', { payer: 'Yash' }).map((r) => r.id).sort(), ['e1', 'e2'], 'settlement stays excluded even filtering by its own payer');
+});
+
+test('searchAllEntries still returns nothing when there is neither a term nor any filter', () => {
+  const entries = [{ id: 'e1', ledger: 'household', category: 'Groceries', payer: 'Yash', date: '2026-07-01' }];
+  assert.deepEqual(searchAllEntries(entries, '', {}), []);
+});
+
 // --- Credit card billing cycle helpers ---
 
 test('getCardCycleForDate: a transaction before the cycle day belongs to the cycle ending this month', () => {
@@ -1215,6 +1444,89 @@ test('getCardCycleForDate clamps the cycle day to however many days a short mont
   const { cycleStart, cycleEnd } = getCardCycleForDate('2026-02-20', 31);
   assert.equal(cycleStart, '2026-01-31');
   assert.equal(cycleEnd, '2026-02-28', '2026 is not a leap year');
+});
+
+test('addDaysToDateISO adds days, including across a month/year boundary', () => {
+  assert.equal(addDaysToDateISO('2026-08-20', 20), '2026-09-09');
+  assert.equal(addDaysToDateISO('2026-12-28', 5), '2027-01-02');
+});
+
+test('getCardDueCycle: due date is the most recently CLOSED cycle\'s close date plus the offset, not the open cycle\'s', () => {
+  // Billing day 10, today the 15th - the open cycle started the 10th and
+  // won't close until next month; the one due now is the cycle that closed
+  // on this month's 10th.
+  const due = getCardDueCycle({ billingCycleDay: 10, dueDateOffsetDays: 18 }, '2026-08-15');
+  assert.equal(due.cycleEnd, '2026-08-10');
+  assert.equal(due.dueDate, '2026-08-28');
+});
+
+test('getCardDueCycle defaults the offset to 20 days when unset', () => {
+  const due = getCardDueCycle({ billingCycleDay: 10 }, '2026-08-15');
+  assert.equal(due.dueDate, '2026-08-30');
+});
+
+test('computeCardDueReminders: flags a card with an unpaid bill due soon, skips one with nothing owed and one already marked paid', () => {
+  const cards = [
+    { id: 'a', name: 'Owes Soon', billingCycleDay: 10, dueDateOffsetDays: 5, rewardStrategy: 'sbi_two_channel_cashback' },
+    { id: 'b', name: 'Nothing Owed', billingCycleDay: 10, dueDateOffsetDays: 5, rewardStrategy: 'sbi_two_channel_cashback' },
+    { id: 'c', name: 'Already Paid', billingCycleDay: 10, dueDateOffsetDays: 5, rewardStrategy: 'sbi_two_channel_cashback' },
+  ];
+  const txns = [
+    { id: 't1', cardId: 'a', date: '2026-08-05', amount: 5000, channel: 'online' },
+    { id: 't3', cardId: 'c', date: '2026-08-05', amount: 3000, channel: 'online' },
+  ];
+  // Cycle 2026-07-10..2026-08-10 due 2026-08-15 - today 2026-08-13, 2 days out.
+  const cycles = [{ cardId: 'c', cycleStart: '2026-07-10', paidAt: '2026-08-12T00:00:00.000Z' }];
+  const reminders = computeCardDueReminders(cards, txns, cycles, '2026-08-13', 5);
+  assert.deepEqual(reminders.map((r) => r.cardId), ['a']);
+  assert.equal(reminders[0].amountDue, 5000);
+  assert.equal(reminders[0].daysUntilDue, 2);
+  assert.equal(reminders[0].overdue, false);
+});
+
+test('computeCardDueReminders marks a bill past its due date as overdue', () => {
+  const cards = [{ id: 'a', name: 'Late', billingCycleDay: 10, dueDateOffsetDays: 5, rewardStrategy: 'sbi_two_channel_cashback' }];
+  const txns = [{ id: 't1', cardId: 'a', date: '2026-08-05', amount: 1000, channel: 'online' }];
+  // Due 2026-08-15, checking as of 2026-08-20 - 5 days overdue.
+  const reminders = computeCardDueReminders(cards, txns, [], '2026-08-20', 5);
+  assert.equal(reminders[0].overdue, true);
+  assert.equal(reminders[0].daysUntilDue, -5);
+});
+
+test('computeCardAnnualValue returns null when the card has no fee or renewal date set', () => {
+  const card = { id: 'a', billingCycleDay: 10, rewardStrategy: 'sbi_two_channel_cashback' };
+  assert.equal(computeCardAnnualValue(card, [], '2026-08-15'), null);
+  assert.equal(computeCardAnnualValue({ ...card, annualFee: 5000 }, [], '2026-08-15'), null, 'fee alone, no renewal date');
+  assert.equal(computeCardAnnualValue({ ...card, renewalDate: '2026-03-01' }, [], '2026-08-15'), null, 'renewal date alone, no fee');
+});
+
+test('computeCardAnnualValue nets rewards earned in the card\'s fee-year against the fee, for a rupee-unit card', () => {
+  const card = {
+    id: 'a', billingCycleDay: 10, rewardStrategy: 'sbi_two_channel_cashback', annualFee: 5000, renewalDate: '2026-03-15',
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }],
+  };
+  // Fee year is 2026-03-01..2027-03-01 (anchored to renewalDate's month).
+  const txns = [
+    { id: 't1', cardId: 'a', date: '2026-04-01', amount: 100000, channel: 'online' }, // in this fee-year
+    { id: 't2', cardId: 'a', date: '2026-01-01', amount: 100000, channel: 'online' }, // before this fee-year - excluded
+  ];
+  const value = computeCardAnnualValue(card, txns, '2026-08-15');
+  assert.equal(value.periodStart, '2026-03-01');
+  assert.equal(value.periodEnd, '2027-03-01');
+  assert.equal(value.fee, 5000);
+  assert.equal(value.unit, 'inr');
+  assert.ok(value.earned > 0, 'the April transaction earned some cashback');
+  assert.equal(value.netValue, value.earned - 5000);
+});
+
+test('computeCardAnnualValue reports earned points but no rupee net value for a points-unit card', () => {
+  const card = {
+    id: 'd1', billingCycleDay: 10, rewardStrategy: 'hdfc_diners_slab_milestone', annualFee: 5000, renewalDate: '2026-01-01',
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone }],
+  };
+  const value = computeCardAnnualValue(card, [], '2026-08-15');
+  assert.equal(value.unit, 'points');
+  assert.equal(value.netValue, null);
 });
 
 test('getTransactionsInCycle filters by both card and date range', () => {
@@ -1898,6 +2210,37 @@ test('getRecentCombinations skips entries missing a category or payer, and respe
   assert.equal(combos.length, 2, 'the two blank-field entries are skipped, and the limit caps the rest');
 });
 
+// --- Duplicate-entry warning on add (P2-9) ---
+
+test('findPossibleDuplicateEntry matches same date, amount, category and payer', () => {
+  const entries = [{ date: '2026-08-01', amount: 500, category: 'Groceries', payer: 'Yash' }];
+  const found = findPossibleDuplicateEntry(entries, { date: '2026-08-01', amount: 500, category: 'Groceries', payer: 'Yash' });
+  assert.ok(found);
+});
+
+test('findPossibleDuplicateEntry does not match if date, amount, category or payer differs', () => {
+  const entries = [{ date: '2026-08-01', amount: 500, category: 'Groceries', payer: 'Yash' }];
+  assert.equal(findPossibleDuplicateEntry(entries, { date: '2026-08-02', amount: 500, category: 'Groceries', payer: 'Yash' }), null);
+  assert.equal(findPossibleDuplicateEntry(entries, { date: '2026-08-01', amount: 501, category: 'Groceries', payer: 'Yash' }), null);
+  assert.equal(findPossibleDuplicateEntry(entries, { date: '2026-08-01', amount: 500, category: 'Dining', payer: 'Yash' }), null);
+  assert.equal(findPossibleDuplicateEntry(entries, { date: '2026-08-01', amount: 500, category: 'Groceries', payer: 'Kruti' }), null);
+});
+
+test('findPossibleDuplicateEntry ignores settlements, trip rollups and withdrawals', () => {
+  const entries = [
+    { date: '2026-08-01', amount: 500, category: 'Groceries', payer: 'Yash', splitType: 'settlement' },
+    { date: '2026-08-01', amount: 500, category: 'Groceries', payer: 'Yash', isTripRollup: true },
+    { date: '2026-08-01', amount: 500, category: 'Groceries', payer: 'Yash', isWithdrawal: true },
+  ];
+  assert.equal(findPossibleDuplicateEntry(entries, { date: '2026-08-01', amount: 500, category: 'Groceries', payer: 'Yash' }), null);
+});
+
+test('findPossibleDuplicateEntry returns null for an incomplete candidate', () => {
+  const entries = [{ date: '2026-08-01', amount: 500, category: 'Groceries', payer: 'Yash' }];
+  assert.equal(findPossibleDuplicateEntry(entries, { date: '2026-08-01', amount: 500, category: '', payer: 'Yash' }), null);
+  assert.equal(findPossibleDuplicateEntry(entries, { date: '2026-08-01', amount: 0, category: 'Groceries', payer: 'Yash' }), null);
+});
+
 // --- Cap-remaining status (per-category / per-pool "how much room is left") ---
 
 test('computeCardCapStatus (Diners) reports remaining room per category for the period containing today', () => {
@@ -2525,6 +2868,13 @@ test('isValidISODate accepts only real YYYY-MM-DD dates', () => {
   assert.equal(isValidISODate(undefined), false);
 });
 
+test('parseTagsInput splits, trims, drops empties, and dedupes case-insensitively (P2-11)', () => {
+  assert.deepEqual(parseTagsInput('vacation, reimbursable'), ['vacation', 'reimbursable']);
+  assert.deepEqual(parseTagsInput(' vacation ,, Vacation ,  '), ['vacation'], 'blank entries dropped, dupes collapsed to first spelling');
+  assert.deepEqual(parseTagsInput(''), []);
+  assert.deepEqual(parseTagsInput(undefined), []);
+});
+
 test('isCashPaid goes by the saved instrument type, falling back to the legacy label', () => {
   assert.equal(isCashPaid({ paymentType: 'cash', paymentMethod: 'Wallet' }), true, 'renamed cash method');
   assert.equal(isCashPaid({ paymentType: 'credit', paymentMethod: 'Cash' }), false, 'type wins over label');
@@ -2703,9 +3053,20 @@ test('trip cash on hand comes from withdrawal entries, with a movements fallback
     { tripName: 'T', type: 'opening', amount: 20000 },
     { tripName: 'T', type: 'withdrawal', amount: 99999 }, // an orphan left behind by a deleted withdrawal entry
   ];
-  assert.deepEqual(computeTripCashStats(entries, movements, 'T'), { opening: 20000, withdrawn: 30000, spent: 12000, balance: 38000 });
-  const legacy = computeTripCashStats(entries.filter((e) => !e.isWithdrawal), [{ tripName: 'T', type: 'withdrawal', amount: 30000 }], 'T');
+  assert.deepEqual(computeTripCashStats(entries, movements, undefined, 'T'), { opening: 20000, withdrawn: 30000, spent: 12000, balance: 38000 });
+  const legacy = computeTripCashStats(entries.filter((e) => !e.isWithdrawal), [{ tripName: 'T', type: 'withdrawal', amount: 30000 }], undefined, 'T');
   assert.equal(legacy.withdrawn, 30000, 'movement-only trips still count their withdrawals');
+});
+
+test('trip cash on hand joins by tripId when present, not just legacy tripName (P1-4)', () => {
+  const entries = [
+    { tripId: 'trip1', tripName: 'Old Name', ledger: 'travel', isWithdrawal: true, amount: 17000, localAmount: 30000, paymentType: 'forex' },
+    { tripId: 'trip2', tripName: 'Old Name', ledger: 'travel', isWithdrawal: true, amount: 5000, localAmount: 9000, paymentType: 'forex' },
+  ];
+  const movements = [{ tripId: 'trip1', type: 'opening', amount: 20000 }];
+  const stats = computeTripCashStats(entries, movements, 'trip1', 'Old Name');
+  assert.equal(stats.opening, 20000, 'only trip1s opening record counts, despite both trips once sharing a name');
+  assert.equal(stats.withdrawn, 30000, 'only trip1s withdrawal counts, not trip2s');
 });
 
 test('Recent chips skip settlements, trip rollups and withdrawals', () => {

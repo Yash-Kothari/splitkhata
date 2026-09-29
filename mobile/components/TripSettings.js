@@ -3,8 +3,18 @@ import { View, Text, TextInput, Pressable, Modal, ScrollView, useWindowDimension
 import { notify, confirmAsync } from '../lib/dialogs';
 import PickerField from './PickerField';
 import DateField from './DateField';
-import { updateTripInDb, deleteTripCascade, addWithdrawal, setOpeningCash as setOpeningCashInDb, addGuestToDb, deleteGuestFromDb, renameGuestInDb } from '../lib/firebase';
-import { computeBudgetStatus, formatCurrency, groupByCategory, normalizeLedger, todayISO, parseAmountInput, isValidISODate } from '../lib/utils';
+import {
+  updateTripInDb,
+  renameTripInDb,
+  archiveTripInDb,
+  deleteTripCascade,
+  addWithdrawal,
+  setOpeningCash as setOpeningCashInDb,
+  addGuestToDb,
+  deleteGuestFromDb,
+  renameGuestInDb,
+} from '../lib/firebase';
+import { computeBudgetStatus, formatCurrency, groupByCategory, normalizeLedger, todayISO, parseAmountInput, isValidISODate, DEFAULT_CURRENCIES } from '../lib/utils';
 
 function Tag({ label, onRemove, onEdit, removable = true }) {
   return (
@@ -37,6 +47,7 @@ export default function TripSettings({
   trips,
   entries,
   dbCategories,
+  dbCurrencies,
   instruments = [],
   dbMembers,
   dbGuests = [],
@@ -50,6 +61,10 @@ export default function TripSettings({
   // panel is right there - only a wide browser window needs this capped to
   // a centered dialog instead of stretching a settings form edge to edge.
   const isWide = windowWidth >= 768;
+  const currencies = dbCurrencies && dbCurrencies.length > 0 ? dbCurrencies : DEFAULT_CURRENCIES;
+  const [nameDraft, setNameDraft] = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const [currencyDraft, setCurrencyDraft] = useState('INR');
   const [datesStart, setDatesStart] = useState('');
   const [datesEnd, setDatesEnd] = useState('');
   const [openingCash, setOpeningCash] = useState('');
@@ -73,6 +88,8 @@ export default function TripSettings({
 
   useEffect(() => {
     if (!trip) return;
+    setNameDraft(trip.name || '');
+    setCurrencyDraft(trip.currency || 'INR');
     setDatesStart(trip.startDate || '');
     setDatesEnd(trip.endDate || '');
     setTripBudgetDrafts({ ...(trip.categoryBudgets || {}) });
@@ -91,8 +108,16 @@ export default function TripSettings({
   const tripGuests = trip?.guests || [];
 
   const tripCategoryTotals = useMemo(
-    () => groupByCategory(entries.filter((e) => normalizeLedger(e.ledger) === 'travel' && e.tripName === trip?.name), null, 'travel'),
-    [entries, trip?.name],
+    () =>
+      groupByCategory(
+        entries.filter(
+          (e) =>
+            normalizeLedger(e.ledger) === 'travel' && (e.tripId ? e.tripId === trip?.id : e.tripName === trip?.name),
+        ),
+        null,
+        'travel',
+      ),
+    [entries, trip?.id, trip?.name],
   );
   const tripBudgetStatus = useMemo(
     () => computeBudgetStatus(tripCategoryTotals, tripBudgetDrafts),
@@ -106,6 +131,41 @@ export default function TripSettings({
     try {
       await updateTripInDb(trip.id, { categoryBudgets: next });
       setTripBudgetDrafts(next);
+    } catch (err) {
+      onSaveError?.(err);
+    }
+  }
+
+  // Renaming has zero cascading writes (P1-4 - tripId is the real join key
+  // everywhere now, the name is just a label) - the only thing to guard is
+  // colliding with another trip's name, same as creating one.
+  async function handleSaveName() {
+    if (!trip || nameDraft.trim() === trip.name) return;
+    setSavingName(true);
+    try {
+      await renameTripInDb(trip.id, nameDraft, trips);
+    } catch (err) {
+      setNameDraft(trip.name);
+      notify('Could not rename trip', err?.message || String(err));
+    } finally {
+      setSavingName(false);
+    }
+  }
+
+  async function handleSaveCurrency(nextCurrency) {
+    if (!trip) return;
+    setCurrencyDraft(nextCurrency);
+    try {
+      await updateTripInDb(trip.id, { currency: nextCurrency });
+    } catch (err) {
+      onSaveError?.(err);
+    }
+  }
+
+  async function handleToggleArchive() {
+    if (!trip) return;
+    try {
+      await archiveTripInDb(trip.id, !trip.archived);
     } catch (err) {
       onSaveError?.(err);
     }
@@ -136,7 +196,7 @@ export default function TripSettings({
       return;
     }
     try {
-      await setOpeningCashInDb(trip.name, trip.id, parsed);
+      await setOpeningCashInDb(trip.id, parsed);
       setOpeningCash('');
       notify('Starting cash set', `Starting cash for this trip is now ${parsed.toLocaleString('en-IN')} ${currentCurrency || ''}.`.trim());
     } catch (err) {
@@ -161,7 +221,7 @@ export default function TripSettings({
       return;
     }
     try {
-      await addWithdrawal({ tripName: trip.name, type: 'withdrawal', amount: parsedWithdrawal, date: withdrawalDate }, {
+      await addWithdrawal({ tripId: trip.id, type: 'withdrawal', amount: parsedWithdrawal, date: withdrawalDate }, {
         amount: parsedInr,
         localAmount: parsedWithdrawal,
         payer: withdrawalPayer,
@@ -172,7 +232,7 @@ export default function TripSettings({
         note: `${currentCurrency || 'Local'} ATM Withdrawal`,
         date: withdrawalDate,
         ledger: 'travel',
-        tripName: trip.name,
+        tripId: trip.id,
         paymentMethod: withdrawalInstrument.label,
         paymentInstrumentId: withdrawalInstrument.id,
         paymentType: withdrawalInstrument.type || null,
@@ -250,7 +310,9 @@ export default function TripSettings({
     }
   }
 
-  const tripEntriesForDelete = (entries || []).filter((e) => normalizeLedger(e.ledger) === 'travel' && e.tripName === trip?.name);
+  const tripEntriesForDelete = (entries || []).filter(
+    (e) => normalizeLedger(e.ledger) === 'travel' && (e.tripId ? e.tripId === trip?.id : e.tripName === trip?.name),
+  );
 
   if (!trip) return null;
 
@@ -271,7 +333,34 @@ export default function TripSettings({
         </View>
 
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
-          <Text className={sectionTitle}>Trip Dates</Text>
+          <Text className={sectionTitle}>Trip Name &amp; Currency</Text>
+          <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+            <View className="w-full sm:w-[calc(50%-6px)]">
+              <Text className={fieldLabel}>Trip Name</Text>
+              <TextInput
+                value={nameDraft}
+                onChangeText={setNameDraft}
+                editable={!savingName}
+                className={inputBox}
+              />
+            </View>
+            <View className="w-full sm:w-[calc(50%-6px)]">
+              <PickerField label="Currency" value={currencyDraft} options={currencies} onChange={handleSaveCurrency} />
+            </View>
+            <Pressable
+              onPress={handleSaveName}
+              disabled={savingName || !nameDraft.trim() || nameDraft.trim() === trip.name}
+              className="w-full min-h-11 rounded-lg border border-ink/15 items-center justify-center disabled:opacity-40"
+            >
+              <Text className="font-body-semibold text-sm text-ink">{savingName ? 'Saving...' : 'Save Name'}</Text>
+            </Pressable>
+            <Text className="w-full font-body text-2xs text-muted-text">
+              Changing currency doesn't convert or relabel past entries - it only changes what new entries and this
+              trip's display use going forward.
+            </Text>
+          </View>
+
+          <Text className={`${sectionTitle} mt-5`}>Trip Dates</Text>
           <View className="flex-row flex-wrap" style={{ gap: 12 }}>
             <View className="w-full sm:w-[calc(50%-6px)]">
               <Text className={fieldLabel}>Start Date</Text>
@@ -512,6 +601,20 @@ export default function TripSettings({
                 ),
               )}
             </View>
+          </View>
+
+          <View className="border-t border-ink/10 pt-4 mb-5">
+            <Text className={sectionTitle}>Archive</Text>
+            <Text className="font-body text-2xs text-muted-text mb-2">
+              Hides {trip.name} from the main trip list. Reversible, unlike delete below - its entries, search, Ask
+              and exports are unaffected.
+            </Text>
+            <Pressable
+              onPress={handleToggleArchive}
+              className="min-h-10 self-start px-3.5 rounded-lg border border-ink/15 items-center justify-center"
+            >
+              <Text className="font-body-semibold text-xs text-ink">{trip.archived ? 'Unarchive' : 'Archive'} {trip.name}</Text>
+            </Pressable>
           </View>
 
           <View className="border-t border-ink/10 pt-4">

@@ -10,14 +10,15 @@ import { cardShadow } from './Card';
 // current pace (see computeMonthForecast). Renders nothing when there's
 // genuinely nothing to flag - no committed spend left and nobody on pace
 // to go over - rather than a permanently-empty card.
-export default function MonthForecast({ entries, recurringRules = [], budgets = {} }) {
+export default function MonthForecast({ entries, recurringRules = [], budgets = {}, overallBudget = null }) {
   const forecast = useMemo(
-    () => computeMonthForecast(entries, recurringRules, budgets, todayISO()),
-    [entries, recurringRules, budgets],
+    () => computeMonthForecast(entries, recurringRules, budgets, todayISO(), overallBudget),
+    [entries, recurringRules, budgets, overallBudget],
   );
 
   const onTrackToExceed = forecast.categories.filter((c) => c.projectedPctUsed >= 1);
-  if (forecast.remainingCommitted === 0 && onTrackToExceed.length === 0) return null;
+  const overallOnTrackToExceed = forecast.overall && forecast.overall.projectedPctUsed >= 1;
+  if (forecast.remainingCommitted === 0 && onTrackToExceed.length === 0 && !overallOnTrackToExceed) return null;
 
   return (
     <View style={cardShadow} className="rounded-2xl bg-paper-card border border-ink/10 p-4 mb-4">
@@ -31,6 +32,15 @@ export default function MonthForecast({ entries, recurringRules = [], budgets = 
           <Text className="font-body-semibold">{formatCurrency(forecast.remainingCommitted)}</Text> still due from
           recurring bills.
         </Text>
+      )}
+
+      {overallOnTrackToExceed && (
+        <View className="mb-2.5">
+          <Text className="font-body-medium text-sm text-ink">Overall</Text>
+          <Text className="font-body text-2xs text-muted-text">
+            On pace for {formatCurrency(forecast.overall.projectedSpent)} by month-end - {formatCurrency(forecast.overall.limit)} budget
+          </Text>
+        </View>
       )}
 
       {onTrackToExceed.length > 0 && (

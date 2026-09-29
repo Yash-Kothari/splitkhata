@@ -24,7 +24,8 @@
  * @property {string} [note]
  * @property {string} date - YYYY-MM-DD
  * @property {'household'|'travel'} ledger
- * @property {string} [tripName] - set when ledger is 'travel'
+ * @property {string|null} [tripId] - set when ledger is 'travel'; the owning Trip's id (P1-4). The real join key - always prefer this over tripName when both are present.
+ * @property {string} [tripName] - set when ledger is 'travel'. Legacy join key: entries written before P1-4 may carry only this, never tripId - every tripId-based lookup keeps a tripName fallback for that reason. Never written to new entries; resolve a trip's current name live from the trips collection instead.
  * @property {string|null} [paymentMethod] - a payment instrument's label, or a bare method name for legacy entries
  * @property {string|null} [paymentInstrumentId]
  * @property {string|null} [paymentType] - the resolved instrument's type (see INSTRUMENT_TYPES)
@@ -32,10 +33,50 @@
  * @property {number|null} [rewardPoints] - travel-only
  * @property {boolean} [isRecurring] - created by a recurring rule, not typed in by hand
  * @property {string} [recurringRuleId] - which rule created this entry, when isRecurring is true
+ * @property {string} [installmentGroupId] - links this entry to its siblings, set only when created via "Split across multiple months"
+ * @property {number} [installmentIndex] - 1-based position within its installment group
+ * @property {number} [installmentCount] - how many installments are in the group
  * @property {string} [deviceName] - who/what device saved this entry
  * @property {string|null} [cardTransactionId] - set when a matching CardTransaction was created alongside this entry
  * @property {boolean} [isTripRollup] - a synthetic household-ledger line representing a trip's net settlement
  * @property {string} [rolledUpEntryId]
+ * @property {boolean} [isWithdrawal] - travel-only, an ATM withdrawal entry created by addWithdrawal
+ * @property {string|null} [cashMovementId] - set when isWithdrawal is true, the linked cashMovements doc (see addWithdrawal)
+ * @property {boolean} [pinned] - floats this entry to the top of EntryList regardless of sort order
+ * @property {string[]} [tags] - free-form labels, shown as chips and matched by search
+ * @property {*} [createdAt] - a Firestore Timestamp server-side, or an ISO string once read back
+ */
+
+/**
+ * A row in the `trips` collection - one travel trip, owning its own travel-
+ * ledger entries and cash movements (joined by tripId, see Entry/CashMovement).
+ * @typedef {Object} Trip
+ * @property {string} [id]
+ * @property {string} name
+ * @property {string} currency - an ISO-ish currency code, e.g. 'INR', 'USD'
+ * @property {number} [year]
+ * @property {string|null} [startDate] - YYYY-MM-DD
+ * @property {string|null} [endDate] - YYYY-MM-DD
+ * @property {Object<string, number>} [categoryBudgets]
+ * @property {string[]} [guests]
+ * @property {boolean} [archived] - hidden from TripPicker's default browse list (P1-4); entries/search/export are unaffected
+ * @property {string} [rolledUpEntryId] - the household-ledger Entry representing this trip's net settlement, if rolled up
+ * @property {number} [rolledUpAmount]
+ * @property {string} [rolledUpDebtor]
+ * @property {string} [rolledUpCreditor]
+ * @property {*} [createdAt] - a Firestore Timestamp server-side, or an ISO string once read back
+ */
+
+/**
+ * A row in the `cashMovements` collection - a trip's opening cash balance or
+ * an ATM withdrawal, in the trip's local currency.
+ * @typedef {Object} CashMovement
+ * @property {string} [id] - an 'opening'-type doc's id is always `opening_${tripId}` (see setOpeningCash)
+ * @property {string|null} [tripId] - the owning Trip's id (P1-4). See Entry.tripId for the same legacy-fallback caveat.
+ * @property {string} [tripName] - legacy join key, see Entry.tripName
+ * @property {'opening'|'withdrawal'} type
+ * @property {number} amount - in the trip's local currency
+ * @property {string} [date] - YYYY-MM-DD, withdrawal-type only
  * @property {*} [createdAt] - a Firestore Timestamp server-side, or an ISO string once read back
  */
 
@@ -52,6 +93,9 @@
  * @property {number} [quarterlyMilestoneStartingSpend] - legacy single-field fallback, see getQuarterStartingSpend
  * @property {string} [quarterlyMilestoneStartingQuarter] - which quarter the legacy field above belongs to
  * @property {number} [annualMilestoneStartingSpend] - legacy single-field fallback, see getAnnualStartingSpend
+ * @property {number} [dueDateOffsetDays] - days after a statement closes that its bill is due
+ * @property {number} [annualFee] - the card's yearly fee, in rupees
+ * @property {string} [renewalDate] - YYYY-MM-DD, the card's fee-year anchor (see computeCardAnnualValue)
  * @property {*} [createdAt] - a Firestore Timestamp server-side, or an ISO string / has a .toDate() once read back
  */
 

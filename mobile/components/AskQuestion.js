@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { View, Text, TextInput, Pressable, ScrollView } from 'react-native';
+import { View, Text, TextInput, Pressable, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
 import { usePathname } from 'expo-router';
 import { randomUUID } from 'expo-crypto';
 import { setAskPanelOpen } from '../lib/askPanelState';
@@ -92,7 +92,7 @@ export default function AskQuestion() {
         currentContext,
       });
       const { queries } = await generateStructured(prompt, schema);
-      const facts = queries.map((spec) => resolveAskQuery(spec, allEntries, members));
+      const facts = queries.map((spec) => resolveAskQuery(spec, allEntries, members, trips));
       const answer = await generateDigest(buildAskAnswerNarrationPrompt(text, facts));
       setThread((prev) => prev.map((t) => (t.id === id ? { ...t, status: 'done', answer } : t)));
     } catch (err) {
@@ -112,7 +112,8 @@ export default function AskQuestion() {
       </Pressable>
 
       {open && (
-        <View
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           className="absolute bottom-40 left-4 right-4 md:left-auto md:w-96 rounded-2xl bg-paper-card border border-ink/15 overflow-hidden"
           style={{ maxHeight: '60%', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 }}
         >
@@ -178,7 +179,7 @@ export default function AskQuestion() {
               <Text className="font-body-semibold text-sm text-white">Ask</Text>
             </Pressable>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       )}
     </>
   );

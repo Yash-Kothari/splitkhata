@@ -172,24 +172,73 @@ export function isFirebaseConfigured() {
 // Web gates AI Logic behind App Check (reCAPTCHA v3) on top of the base
 // config - React Native can't use reCAPTCHA (it's a browser challenge), and
 // the native equivalents (App Attest/Play Integrity) need their own Apple/
-// Google developer enrollment, so mobile skips App Check entirely for now.
-// AI Logic still works without it (App Check only blocks requests once you
-// turn on Enforce mode for the API in Firebase Console, which isn't on) -
-// this is a deliberate, temporary tradeoff, not a bug.
+// Google developer enrollment, so mobile skips App Check entirely for now
+// (a deliberate call - not pursuing an Apple Developer Program membership
+// just for this, see P1-15). AI Logic still works without it today, since
+// App Check only blocks requests once Enforce mode is turned on for the API
+// in Firebase Console, which isn't on here - but Firebase's own docs
+// (https://firebase.google.com/docs/ai-logic/models, read 2026-09-29) say
+// App Check enforcement becomes REQUIRED for Firebase AI Logic across the
+// board starting 2026-11-02, not just an opt-in Enforce-mode setting - after
+// that date every AI feature here (Ask, Quick Add, receipt scan, category
+// suggestion, trip digest) may stop working regardless of this project's own
+// Enforce-mode setting, until App Check is added (at minimum for web/
+// Android, which don't need a paid Apple enrollment - App Attest is
+// iOS-only).
 export function isAiConfigured() {
   return isFirebaseConfigured();
 }
 
+// A dated, stable model id, not the 'gemini-flash-latest' rolling alias this
+// used to point at - "latest" is Google's own moving target, repointed to a
+// newer generation on their own schedule with no warning to this app, so
+// behavior (prompt adherence, JSON schema strictness, receipt-reading
+// accuracy) could silently drift underneath every AI feature at once.
+// Confirmed current/GA via Firebase's own supported-models list as of
+// 2026-09-29 (https://firebase.google.com/docs/ai-logic/models) - bump this
+// by hand (and re-test Ask/Quick Add/receipt scan) when it's time to move
+// to a newer generation, rather than it happening automatically. See also
+// the App Check note below.
+const AI_MODEL_ID = 'gemini-3.8-flash';
+
+// Every AI feature shares one "the network never answered" ceiling - none of
+// them had one before, so a stalled request left that feature's spinner
+// spinning forever with no way out short of reloading the app.
+const AI_TIMEOUT_MS = 25000;
+function withAiTimeout(promise) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("The AI didn't respond in time - check your connection and try again.")), AI_TIMEOUT_MS);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 // The Gemini service regularly answers "high demand" (HTTP 500/503) for a few
 // seconds at a time - retry a couple of times before giving up, and say so in
-// plain words instead of surfacing the raw API error.
+// plain words instead of surfacing the raw API error. A 429/quota error is a
+// different situation (retrying immediately just spends the same exhausted
+// quota again) - recognized separately and surfaced as its own plain-words
+// message with no retry, instead of falling through to whatever raw text the
+// SDK happened to produce for it.
 async function withAiRetry(call) {
   const delays = [1500, 3500];
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await call();
+      return await withAiTimeout(call());
     } catch (err) {
-      const busy = /\b(500|503)\b|high demand|overloaded|unavailable/i.test(err?.message || '');
+      const message = err?.message || '';
+      if (/\b429\b|quota|resource[_-]exhausted|rate.?limit/i.test(message)) {
+        throw new Error("You've hit the AI usage limit for now - try again in a few minutes.");
+      }
+      const busy = /\b(500|503)\b|high demand|overloaded|unavailable/i.test(message);
       if (!busy) throw err;
       if (attempt >= delays.length) throw new Error('The AI service is busy right now - try again in a moment.');
       await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
@@ -203,7 +252,7 @@ function ensureAi() {
   if (!aiInitPromise) {
     aiInitPromise = import('firebase/ai').then(({ getAI, GoogleAIBackend, getGenerativeModel }) => {
       const ai = getAI(app, { backend: new GoogleAIBackend() });
-      const model = getGenerativeModel(ai, { model: 'gemini-flash-latest' });
+      const model = getGenerativeModel(ai, { model: AI_MODEL_ID });
       return { ai, model, getGenerativeModel };
     }).catch((err) => {
       // Don't cache a failed load (e.g. a flaky network fetching the module) -
@@ -234,7 +283,7 @@ export async function generateStructured(prompt, schema) {
   const ctx = await ensureAi();
   if (!ctx) throw new Error('AI Logic is not configured.');
   const jsonModel = ctx.getGenerativeModel(ctx.ai, {
-    model: 'gemini-flash-latest',
+    model: AI_MODEL_ID,
     generationConfig: { responseMimeType: 'application/json', responseSchema: schema },
   });
   const result = await withAiRetry(() => jsonModel.generateContent(prompt));
@@ -248,7 +297,7 @@ export async function extractReceiptFromImage(base64Data, mimeType, prompt, sche
   const ctx = await ensureAi();
   if (!ctx) throw new Error('AI Logic is not configured.');
   const jsonModel = ctx.getGenerativeModel(ctx.ai, {
-    model: 'gemini-flash-latest',
+    model: AI_MODEL_ID,
     generationConfig: { responseMimeType: 'application/json', responseSchema: schema },
   });
   const result = await withAiRetry(() =>
@@ -460,14 +509,19 @@ export async function addExpense(entry) {
 }
 
 // Writes multiple expenses as one atomic operation - used for the
-// multi-month split, where a single "Add Entry" submit can create a dozen+ docs.
+// multi-month split, where a single "Add Entry" submit can create a dozen+
+// docs. Returns each new doc's id, in the same order as `entries`, so a
+// caller can do something per-entry afterward (AddEntryForm's installment
+// card-linking pass needs each installment's own id).
 export async function addExpensesBatch(entries) {
-  if (!entries.length) return;
+  if (!entries.length) return [];
   const batch = writeBatch(dbInstance);
-  for (const entry of entries) {
-    batch.set(doc(expensesRef), { ...entry, createdAt: serverTimestamp() });
-  }
+  const refs = entries.map(() => doc(expensesRef));
+  entries.forEach((entry, i) => {
+    batch.set(refs[i], { ...entry, createdAt: serverTimestamp() });
+  });
   await track(batch.commit(), 'Could not save entries');
+  return refs.map((r) => r.id);
 }
 
 export async function updateExpense(id, updates) {
@@ -476,6 +530,36 @@ export async function updateExpense(id, updates) {
 
 export async function deleteExpense(id) {
   await track(deleteDoc(doc(dbInstance, 'expenses', id)), 'Could not delete entry');
+}
+
+// P1-14: an installment set shares no doc, only a common
+// installmentGroupId stamped on each sibling at creation - these look that
+// set up and act on every member at once, instead of the user editing/
+// deleting each of the N rows one at a time.
+export async function updateInstallmentGroup(installmentGroupId, updates) {
+  const snap = await getDocs(query(expensesRef, where('installmentGroupId', '==', installmentGroupId)));
+  if (snap.empty) return;
+  const batch = writeBatch(dbInstance);
+  snap.docs.forEach((d) => batch.update(d.ref, updates));
+  await track(batch.commit(), 'Could not update the installment set');
+}
+
+// Also cleans up each installment's own linked CardTransaction (best-effort,
+// same as a single entry's delete path in household.js/travel.js) - done
+// here rather than by the caller since this function already has every
+// sibling's cardTransactionId from the query it has to run anyway.
+export async function deleteInstallmentGroup(installmentGroupId) {
+  const snap = await getDocs(query(expensesRef, where('installmentGroupId', '==', installmentGroupId)));
+  if (snap.empty) return;
+  const linkedCardTransactionIds = snap.docs.map((d) => d.data().cardTransactionId).filter(Boolean);
+  const batch = writeBatch(dbInstance);
+  snap.docs.forEach((d) => batch.delete(d.ref));
+  await track(batch.commit(), 'Could not delete the installment set');
+  await Promise.all(
+    linkedCardTransactionIds.map((id) =>
+      deleteCardTransaction(id).catch((err) => reportError(err, 'Deleted the installment set, but could not remove a linked card transaction')),
+    ),
+  );
 }
 
 export function subscribeToHouseholdBudgets(callback) {
@@ -515,17 +599,44 @@ export function subscribeToTrips(onData, onError) {
   );
 }
 
+// Returns the new trip's id (or null if it was a no-op) so a caller can
+// select it right away without relying on its name (P1-4 - tripId is the
+// real join key; the name is just a label).
 export async function addTripToDb(name, currency, year, existingTrips = [], startDate = null, endDate = null) {
   const trimmed = name.trim();
-  if (!trimmed) return;
+  if (!trimmed) return null;
   const exists = existingTrips.some((t) => t.name?.trim().toLowerCase() === trimmed.toLowerCase());
-  if (exists) return;
-  await addDoc(tripsRef, { name: trimmed, currency, year, startDate, endDate, createdAt: serverTimestamp() });
+  if (exists) return null;
+  const ref = await addDoc(tripsRef, { name: trimmed, currency, year, startDate, endDate, createdAt: serverTimestamp() });
+  return ref.id;
 }
 
 export async function updateTripInDb(tripId, updates) {
   if (!tripId) return;
   await updateDoc(doc(dbInstance, 'trips', tripId), updates);
+}
+
+// A rename has zero cascading writes, unlike everything else that used to
+// touch a trip's name (deleteTripCascade, setOpeningCash, every travel entry)
+// - now that tripId is the real join key (P1-4), the name is purely a label
+// on the trip doc itself. Still guarded against colliding with another
+// trip's name, the same guard TripPicker's create form already has -
+// otherwise a rename could quietly recreate the exact ambiguity this
+// migration exists to remove, just for new data instead of old.
+export async function renameTripInDb(tripId, newName, existingTrips = []) {
+  if (!tripId) return;
+  const trimmed = newName.trim();
+  if (!trimmed) return;
+  const collides = existingTrips.some((t) => t.id !== tripId && t.name?.trim().toLowerCase() === trimmed.toLowerCase());
+  if (collides) throw new Error(`"${trimmed}" is already a trip.`);
+  await updateTripInDb(tripId, { name: trimmed });
+}
+
+// Archiving only hides a trip from TripPicker's default browse list - its
+// entries stay fully searchable, askable and exportable. Reversible, unlike
+// delete.
+export async function archiveTripInDb(tripId, archived) {
+  await updateTripInDb(tripId, { archived: Boolean(archived) });
 }
 
 // Deleting a trip's household rollup line from Payment History left the trip
@@ -591,18 +702,31 @@ export async function deleteTripFromDb(tripId) {
 // movements, its household rollup line, then the trip. Needs the server.
 export async function deleteTripCascade(trip) {
   if (!trip?.id) return;
-  const [entriesSnap, movementsSnap] = await Promise.all([
+  // tripId is the real join key (P1-4), but a legacy entry the backfill
+  // missed may still only carry tripName - a single Firestore query can't OR
+  // across two different fields, so this runs both and dedupes by doc id,
+  // rather than trusting tripId alone and silently leaving orphans behind.
+  const dedupeById = (snaps) => {
+    const byId = new Map();
+    snaps.forEach((snap) => snap.docs.forEach((d) => byId.set(d.id, d)));
+    return [...byId.values()];
+  };
+  const [entriesById, entriesByName, movementsById, movementsByName] = await Promise.all([
+    getDocs(query(expensesRef, where('tripId', '==', trip.id))),
     getDocs(query(expensesRef, where('tripName', '==', trip.name))),
+    getDocs(query(cashMovementsRef, where('tripId', '==', trip.id))),
     getDocs(query(cashMovementsRef, where('tripName', '==', trip.name))),
   ]);
+  const entryDocs = dedupeById([entriesById, entriesByName]);
+  const movementDocs = dedupeById([movementsById, movementsByName]);
   const refs = [];
-  entriesSnap.docs.forEach((d) => {
+  entryDocs.forEach((d) => {
     const data = d.data();
     if (normalizeLedger(data.ledger) !== 'travel') return;
     refs.push(d.ref);
     if (data.cardTransactionId) refs.push(doc(dbInstance, 'cardTransactions', data.cardTransactionId));
   });
-  movementsSnap.docs.forEach((d) => refs.push(d.ref));
+  movementDocs.forEach((d) => refs.push(d.ref));
   if (trip.rolledUpEntryId) refs.push(doc(expensesRef, trip.rolledUpEntryId));
   refs.push(doc(dbInstance, 'trips', trip.id));
   // Batches cap at 500 writes; the trip doc goes last so a partial failure
@@ -643,21 +767,29 @@ export async function addCashMovementToDb(movement) {
 // expense (the trip's cash balance and its spend total would disagree).
 export async function addWithdrawal(movement, entry) {
   const batch = writeBatch(dbInstance);
-  batch.set(doc(cashMovementsRef), { ...movement, createdAt: serverTimestamp() });
-  batch.set(doc(expensesRef), { ...entry, createdAt: serverTimestamp() });
+  const movementRef = doc(cashMovementsRef);
+  batch.set(movementRef, { ...movement, createdAt: serverTimestamp() });
+  batch.set(doc(expensesRef), { ...entry, cashMovementId: movementRef.id, createdAt: serverTimestamp() });
   await track(batch.commit(), 'Could not record the withdrawal');
 }
 
 // Starting cash is one value per trip: this replaces every earlier opening
 // record for the trip. Saving used to add another record each time, so
 // correcting 20,000 to 25,000 showed 45,000.
-export async function setOpeningCash(tripName, tripId, amount) {
-  const existing = await getDocs(query(cashMovementsRef, where('tripName', '==', tripName)));
+// The opening record for a trip always lives at the deterministic id
+// `opening_${tripId}` (P1-4 - tripId is the real join key), so saving is
+// just an overwrite of that one doc - no query needed to find it. Still
+// cleans up any *other* 'opening' doc for this trip (found by tripId, not
+// name), in case one exists from before this doc-id convention - otherwise
+// the trip's cash balance would double-count two opening records.
+export async function setOpeningCash(tripId, amount) {
+  const openingRef = doc(cashMovementsRef, `opening_${tripId}`);
+  const stragglers = await getDocs(query(cashMovementsRef, where('tripId', '==', tripId), where('type', '==', 'opening')));
   const batch = writeBatch(dbInstance);
-  existing.docs.forEach((d) => {
-    if (d.data().type === 'opening') batch.delete(d.ref);
+  stragglers.docs.forEach((d) => {
+    if (d.id !== openingRef.id) batch.delete(d.ref);
   });
-  batch.set(doc(cashMovementsRef, `opening_${tripId}`), { tripName, type: 'opening', amount, createdAt: serverTimestamp() });
+  batch.set(openingRef, { tripId, type: 'opening', amount, createdAt: serverTimestamp() });
   await track(batch.commit(), 'Could not save opening cash');
 }
 
@@ -795,6 +927,75 @@ async function batchUpdateDocs(collectionRef, computeUpdates) {
     await track(batch.commit(), 'Could not update some records');
   }
   return toUpdate.length;
+}
+
+// One-time migration (P1-4): every expenses/cashMovements doc used to join
+// its trip by the plain-string tripName field, not the trip's own stable
+// id - if a trip was deleted and a new one later created with the same
+// name, its entries would silently reattach to the new trip. This adds
+// tripId to every existing doc it can confidently match, so every read-side
+// query can switch to the real join key. Triggered once per account from
+// AuthContext, guarded by the same settings/seed_state doc seedOnce uses -
+// but unlike seedOnce, the flag is written only after both batchUpdateDocs
+// calls fully succeed, not atomically with them: this can span many more
+// than one 400-write batch (batchUpdateDocs chunks internally), so it
+// structurally can't be one atomic commit the way seedOnce's handful of
+// default docs can. Each per-doc update already skips docs that have
+// tripId set, so a retry after an interrupted run is cheap, not a full
+// rewrite.
+export async function backfillTripIds() {
+  const seedStateRef = doc(dbInstance, 'settings', 'seed_state');
+  const state = await getDoc(seedStateRef);
+  if (state.exists() && state.data().tripIdBackfillV1) return null;
+
+  const tripsSnap = await getDocs(tripsRef);
+  const byId = new Set();
+  const byName = new Map();
+  tripsSnap.docs
+    .map((d) => /** @type {import('./types').Trip} */ ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0))
+    .forEach((trip) => {
+      byId.add(trip.id);
+      const key = trip.name?.trim().toLowerCase();
+      // Sorted oldest-first, so a later Map.set on a name collision leaves
+      // the most-recently-created trip as the match - an inherent,
+      // unavoidable ambiguity in the pre-migration data (two trips once
+      // shared a name), not something this backfill can resolve perfectly.
+      if (key) byName.set(key, trip);
+    });
+
+  const orphanedTripNames = new Set();
+  const matchByTripName = (tripName) => {
+    if (!tripName) return null;
+    const match = byName.get(tripName.trim().toLowerCase());
+    if (!match) orphanedTripNames.add(tripName);
+    return match;
+  };
+
+  const expensesUpdated = await batchUpdateDocs(expensesRef, (entry) => {
+    if (entry.tripId || normalizeLedger(entry.ledger) !== 'travel' || !entry.tripName) return null;
+    const match = matchByTripName(entry.tripName);
+    return match ? { tripId: match.id } : null;
+  });
+
+  const cashMovementsUpdated = await batchUpdateDocs(cashMovementsRef, (movement, docSnap) => {
+    if (movement.tripId) return null;
+    // An 'opening' doc's id already encodes its tripId (see
+    // setOpeningCash) - recoverable with zero ambiguity, no name-matching
+    // needed.
+    const openingMatch = docSnap.id.match(/^opening_(.+)$/);
+    if (openingMatch && byId.has(openingMatch[1])) return { tripId: openingMatch[1] };
+    if (!movement.tripName) return null;
+    const match = matchByTripName(movement.tripName);
+    return match ? { tripId: match.id } : null;
+  });
+
+  const summary = { expensesUpdated, cashMovementsUpdated, orphanedTripNames: [...orphanedTripNames] };
+  // Persisted (not just returned) so the one production run's result stays
+  // inspectable afterward, rather than only visible in whichever device's
+  // console happened to be open at the moment it ran.
+  await setDoc(seedStateRef, { tripIdBackfillV1: true, tripIdBackfillV1Summary: summary }, { merge: true });
+  return summary;
 }
 
 // Shared by members and guests - both are just "a person" as far as
@@ -1107,6 +1308,36 @@ export async function deleteHouseholdBudget(category) {
   await track(
     setDoc(budgetsDocRef, { budgets: { [category]: deleteField() }, updatedAt: serverTimestamp() }, { merge: true }),
     'Could not remove budget',
+  );
+}
+
+// A single whole-month cap, separate from the per-category `budgets` map
+// above (same doc, sibling field) - "can we afford this month overall,"
+// not just per-category. A dedicated listener rather than folding it into
+// subscribeToHouseholdBudgets's callback, which every existing caller
+// already treats as a flat {category: limit} map.
+export function subscribeToOverallBudget(callback) {
+  const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+  return onSnapshot(
+    budgetsDocRef,
+    (docSnap) => callback(docSnap.exists() && Number(docSnap.data().overallBudget) > 0 ? Number(docSnap.data().overallBudget) : null),
+    (err) => { reportError(err, 'Could not load overall budget'); callback(null); },
+  );
+}
+
+export async function saveOverallBudget(amount) {
+  const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+  await track(
+    setDoc(budgetsDocRef, { overallBudget: amount, updatedAt: serverTimestamp() }, { merge: true }),
+    'Could not save overall budget',
+  );
+}
+
+export async function deleteOverallBudget() {
+  const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+  await track(
+    setDoc(budgetsDocRef, { overallBudget: deleteField() }, { merge: true }),
+    'Could not remove overall budget',
   );
 }
 

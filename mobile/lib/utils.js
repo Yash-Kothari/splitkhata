@@ -132,12 +132,17 @@ export function resolveInstrument(instruments, { paymentInstrumentId, paymentMet
   );
 }
 
+// #24304A (this palette's original 5th color) was almost exactly
+// THEME_RGB.light.ink / dark.paperCard (see theme.js) - whichever category
+// landed on it rendered its donut slice and legend swatch nearly invisible
+// against the dark-mode card background (P1-13). Replaced with a mauve
+// that stays visible against both the light and dark paper/card tones.
 export const CATEGORY_COLORS = [
   '#3D7068',
   '#A63D40',
   '#C98A2C',
   '#5C6478',
-  '#24304A',
+  '#8E5B7D',
   '#6B9080',
   '#BC6C25',
   '#457B9D',
@@ -218,13 +223,27 @@ const GLOBAL_SEARCH_RESULT_LIMIT = 50;
 // haystack. A plain substring match on the whole query would miss this,
 // since real queries are often "which field has X" + "which field has Y"
 // rather than one contiguous phrase.
-export function searchAllEntries(entries, term) {
+//
+// `filters` (all optional, all exact match) narrows by payer/category/
+// paymentMethod/date range on top of the free-text term - P1-12. Browsing
+// by filters alone (no text typed) is a valid search too, so the early
+// "nothing to search" bail-out only fires when there's neither a term nor
+// a filter, not just an empty term.
+export function searchAllEntries(entries, term, filters = {}) {
+  const { payer, category, paymentMethod, dateFrom, dateTo } = filters;
   const tokens = (term || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (!tokens.length) return [];
+  const hasFilter = Boolean(payer || category || paymentMethod || dateFrom || dateTo);
+  if (!tokens.length && !hasFilter) return [];
   return entries
     .filter((e) => e.splitType !== 'settlement' && !e.isTripRollup)
+    .filter((e) => !payer || e.payer === payer)
+    .filter((e) => !category || e.category === category)
+    .filter((e) => !paymentMethod || e.paymentMethod === paymentMethod)
+    .filter((e) => !dateFrom || e.date >= dateFrom)
+    .filter((e) => !dateTo || e.date <= dateTo)
     .filter((e) => {
-      const haystack = [e.note, e.category, e.payer, e.tripName, e.amount, e.localAmount]
+      if (!tokens.length) return true;
+      const haystack = [e.note, e.category, e.payer, e.tripName, e.paymentMethod, e.amount, e.localAmount, ...(e.tags || [])]
         .filter((v) => v != null && v !== '')
         .join(' ')
         .toLowerCase();
@@ -620,6 +639,33 @@ export function computeMemberTotals(entries, members, valueField = 'amount') {
   return Object.fromEntries(members.map((m) => [m, totalsScaled[m] / (100 * scale)]));
 }
 
+// "My share this month," and a whole calendar year's per-member breakdown
+// (P1-16) - both just computeMemberTotals scoped to a period, filtered
+// through the same isCountableSpend exclusions (settlements, trip rollups,
+// cash withdrawals, wrong ledger) groupByCategory already uses elsewhere,
+// so a person's share here is computed exactly the same way it is
+// everywhere else in the app, not a second, possibly-inconsistent rule.
+export function computeMemberTotalsForPeriod(entries, members, { monthKey = null, year = null, ledger = 'household' } = {}) {
+  const targetLedger = ledger ? normalizeLedger(ledger) : null;
+  const filtered = (entries || []).filter((e) => {
+    if (!isCountableSpend(e, monthKey, targetLedger)) return false;
+    if (year && e.date?.slice(0, 4) !== String(year)) return false;
+    return true;
+  });
+  return computeMemberTotals(filtered, members);
+}
+
+// Every calendar year with at least one entry, newest first, plus the
+// current year even if it's still empty - same "always show today's bucket"
+// convention as getAvailableMonths.
+export function getAvailableYears(entries = []) {
+  const years = new Set((entries || []).map((e) => e.date?.slice(0, 4)).filter(Boolean));
+  const sorted = [...years].sort().reverse();
+  const current = String(new Date().getFullYear());
+  if (!sorted.includes(current)) sorted.unshift(current);
+  return sorted;
+}
+
 // A shared ATM withdrawal and the itemized Cash-tagged purchases it funds
 // both carry a real INR `amount`, but they're the same money once, not
 // twice - the withdrawal already creates the shared debt for that cash
@@ -669,9 +715,13 @@ export function isCashPaid(entry) {
 // so deleting or editing the entry left the tile counting cash that was
 // never withdrawn. Trips with no withdrawal entries (older data) fall back
 // to the movements.
-export function computeTripCashStats(entries, cashMovements, tripName) {
-  const tripEntries = (entries || []).filter((e) => normalizeLedger(e.ledger) === 'travel' && e.tripName === tripName);
-  const tripMovements = (cashMovements || []).filter((m) => m.tripName === tripName);
+// tripId is the real join key (P1-4); legacyTripName is a fallback for any
+// entry/cashMovement the backfill hasn't (yet, or couldn't confidently)
+// tag with a tripId.
+export function computeTripCashStats(entries, cashMovements, tripId, legacyTripName) {
+  const matchesTrip = (x) => (x.tripId ? x.tripId === tripId : x.tripName === legacyTripName);
+  const tripEntries = (entries || []).filter((e) => normalizeLedger(e.ledger) === 'travel' && matchesTrip(e));
+  const tripMovements = (cashMovements || []).filter(matchesTrip);
   const sumLocal = (list, field) => list.reduce((sum, x) => sum + toPaise(x[field]), 0) / 100;
   const opening = sumLocal(tripMovements.filter((m) => m.type === 'opening'), 'amount');
   const withdrawalEntries = tripEntries.filter((e) => e.isWithdrawal);
@@ -730,13 +780,23 @@ Settlement:
 ${settlementText}`;
 }
 
+// Gemini's structured-output validation rejects an empty `enum` array
+// outright - a ledger with (in principle) zero categories or members turned
+// every AI feature constrained by that list into a hard failure before the
+// AI ever saw the prompt (P1-15). An empty source list just means "nothing
+// to constrain to," not "nothing valid exists," so it falls back to a plain
+// unconstrained string instead of an enum.
+function enumOrOpenString(values) {
+  return values && values.length ? { type: 'string', enum: values } : { type: 'string' };
+}
+
 // Constrains the category suggestion to a value that's actually in the
 // ledger's category list (via enum) - the model can't hallucinate a
 // category that doesn't exist, it can only pick from what's given.
 export function buildCategorySuggestionSchema(categories) {
   return {
     type: 'object',
-    properties: { category: { type: 'string', enum: categories } },
+    properties: { category: enumOrOpenString(categories) },
     required: ['category'],
   };
 }
@@ -752,16 +812,16 @@ export function buildCategorySuggestionPrompt(note, categories) {
 export function buildQuickAddSchema({ categories, members, paymentMethods = [], isTravel = false }) {
   const properties = {
     amount: { type: 'number', description: 'The expense amount as a plain number, no currency symbol.' },
-    category: { type: 'string', enum: categories },
-    payer: { type: 'string', enum: members },
+    category: enumOrOpenString(categories),
+    payer: enumOrOpenString(members),
     splitType: { type: 'string', enum: ['shared', 'personal', 'owed', 'custom'] },
-    owedBy: { type: 'string', enum: members },
+    owedBy: enumOrOpenString(members),
     splitShares: {
       type: 'array',
       description: 'Only for splitType "custom": each person and the amount of the total that is theirs.',
       items: {
         type: 'object',
-        properties: { person: { type: 'string', enum: members }, amount: { type: 'number' } },
+        properties: { person: enumOrOpenString(members), amount: { type: 'number' } },
         required: ['person', 'amount'],
       },
     },
@@ -812,7 +872,7 @@ export function buildAskQuestionSchema({ categories, members, trips }) {
           type: 'object',
           properties: {
             scope: { type: 'string', enum: ['household', 'travel'] },
-            trip: { type: 'string', enum: trips },
+            trip: enumOrOpenString(trips),
             metric: {
               type: 'string',
               enum: [
@@ -827,8 +887,8 @@ export function buildAskQuestionSchema({ categories, members, trips }) {
                 'trip_comparison',
               ],
             },
-            category: { type: 'string', enum: categories },
-            member: { type: 'string', enum: members },
+            category: enumOrOpenString(categories),
+            member: enumOrOpenString(members),
             month: { type: 'string', description: 'YYYY-MM, e.g. 2026-08. Omit for all-time.' },
             count: {
               type: 'integer',
@@ -880,14 +940,19 @@ Rules:
 // formatted in INR - that's the only currency amount/e.amount is ever
 // denominated in (a trip's localAmount is reference-only, never what
 // drives a total), so there's no per-trip currency to thread through here.
-export function resolveAskQuery(spec, allEntries, members) {
+export function resolveAskQuery(spec, allEntries, members, trips = []) {
   const currency = 'INR';
   const scope = normalizeLedger(spec.scope || 'household');
   const month = spec.month || null;
   const scopeLabel = month ? formatMonthLabel(month) : 'all time';
   let scoped = allEntries.filter((e) => normalizeLedger(e.ledger) === scope);
   if (scope === 'travel' && spec.trip) {
-    scoped = scoped.filter((e) => e.tripName === spec.trip);
+    // spec.trip is a name (the AI's schema enumerates trip names, since
+    // that's what a person types/asks about) - resolve it to the real join
+    // key, tripId, with a tripName fallback for any entry the backfill
+    // hasn't (yet, or couldn't confidently) tag.
+    const matchedTrip = trips.find((t) => t.name?.trim().toLowerCase() === spec.trip.trim().toLowerCase());
+    scoped = scoped.filter((e) => (matchedTrip && e.tripId === matchedTrip.id) || (!e.tripId && e.tripName === spec.trip));
   }
   const tripLabel = scope === 'travel' && spec.trip ? ` (${spec.trip})` : '';
   const countable = scoped.filter((e) => isCountableSpend(e, month, scope));
@@ -966,22 +1031,35 @@ export function resolveAskQuery(spec, allEntries, members) {
       // Deliberately ignores scope/trip above (scoped/countable) - the
       // whole point is comparing across every trip, so it re-derives its
       // own travel-only slice from allEntries instead.
+      // Groups by tripId where present (the real join key) so two trips
+      // that once shared a name are never merged into one line, falling
+      // back to tripName grouping only for entries the backfill hasn't
+      // tagged; each group's display name is then resolved from `trips`
+      // (or the legacy tripName itself), so a rename is reflected here too.
       const travelEntries = allEntries.filter((e) => normalizeLedger(e.ledger) === 'travel');
-      const tripNames = Array.from(new Set(travelEntries.map((e) => e.tripName).filter(Boolean)));
+      const tripsById = Object.fromEntries(trips.map((t) => [t.id, t]));
+      const groups = new Map();
+      travelEntries.forEach((e) => {
+        const key = e.tripId ? `id:${e.tripId}` : e.tripName ? `name:${e.tripName}` : null;
+        if (!key) return;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(e);
+      });
       const categoryPart = spec.category ? ` on ${spec.category}` : '';
-      if (tripNames.length === 0) return `No trips recorded yet.`;
-      const perTrip = tripNames
-        .map((tripName) => {
-          const total = travelEntries
-            .filter((e) => e.tripName === tripName && isCountableSpend(e, month, 'travel') && (!spec.category || e.category === spec.category))
+      if (groups.size === 0) return `No trips recorded yet.`;
+      const perTrip = Array.from(groups.entries())
+        .map(([key, tripEntries]) => {
+          const label = key.startsWith('id:') ? tripsById[key.slice(3)]?.name || 'Unknown trip' : key.slice(5);
+          const total = tripEntries
+            .filter((e) => isCountableSpend(e, month, 'travel') && (!spec.category || e.category === spec.category))
             .reduce((sum, e) => sum + Number(e.amount || 0), 0);
-          return { tripName, total };
+          return { label, total };
         })
         .filter((t) => t.total > 0)
         .sort((a, b) => b.total - a.total)
         .slice(0, 10);
       if (perTrip.length === 0) return `No${categoryPart} expenses recorded across any trip (${scopeLabel}).`;
-      const lines = perTrip.map((t) => `${t.tripName}: ${formatCurrency(t.total, currency)}`);
+      const lines = perTrip.map((t) => `${t.label}: ${formatCurrency(t.total, currency)}`);
       return `Spend${categoryPart} by trip (${scopeLabel}): ${lines.join(', ')}.`;
     }
     default:
@@ -1057,6 +1135,15 @@ export function splitAmountEvenly(total, count) {
   return Array.from({ length: count }, (_, i) => (base + (i < remainder ? 1 : 0)) / 100);
 }
 
+// A short, locally-unique-enough id for correlating records created
+// together (e.g. an installment set's siblings, via entry.installmentGroupId)
+// - not a security token and never used as a Firestore doc id itself, so
+// Math.random() is fine; doesn't need this file's zero-import rule bent for
+// a real UUID library.
+export function generateGroupId(prefix = 'grp') {
+  return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+}
+
 // User-typed money: "1200", "1,200.50", " 1 200 " -> a number rounded to
 // paise; anything else -> null. parseFloat('1,200') is 1, and the website
 // ignores the numeric-keyboard hint, so typing "1,200" used to save ₹1.
@@ -1068,6 +1155,23 @@ export function parseAmountInput(text, { allowNegative = false } = {}) {
   const value = Number(cleaned);
   if (!Number.isFinite(value) || (value < 0 && !allowNegative)) return null;
   return Math.round(value * 100) / 100;
+}
+
+// Comma-separated free text ("vacation, reimbursable") into a clean tag
+// list - trimmed, empties dropped, duplicates (case-insensitive) collapsed
+// to the first spelling seen.
+export function parseTagsInput(text) {
+  const seen = new Set();
+  const tags = [];
+  for (const raw of (text || '').split(',')) {
+    const tag = raw.trim();
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    tags.push(tag);
+  }
+  return tags;
 }
 
 // True only for a real calendar date written YYYY-MM-DD. A free-text date on
@@ -1314,8 +1418,31 @@ export function computeBudgetAlerts(categoryTotals, budgets) {
     .map((s) => ({ ...s, status: s.pctUsed >= 1 ? 'over' : 'warning' }));
 }
 
-// Local storage helpers
+// Local storage helpers. `localStorage` only exists on web - on native this
+// used to fall through to `memoryStorage` with nothing else backing it, so
+// every value stored this way (theme, and whatever else calls getItem/
+// setItem below) reset on every app launch (a fresh JS context = a fresh,
+// empty memoryStorage). Fixed by letting something outside this file - see
+// hydrateMemoryStorage/setNativeStorageWriter - read/write a real native
+// store (AsyncStorage) into/out of this same in-memory object. This module
+// deliberately has zero imports (it's exercised directly by the Node test
+// suite, no RN environment), so it can't reach for a native module itself;
+// app/_layout.js wires the native side in at startup instead.
 let memoryStorage = {};
+let nativeStorageWriter = null;
+
+// Called once at startup (native only) with whatever was last persisted,
+// before anything reads through getItem - see app/_layout.js.
+export function hydrateMemoryStorage(data) {
+  memoryStorage = { ...memoryStorage, ...(data || {}) };
+}
+
+// Called once at startup (native only) to receive every future write, so
+// setItem can persist beyond this session without importing AsyncStorage
+// directly.
+export function setNativeStorageWriter(fn) {
+  nativeStorageWriter = fn;
+}
 
 function getItem(key) {
   try {
@@ -1338,6 +1465,7 @@ function setItem(key, value) {
     // fallback
   }
   memoryStorage[key] = value;
+  nativeStorageWriter?.(memoryStorage);
 }
 
 // Per-device, not synced via Firestore like the household's shared settings
@@ -1348,11 +1476,12 @@ function setItem(key, value) {
 export const COLOR_SCHEME_KEY = 'household-ledger-color-scheme';
 
 export function getStoredColorScheme() {
-  return getItem(COLOR_SCHEME_KEY) === 'dark' ? 'dark' : 'light';
+  const stored = getItem(COLOR_SCHEME_KEY);
+  return stored === 'dark' || stored === 'system' ? stored : 'light';
 }
 
 export function setStoredColorScheme(scheme) {
-  setItem(COLOR_SCHEME_KEY, scheme === 'dark' ? 'dark' : 'light');
+  setItem(COLOR_SCHEME_KEY, scheme === 'dark' || scheme === 'system' ? scheme : 'light');
 }
 
 function isPinConfigEnabled(config) {
@@ -1540,7 +1669,7 @@ export function computeRecurringEntriesToGenerate(rules, currentMonthKey) {
         note: rule.note || '',
         date: buildRecurringEntryDate(monthKey, rule.dayOfMonth),
         ledger: 'household',
-        tripName: '',
+        tripId: null,
         paymentMethod: rule.paymentMethod || null,
         paymentInstrumentId: rule.paymentInstrumentId || null,
         paymentType: rule.paymentType || null,
@@ -1570,7 +1699,17 @@ export function computeRecurringEntriesToGenerate(rules, currentMonthKey) {
 // top of the projected burn rate below). `lastGeneratedMonth` is the
 // correct signal: a rule not yet generated for the current month is a real
 // future commitment; one that has been is already reflected in `entries`.
-export function computeMonthForecast(entries, recurringRules, budgets, today) {
+//
+// A recurring-rule-generated entry, or any entry dated later this month
+// than today (a bill entered ahead of time), is a known, fixed commitment
+// already sitting in `entries` - not a steady daily spend. Naively
+// projecting a category's whole spend-to-date at the days-elapsed rate
+// multiplied a lump sum like rent (posted in full on day 1 or 2) into many
+// months' worth by month-end - a ₹30k rent line read as "on pace for
+// ₹4.5L". These committed amounts are carried into the projection as-is;
+// only the remaining, genuinely variable spend is scaled by
+// daysElapsed/totalDays.
+export function computeMonthForecast(entries, recurringRules, budgets, today, overallBudget = null) {
   const monthKey = getMonthKey(today);
   const [y, m] = monthKey.split('-').map(Number);
   const totalDays = daysInMonth(y, m);
@@ -1581,13 +1720,31 @@ export function computeMonthForecast(entries, recurringRules, budgets, today) {
     .filter((r) => r?.active && (!r.lastGeneratedMonth || r.lastGeneratedMonth < monthKey))
     .reduce((sum, r) => sum + (Number(r.amount) || 0), 0);
 
+  const isKnownCommitment = (e) => Boolean(e.isRecurring) || (e.date && e.date > today);
+  const project = (spent, committed) => {
+    const variableSpent = spent - committed;
+    const projectedVariable = daysElapsed > 0 ? (variableSpent / daysElapsed) * totalDays : variableSpent;
+    return committed + Math.max(projectedVariable, 0);
+  };
+
   const categoryTotals = groupByCategory(entries, monthKey, 'household');
+  const committedCategoryTotals = groupByCategory((entries || []).filter(isKnownCommitment), monthKey, 'household');
   const categories = computeBudgetStatus(categoryTotals, budgets).map((s) => {
-    const projectedSpent = daysElapsed > 0 ? (s.spent / daysElapsed) * totalDays : s.spent;
+    const committed = committedCategoryTotals.find((c) => c.category === s.category)?.amount || 0;
+    const projectedSpent = project(s.spent, committed);
     return { ...s, projectedSpent, projectedPctUsed: s.limit ? projectedSpent / s.limit : 0 };
   });
 
-  return { monthKey, daysElapsed, daysRemaining, totalDays, remainingCommitted, categories };
+  let overall = null;
+  const numericOverallBudget = Number(overallBudget);
+  if (numericOverallBudget > 0) {
+    const spent = categoryTotals.reduce((sum, c) => sum + c.amount, 0);
+    const committed = committedCategoryTotals.reduce((sum, c) => sum + c.amount, 0);
+    const projectedSpent = project(spent, committed);
+    overall = { spent, limit: numericOverallBudget, projectedSpent, projectedPctUsed: projectedSpent / numericOverallBudget };
+  }
+
+  return { monthKey, daysElapsed, daysRemaining, totalDays, remainingCommitted, categories, overall };
 }
 
 export const PAYMENT_REMINDER_CONFIG_KEY = 'splitkhata_payment_reminder_config';
@@ -1884,6 +2041,85 @@ export function listRecentCardCycles(billingCycleDay, today, count = 12) {
     cursor = `${prev.getFullYear()}-${pad2(prev.getMonth() + 1)}-${pad2(prev.getDate())}`;
   }
   return cycles;
+}
+
+// Whole days from ISO date `a` to ISO date `b` (positive when b is later).
+function daysBetweenISO(a, b) {
+  return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
+}
+
+// Adds `days` calendar days to an ISO date string.
+export function addDaysToDateISO(dateStr, days) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d + days);
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+}
+
+// A card's most recently CLOSED billing cycle - the one whose statement has
+// already been cut and is either due or coming due - plus its due date
+// (statement close + dueDateOffsetDays). Distinct from the currently-open
+// cycle (listRecentCardCycles' first result), whose statement hasn't been
+// generated yet. Returns null for a brand-new card with no cycle history.
+export function getCardDueCycle(card, today = todayISO()) {
+  const [, lastClosed] = listRecentCardCycles(card?.billingCycleDay ?? 1, today, 2);
+  if (!lastClosed) return null;
+  const offsetDays = Number(card?.dueDateOffsetDays);
+  const dueDate = addDaysToDateISO(lastClosed.cycleEnd, Number.isFinite(offsetDays) ? offsetDays : 20);
+  return { ...lastClosed, dueDate };
+}
+
+// Which cards have an unpaid bill due within `daysAhead` days (or already
+// overdue) - the "dueDateOffsetDays is stored but unused" gap. Skips a
+// cycle with nothing owed, and any cycle already marked paid via
+// saveCardBillingCycle's `paidAt` (see CardBillingHistory's BillingCycleRow).
+// Sorted soonest-due first, like a "what needs attention now" list.
+export function computeCardDueReminders(cards, cardTransactions, cardBillingCycles, today = todayISO(), daysAhead = 5) {
+  const reminders = [];
+  for (const card of cards || []) {
+    const dueCycle = getCardDueCycle(card, today);
+    if (!dueCycle) continue;
+    const daysUntilDue = daysBetweenISO(today, dueCycle.dueDate);
+    if (daysUntilDue > daysAhead) continue;
+    const cardTxns = (cardTransactions || []).filter((t) => t.cardId === card.id);
+    const ledger = computeCardRewardLedger(card, cardTxns, today);
+    const amountDue = ledger.cycleBills[dueCycle.cycleStart]?.statement ?? 0;
+    if (amountDue <= 0) continue;
+    const cycleRecord = (cardBillingCycles || []).find(
+      (c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card.id, dueCycle.cycleStart),
+    );
+    if (cycleRecord?.paidAt) continue;
+    reminders.push({
+      cardId: card.id,
+      cardName: card.name,
+      cycleStart: dueCycle.cycleStart,
+      cycleEnd: dueCycle.cycleEnd,
+      dueDate: dueCycle.dueDate,
+      amountDue,
+      daysUntilDue,
+      overdue: daysUntilDue < 0,
+    });
+  }
+  return reminders.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+}
+
+// "Is this card worth keeping" - reward value earned within the card's own
+// fee year (anchored to renewalDate's month, same shape as
+// getAnnualMilestoneWindow) against the annual fee charged for that year.
+// Points-unit cards get their earned total but no rupee net value - that
+// needs a ₹-per-point conversion this app doesn't have (P1-9, declined).
+// Returns null when the card has no fee/renewal date set - nothing to
+// compare against.
+export function computeCardAnnualValue(card, cardTxns, today = todayISO()) {
+  const fee = Number(card?.annualFee);
+  if (!card?.renewalDate || !(fee > 0)) return null;
+  const anchorMonth = Number(card.renewalDate.slice(5, 7));
+  const { periodStart, periodEnd } = getAnnualMilestoneWindow(anchorMonth, today);
+  const ledger = computeCardRewardLedger(card, cardTxns, today);
+  const earned = (ledger.lumps || [])
+    .filter((l) => l.date >= periodStart && l.date < periodEnd)
+    .reduce((sum, l) => sum + l.amount, 0);
+  const netValue = ledger.unit === 'inr' ? earned - fee : null;
+  return { periodStart, periodEnd, earned, fee, unit: ledger.unit, netValue };
 }
 
 // Calendar-quarter bounds (Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec) for whichever
@@ -2516,6 +2752,26 @@ export function getRecentCombinations(entries, limit = 5, windowSize = 40) {
     .slice(0, limit);
 }
 
+// Same date, amount, category and payer as an entry already on the books -
+// most likely a re-entered expense (forgot it was already logged), not a
+// second real purchase. Settlements, trip rollups and withdrawals are
+// transfers, not spend, so they're never candidates either direction.
+export function findPossibleDuplicateEntry(entries, candidate) {
+  if (!candidate.category || !candidate.payer || !(candidate.amount > 0) || !candidate.date) return null;
+  return (
+    (entries || []).find(
+      (e) =>
+        e.splitType !== 'settlement' &&
+        !e.isTripRollup &&
+        !e.isWithdrawal &&
+        e.date === candidate.date &&
+        e.category === candidate.category &&
+        e.payer === candidate.payer &&
+        Number(e.amount) === Number(candidate.amount),
+    ) || null
+  );
+}
+
 // Progress toward a spend milestone (quarterly/annual fee-waiver/bonus) -
 // same shape as computeBudgetStatus so the UI can reuse the same progress
 // bar treatment. `periodStart`/`periodEnd` are the calendar window the
@@ -3009,7 +3265,7 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
     .map(([date, amount]) => ({ date, amount }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  return { total, credited, pending, cycleRewards, cycleBills, unit, capUsage: ctx };
+  return { total, credited, pending, cycleRewards, cycleBills, unit, capUsage: ctx, lumps };
 }
 
 export const CREDIT_CARDS_KEY = 'splitkhata_credit_cards';

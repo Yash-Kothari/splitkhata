@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, ScrollView } from 'react-native';
+import { View, ScrollView, Platform, KeyboardAvoidingView, useWindowDimensions } from 'react-native';
 import {
   subscribeToExpenses,
   subscribeToTrips,
@@ -12,6 +12,7 @@ import {
   subscribeToCardTransactions,
   deleteExpense,
   deleteCardTransaction,
+  deleteCashMovementFromDb,
 } from '../../lib/firebase';
 import { useAuth } from '../../lib/AuthContext';
 import { useJump } from '../../lib/JumpContext';
@@ -44,9 +45,13 @@ export default function Travel() {
   const [cardTransactions, setCardTransactions] = useState([]);
   const instruments = usePaymentInstruments(creditCards);
 
-  const [selectedTrip, setSelectedTrip] = useState('');
+  const [selectedTripId, setSelectedTripId] = useState('');
   const [currentCurrency, setCurrentCurrency] = useState('INR');
   const [showSettings, setShowSettings] = useState(false);
+  // Tailwind's order-* classes only apply on the website - see
+  // household.js for the same pattern and the reasoning.
+  const { width } = useWindowDimensions();
+  const nativeStacked = Platform.OS !== 'web' && width < 1024;
 
   // Mirrors household.js - deleting a linked entry also deletes the card
   // transaction it created (see AddEntryForm's handleSubmit).
@@ -58,6 +63,13 @@ export default function Travel() {
         await deleteCardTransaction(entry.cardTransactionId);
       } catch (err) {
         reportError(err, 'Deleted the entry, but could not remove its linked card transaction');
+      }
+    }
+    if (entry?.cashMovementId) {
+      try {
+        await deleteCashMovementFromDb(entry.cashMovementId);
+      } catch (err) {
+        reportError(err, 'Deleted the entry, but could not remove its linked cash movement');
       }
     }
   }
@@ -96,11 +108,16 @@ export default function Travel() {
   useEffect(() => subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')), []);
   useEffect(() => subscribeToCardTransactions(setCardTransactions, (err) => reportError(err, 'Could not load card transactions')), []);
 
-  const selectedTripObj = trips.find((t) => t.name === selectedTrip) || null;
+  const selectedTripObj = trips.find((t) => t.id === selectedTripId) || null;
 
   const tripEntries = useMemo(
-    () => (allTravelEntries || []).filter((e) => normalizeLedger(e.ledger) === 'travel' && e.tripName === selectedTrip),
-    [allTravelEntries, selectedTrip],
+    () =>
+      (allTravelEntries || []).filter(
+        (e) =>
+          normalizeLedger(e.ledger) === 'travel' &&
+          (e.tripId ? e.tripId === selectedTripId : e.tripName === selectedTripObj?.name),
+      ),
+    [allTravelEntries, selectedTripId, selectedTripObj],
   );
 
   const activeMembersList = useMemo(
@@ -117,16 +134,26 @@ export default function Travel() {
       }
     : null;
 
+  const [highlightEntryId, setHighlightEntryId] = useState(null);
   useEffect(() => {
     if (pendingJump?.ledger === 'travel') {
-      if (pendingJump.tripName) setSelectedTrip(pendingJump.tripName);
+      // tripId is the real join key (P1-4); tripName is a fallback for a
+      // jump to an entry the backfill hasn't tagged yet.
+      if (pendingJump.tripId) {
+        setSelectedTripId(pendingJump.tripId);
+      } else if (pendingJump.tripName) {
+        const match = trips.find((t) => t.name === pendingJump.tripName);
+        if (match) setSelectedTripId(match.id);
+      }
+      setHighlightEntryId(pendingJump.entryId || null);
       setPendingJump(null);
     }
-  }, [pendingJump, setPendingJump]);
+  }, [pendingJump, setPendingJump, trips]);
 
   return (
     <View className="flex-1 bg-paper">
-      <AppHeader badge={selectedTrip ? `✈️ ${selectedTrip}` : '✈️ Travel'} />
+      <AppHeader badge={selectedTripObj ? `✈️ ${selectedTripObj.name}` : '✈️ Travel'} />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={{ paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
         <View className="px-4">
           <TripPicker
@@ -134,8 +161,8 @@ export default function Travel() {
             cashMovements={cashMovements}
             entries={allTravelEntries || []}
             dbCurrencies={currencies}
-            selectedTrip={selectedTrip}
-            onTripSelect={setSelectedTrip}
+            selectedTripId={selectedTripId}
+            onTripSelect={setSelectedTripId}
             currentCurrency={currentCurrency}
             onCurrencyChange={setCurrentCurrency}
             onOpenSettings={() => setShowSettings(true)}
@@ -155,9 +182,10 @@ export default function Travel() {
               entries={tripEntries}
               ledger="travel"
               dbMembers={activeMembersList}
-              tripName={selectedTrip}
+              tripName={selectedTripObj.name}
               tripId={selectedTripObj.id}
               tripRollup={tripRollup}
+              instruments={instruments}
             />
           )}
         </View>
@@ -165,13 +193,14 @@ export default function Travel() {
         {/* Two-column shell above 1024px - see household.js for the same
             pattern and the reasoning behind the order-* stacking. */}
         {selectedTripObj && allTravelEntries && (
-          <View className="flex-col lg:flex-row" style={{ gap: 20 }}>
+          <View className="flex-col lg:flex-row" style={nativeStacked ? { gap: 20, flexDirection: 'column-reverse' } : { gap: 20 }}>
             <View className="order-2 lg:order-1 lg:flex-1">
               <View className="px-4">
                 <AddEntryForm
                   deviceName={memberForUser(user, members) || undefined}
                   ledger="travel"
-                  tripName={selectedTrip}
+                  tripName={selectedTripObj.name}
+                  tripId={selectedTripObj.id}
                   dbCategories={categories}
                   dbMembers={activeMembersList}
                   currentCurrency={selectedTripObj.currency}
@@ -191,6 +220,7 @@ export default function Travel() {
                 instruments={instruments}
                 creditCards={creditCards}
                 currentCurrency={selectedTripObj.currency}
+                highlightId={highlightEntryId}
                 pendingDeletes={pendingDeletes}
                 onDelete={handleDelete}
               />
@@ -211,6 +241,7 @@ export default function Travel() {
           </View>
         )}
       </ScrollView>
+      </KeyboardAvoidingView>
 
       <UndoToast
         pendingDeleteList={pendingDeleteList}
@@ -225,12 +256,13 @@ export default function Travel() {
         trips={trips}
         entries={allTravelEntries || []}
         dbCategories={categories}
+        dbCurrencies={currencies}
         instruments={instruments}
         dbMembers={members}
         dbGuests={guests}
         guestRawDocs={guestRawDocs}
         currentCurrency={selectedTripObj?.currency}
-        onTripDeleted={() => setSelectedTrip('')}
+        onTripDeleted={() => setSelectedTripId('')}
         onSaveError={(err) => reportError(err, 'Could not save')}
       />
     </View>

@@ -28,3 +28,4 @@ test('no global crypto.randomUUID (undefined on Hermes) - use expo-crypto', () =
   const offenders = files.filter((f) => readFileSync(f, 'utf8').includes('crypto.randomUUID'));
   assert.deepEqual(offenders.map((f) => f.slice(root.length + 1)), []);
 });
+

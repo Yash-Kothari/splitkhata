@@ -21,12 +21,22 @@ import {
   parseAmountInput,
   isValidISODate,
   findBalanceIssues,
+  buildPaymentInstruments,
 } from '../lib/utils';
 
 // RN port of web's BalanceStrip.jsx - household net balance, or (ledger=
 // 'travel') a trip summary: guest settlements, reward points, total spend,
 // and a rollup-to-household action.
-export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName = '', tripId = '', tripRollup = null, onSaveError }) {
+export default function BalanceStrip({
+  entries,
+  ledger,
+  dbMembers = [],
+  tripName = '',
+  tripId = '',
+  tripRollup = null,
+  onSaveError,
+  instruments: instrumentsProp,
+}) {
   const isTravel = ledger === 'travel';
   const balanceEntries = useMemo(() => (isTravel ? excludeCashSpend(entries) : entries), [entries, isTravel]);
   const balance = useMemo(() => computeBalance(balanceEntries, ledger, dbMembers), [balanceEntries, ledger, dbMembers]);
@@ -96,10 +106,21 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
   );
   const rollupNowSettled = Boolean(tripRollup && balance.status === 'settled');
 
+  // Same instrument list AddEntryForm uses, so "how was this settled" reads
+  // the same way as every other entry - a settlement just never links a
+  // card transaction (see handleConfirm), since paying off a housemate
+  // isn't a purchase that should earn that card rewards.
+  const resolvedInstruments = useMemo(
+    () => (instrumentsProp && instrumentsProp.length ? instrumentsProp : buildPaymentInstruments([{ name: 'Cash' }], [])),
+    [instrumentsProp],
+  );
+  const paymentMethodOptions = useMemo(() => resolvedInstruments.map((i) => i.label), [resolvedInstruments]);
+
   const [settling, setSettling] = useState(false);
   const [amount, setAmount] = useState('');
   const [settlePayer, setSettlePayer] = useState('');
   const [settleOwedBy, setSettleOwedBy] = useState('');
+  const [settlePaymentMethod, setSettlePaymentMethod] = useState('');
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -112,6 +133,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
     setAmount(balance.status === 'settled' ? '' : balance.amount.toFixed(2));
     setSettlePayer(defaultPayer);
     setSettleOwedBy(defaultOwedBy);
+    setSettlePaymentMethod(paymentMethodOptions[0] || 'Cash');
     setDate(todayISO());
     setNote('');
     setSettling(true);
@@ -140,6 +162,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
     }
     setSaving(true);
     try {
+      const selectedInstrument = resolvedInstruments.find((i) => i.label === settlePaymentMethod) || null;
       await addExpense({
         amount: parsed,
         payer: settlePayer,
@@ -150,7 +173,10 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
         note: note.trim(),
         date,
         ledger,
-        tripName: isTravel ? tripName : '',
+        tripId: isTravel ? tripId : null,
+        paymentMethod: settlePaymentMethod || null,
+        paymentInstrumentId: selectedInstrument?.id || null,
+        paymentType: selectedInstrument?.type || null,
       });
       setSettling(false);
     } catch (err) {
@@ -211,7 +237,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
               note: `From ${tripName} trip`,
               date: lastEntryDate,
               ledger: 'household',
-              tripName: '',
+              tripId: null,
               isTripRollup: true,
               rewardPoints: rollupRewardPoints,
             },
@@ -361,7 +387,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
           <>
             {!settling && (
               <Pressable onPress={startSettling} className="w-full sm:w-auto min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center">
-                <Text className="font-body-semibold text-xs text-white">Record Payment</Text>
+                <Text className="font-body-semibold text-xs text-white">Settle Up</Text>
               </Pressable>
             )}
             {tripRollup ? (
@@ -394,7 +420,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
       ) : (
         !settling && (
           <Pressable onPress={startSettling} className="w-full sm:w-auto min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center">
-            <Text className="font-body-semibold text-xs text-white">Record Payment</Text>
+            <Text className="font-body-semibold text-xs text-white">Settle Up</Text>
           </Pressable>
         )
       )}
@@ -494,11 +520,14 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
           </Text>
 
           <View className="flex-row flex-wrap mb-3" style={{ gap: 12 }}>
-            <View className="w-full sm:w-[calc(50%-6px)]">
+            <View className="w-full sm:w-[calc(33.333%-8px)]">
               <PickerField label="Paid by" value={settlePayer} options={dbMembers} onChange={setSettlePayer} />
             </View>
-            <View className="w-full sm:w-[calc(50%-6px)]">
+            <View className="w-full sm:w-[calc(33.333%-8px)]">
               <PickerField label="Paid to" value={settleOwedBy} options={dbMembers} onChange={setSettleOwedBy} />
+            </View>
+            <View className="w-full sm:w-[calc(33.333%-8px)]">
+              <PickerField label="Payment Method" value={settlePaymentMethod} options={paymentMethodOptions} onChange={setSettlePaymentMethod} />
             </View>
           </View>
           {settlePayer && settleOwedBy && settlePayer === settleOwedBy && (
@@ -556,7 +585,7 @@ export default function BalanceStrip({ entries, ledger, dbMembers = [], tripName
               disabled={saving || !amount || !settlePayer || !settleOwedBy || settlePayer === settleOwedBy}
               className="flex-1 min-h-10 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
             >
-              {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-xs text-white">Record Payment</Text>}
+              {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-xs text-white">Settle Up</Text>}
             </Pressable>
             <Pressable
               onPress={() => setSettling(false)}

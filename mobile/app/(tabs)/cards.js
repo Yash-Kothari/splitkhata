@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ScrollView } from 'react-native';
+import { View, Text, TextInput, Pressable, ScrollView, Platform, KeyboardAvoidingView, useWindowDimensions } from 'react-native';
 import {
   subscribeToCreditCards,
   subscribeToCardTransactions,
@@ -21,9 +21,12 @@ import {
   getAnnualMilestoneWindow,
   computeCardCapStatus,
   getQuarterBounds,
+  computeCardDueReminders,
+  computeCardAnnualValue,
 } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import { useUndoDelete } from '../../lib/useUndoDelete';
+import { useSettingsModal } from '../../lib/SettingsModalContext';
 import Card from '../../components/Card';
 import CardTransactionForm from '../../components/CardTransactionForm';
 import CardTransactionRow from '../../components/CardTransactionRow';
@@ -57,7 +60,11 @@ export default function Cards() {
   const [txnSearch, setTxnSearch] = useState('');
   const [showMilestones, setShowMilestones] = useState(true);
   const [showCaps, setShowCaps] = useState(true);
-  const [showSettings, setShowSettings] = useState(false);
+  const { open: openSettings } = useSettingsModal();
+  // Tailwind's order-* classes only apply on the website - see
+  // household.js for the same pattern and the reasoning.
+  const { width } = useWindowDimensions();
+  const nativeStacked = Platform.OS !== 'web' && width < 1024;
   const { pendingDeletes, handleDelete, handleUndo, pendingDeleteList } = useUndoDelete(deleteCardTransaction, (err) =>
     reportError(err, 'Could not delete transaction'),
   );
@@ -130,6 +137,11 @@ export default function Cards() {
       )
     : null;
   const capStatuses = selectedCard ? computeCardCapStatus(selectedCard, cardTxns, currentCycleTxns, today) : [];
+  const dueReminders = useMemo(
+    () => computeCardDueReminders(creditCards, cardTransactions, cardBillingCycles, today),
+    [creditCards, cardTransactions, cardBillingCycles, today],
+  );
+  const annualValue = selectedCard ? computeCardAnnualValue(selectedCard, cardTxns, today) : null;
 
   const filteredTxns = useMemo(() => {
     const term = txnSearch.trim().toLowerCase();
@@ -142,14 +154,14 @@ export default function Cards() {
   if (creditCards.length === 0) {
     return (
       <View className="flex-1 bg-paper">
-        <AppHeader badge="💳 Cards" showSettings={showSettings} onShowSettingsChange={setShowSettings} />
+        <AppHeader badge="💳 Cards" />
         <View className="px-4" style={{ paddingTop: 16 }}>
           <Card className="items-center px-6 py-8">
             <Text className="font-display text-lg text-ink mb-2">No cards yet</Text>
             <Text className="font-body text-sm text-muted-text text-center mb-4">
               Add your first credit card in Settings to start tracking transactions, reward points, and billing cycles.
             </Text>
-            <Pressable onPress={() => setShowSettings(true)} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center">
+            <Pressable onPress={openSettings} className="min-h-11 px-4 rounded-xl bg-ledger-green items-center justify-center">
               <Text className="font-body-semibold text-white">Open Settings</Text>
             </Pressable>
           </Card>
@@ -160,11 +172,31 @@ export default function Cards() {
 
   return (
     <View className="flex-1 bg-paper">
-      <AppHeader badge="💳 Cards" showSettings={showSettings} onShowSettingsChange={setShowSettings} />
+      <AppHeader badge="💳 Cards" />
 
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={{ paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
         <View className="px-4">
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4" contentContainerStyle={{ gap: 6 }}>
+          {dueReminders.length > 0 && (
+            <View className="rounded-2xl bg-paper-card border border-mustard/60 border-l-4 p-4 mb-4">
+              <Text className="font-display text-sm text-ink mb-1.5">⏰ Bill Due</Text>
+              <View style={{ gap: 4 }}>
+                {dueReminders.map((r) => (
+                  <Text key={r.cardId} className="font-body text-sm text-ink">
+                    <Text className="font-body-semibold">{r.cardName}</Text>: {formatCurrency(r.amountDue)} due{' '}
+                    {r.overdue ? (
+                      <Text className="font-body-semibold text-stamp-red">{Math.abs(r.daysUntilDue)} day(s) ago</Text>
+                    ) : r.daysUntilDue === 0 ? (
+                      <Text className="font-body-semibold text-stamp-red">today</Text>
+                    ) : (
+                      <Text className="font-body-semibold">in {r.daysUntilDue} day(s)</Text>
+                    )}
+                  </Text>
+                ))}
+              </View>
+            </View>
+          )}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" className="mb-4" contentContainerStyle={{ gap: 6 }}>
             {creditCards.map((card) => (
               <Pressable
                 key={card.id}
@@ -185,7 +217,7 @@ export default function Cards() {
         {/* Two-column shell above 1024px - see household.js for the same
             pattern and the reasoning behind the order-* stacking. */}
         {selectedCard && (
-          <View className="flex-col lg:flex-row" style={{ gap: 20 }}>
+          <View className="flex-col lg:flex-row" style={nativeStacked ? { gap: 20, flexDirection: 'column-reverse' } : { gap: 20 }}>
             <View className="order-2 lg:order-1 lg:flex-1 px-4">
               <CardTransactionForm key={selectedCard.id} card={selectedCard} cardTxns={cardTxns} onSaveError={(err) => reportError(err, 'Could not save transaction')} />
 
@@ -277,6 +309,35 @@ export default function Cards() {
                 </View>
               </Card>
 
+              {annualValue && (
+                <Card className="p-4">
+                  <Text className="font-display text-sm text-ink mb-2">Annual Fee & Value</Text>
+                  <Text className="font-body text-2xs text-muted-text mb-2">
+                    {annualValue.periodStart} – {annualValue.periodEnd}
+                  </Text>
+                  <View className="flex-row gap-3">
+                    <View className="flex-1">
+                      <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Earned</Text>
+                      <Text className="font-mono-bold text-ink text-base">{formatReward(annualValue.earned, annualValue.unit)}</Text>
+                    </View>
+                    <View className="flex-1">
+                      <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Fee</Text>
+                      <Text className="font-mono-bold text-ink text-base">{formatCurrency(annualValue.fee)}</Text>
+                    </View>
+                  </View>
+                  {annualValue.netValue != null && (
+                    <Text className={`font-mono-bold text-sm mt-2 ${annualValue.netValue >= 0 ? 'text-ledger-green' : 'text-stamp-red'}`}>
+                      Net {annualValue.netValue >= 0 ? '+' : ''}{formatCurrency(annualValue.netValue)} this fee-year
+                    </Text>
+                  )}
+                  {annualValue.netValue == null && (
+                    <Text className="font-body text-2xs text-muted-text mt-2">
+                      Points can't be compared to the fee in rupees yet - no ₹-per-point value is tracked.
+                    </Text>
+                  )}
+                </Card>
+              )}
+
               {(quarterlyMilestone || annualMilestone) && (
                 <Card className="p-4">
                   <Pressable onPress={() => setShowMilestones((v) => !v)} className="flex-row items-center justify-between">
@@ -358,6 +419,7 @@ export default function Cards() {
           </View>
         )}
       </ScrollView>
+      </KeyboardAvoidingView>
 
       <UndoToast
         pendingDeleteList={pendingDeleteList}

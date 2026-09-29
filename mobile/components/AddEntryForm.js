@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
-import { notify } from '../lib/dialogs';
+import { View, Text, TextInput, Pressable, ActivityIndicator, Keyboard } from 'react-native';
+import { notify, confirmAsync } from '../lib/dialogs';
 import * as ImagePicker from 'expo-image-picker';
 import PickerField from './PickerField';
 import DateField from './DateField';
@@ -19,6 +19,7 @@ import {
   todayISO,
   addMonthsToDateISO,
   splitAmountEvenly,
+  generateGroupId,
   computeFifoCashAmount,
   formatFifoBreakdownSummary,
   buildQuickAddPrompt,
@@ -35,6 +36,8 @@ import {
   parseAmountInput,
   isValidISODate,
   isCashPaid,
+  findPossibleDuplicateEntry,
+  parseTagsInput,
 } from '../lib/utils';
 
 const SPLIT_TYPE_OPTIONS = [
@@ -63,6 +66,7 @@ export default function AddEntryForm({
   onSaveError,
   ledger = 'household',
   tripName = '',
+  tripId = '',
   dbCategories,
   dbMembers = [],
   currentCurrency = 'INR',
@@ -100,6 +104,7 @@ export default function AddEntryForm({
   const selectedInstrument = instruments.find((i) => i.label === paymentMethod) || null;
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
+  const [tagsText, setTagsText] = useState('');
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [aiToolsOpen, setAiToolsOpen] = useState(false);
@@ -313,6 +318,18 @@ export default function AddEntryForm({
       notify('Pick who owes', 'The person who owes must be different from who paid.');
       return;
     }
+
+    const duplicate = findPossibleDuplicateEntry(recentEntries, { category, payer, amount: parsed, date });
+    if (duplicate) {
+      const proceed = await confirmAsync({
+        title: 'Possible duplicate',
+        message: `${formatCurrency(parsed)} for ${category} paid by ${payer} is already logged on ${date}${duplicate.note ? ` ("${duplicate.note}")` : ''}. Add this one too?`,
+        confirmLabel: 'Add anyway',
+        destructive: false,
+      });
+      if (!proceed) return;
+    }
+
     setSaving(true);
 
     const resetForm = () => {
@@ -320,6 +337,7 @@ export default function AddEntryForm({
       setLocalAmount('');
       setRewardPoints('');
       setNote('');
+      setTagsText('');
       setDate(todayISO());
       setSplitAcrossMonths(false);
       setCustomShares({});
@@ -360,6 +378,7 @@ export default function AddEntryForm({
   async function doSave() {
     const parsed = parseAmountInput(amount);
     const trimmedNote = note.trim();
+    const tags = parseTagsInput(tagsText);
     const months = !isTravel && splitAcrossMonths ? Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2)) : 1;
     const parsedLocal = isTravel && localAmount ? parseAmountInput(localAmount) : null;
     const parsedPoints = isTravel && rewardPoints ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
@@ -368,6 +387,7 @@ export default function AddEntryForm({
 
     if (months > 1) {
       const installmentAmounts = splitAmountEvenly(parsed, months);
+      const installmentGroupId = generateGroupId('inst');
       const installments = Array.from({ length: months }, (_, i) => ({
         amount: installmentAmounts[i],
         payer,
@@ -378,15 +398,45 @@ export default function AddEntryForm({
         splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
         splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
         note: trimmedNote ? `${trimmedNote} (${i + 1}/${months})` : `Installment ${i + 1}/${months}`,
+        tags,
         date: addMonthsToDateISO(date, i),
         ledger,
-        tripName: isTravel ? tripName : '',
+        tripId: isTravel ? tripId : null,
         paymentMethod: paymentMethod || null,
         paymentInstrumentId: selectedInstrument?.id || null,
         paymentType: selectedInstrument?.type || null,
         deviceName: deviceName || payer,
+        installmentGroupId,
+        installmentIndex: i + 1,
+        installmentCount: months,
       }));
-      await addExpensesBatch(installments);
+      const createdIds = await addExpensesBatch(installments);
+
+      // Same best-effort card-linking the single-entry path below does, just
+      // once per installment instead of once - each installment gets its own
+      // CardTransaction, dated and reward-computed against its own month, not
+      // the purchase's original date (P1-14 - installments used to drop the
+      // card entirely, since addExpensesBatch never did this step).
+      const linkedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
+      const matchedCard = isStatementOnlyCard(linkedCard) ? null : linkedCard;
+      if (matchedCard) {
+        for (let i = 0; i < installments.length; i += 1) {
+          const inst = installments[i];
+          try {
+            const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, inst.date);
+            const fields = inferCardRewardFields(matchedCard, inst.category, params);
+            await addCardTransactionAndLink(createdIds[i], {
+              cardId: matchedCard.id,
+              amount: inst.amount,
+              date: inst.date,
+              description: inst.note || inst.category,
+              ...fields,
+            });
+          } catch (err) {
+            reportError(err, 'Saved the installment, but could not link it to the card');
+          }
+        }
+      }
     } else {
       const newEntryId = await addExpense({
         amount: parsed,
@@ -398,9 +448,10 @@ export default function AddEntryForm({
         splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
         splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
         note: trimmedNote,
+        tags,
         date,
         ledger,
-        tripName: isTravel ? tripName : '',
+        tripId: isTravel ? tripId : null,
         paymentMethod: paymentMethod || null,
         paymentInstrumentId: selectedInstrument?.id || null,
         paymentType: selectedInstrument?.type || null,
@@ -494,6 +545,7 @@ export default function AddEntryForm({
                     value={quickAddText}
                     onChangeText={setQuickAddText}
                     onSubmitEditing={handleQuickAdd}
+                    returnKeyType="done"
                     placeholder="e.g. 1200 dinner with Kruti last night"
                     className="flex-1 font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
                   />
@@ -657,6 +709,20 @@ export default function AddEntryForm({
                 value={note}
                 onChangeText={setNote}
                 placeholder="What was this for?"
+                returnKeyType="done"
+                onSubmitEditing={() => Keyboard.dismiss()}
+                className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+              />
+            </View>
+
+            <View className="w-full lg:w-[calc(33.333%-9.333px)]">
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Tags (optional)</Text>
+              <TextInput
+                value={tagsText}
+                onChangeText={setTagsText}
+                placeholder="vacation, reimbursable"
+                returnKeyType="done"
+                onSubmitEditing={() => Keyboard.dismiss()}
                 className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
               />
             </View>

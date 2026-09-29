@@ -19,7 +19,7 @@ export default function TripPicker({
   cashMovements,
   entries,
   dbCurrencies,
-  selectedTrip,
+  selectedTripId,
   onTripSelect,
   currentCurrency,
   onCurrencyChange,
@@ -35,16 +35,24 @@ export default function TripPicker({
   const [endDate, setEndDate] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [saving, setSaving] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
-  const activeTrip = useMemo(() => trips.find((t) => isTripActive(t, todayISO())), [trips]);
+  // Archiving only declutters this browse list - an archived trip's entries
+  // stay fully searchable/askable/exportable, and it's still reachable here
+  // via the "Show archived" toggle below.
+  const unarchivedTrips = useMemo(() => trips.filter((t) => !t.archived), [trips]);
+  const archivedCount = trips.length - unarchivedTrips.length;
+  const browsableTrips = showArchived ? trips : unarchivedTrips;
 
-  const selectedTripObj = trips.find((t) => t.name === selectedTrip);
+  const activeTrip = useMemo(() => unarchivedTrips.find((t) => isTripActive(t, todayISO())), [unarchivedTrips]);
+
+  const selectedTripObj = trips.find((t) => t.id === selectedTripId);
 
   const cashStats = useMemo(() => {
-    if (!selectedTrip) return { balance: 0, withdrawn: 0 };
-    const stats = computeTripCashStats(entries, cashMovements, selectedTrip);
+    if (!selectedTripId) return { balance: 0, withdrawn: 0 };
+    const stats = computeTripCashStats(entries, cashMovements, selectedTripId, selectedTripObj?.name);
     return { balance: stats.balance, withdrawn: stats.opening + stats.withdrawn };
-  }, [cashMovements, entries, selectedTrip]);
+  }, [cashMovements, entries, selectedTripId, selectedTripObj]);
 
   async function handleCreate() {
     const trimmed = name.trim();
@@ -64,8 +72,8 @@ export default function TripPicker({
     }
     setSaving(true);
     try {
-      await addTripToDb(trimmed, currency, Number(year) || currentYear(), trips, startDate || null, endDate || null);
-      onTripSelect?.(trimmed);
+      const newTripId = await addTripToDb(trimmed, currency, Number(year) || currentYear(), trips, startDate || null, endDate || null);
+      if (newTripId) onTripSelect?.(newTripId);
       onCurrencyChange?.(currency);
       setName('');
       setCurrency('INR');
@@ -81,7 +89,7 @@ export default function TripPicker({
     }
   }
 
-  const filteredTrips = trips.filter((t) => t.name.toLowerCase().includes(searchTerm.trim().toLowerCase()));
+  const filteredTrips = browsableTrips.filter((t) => t.name.toLowerCase().includes(searchTerm.trim().toLowerCase()));
   const byYear = {};
   filteredTrips.forEach((t) => {
     const y = t.year || 'Other';
@@ -164,7 +172,7 @@ export default function TripPicker({
 
       {addingTrip && addTripForm}
 
-      {!searchTerm.trim() && activeTrip && activeTrip.name !== selectedTrip && (
+      {!searchTerm.trim() && activeTrip && activeTrip.id !== selectedTripId && (
         <View className="mt-3 rounded-lg border border-ledger-green/40 bg-ledger-green/10 px-3.5 py-2.5 flex-row items-center justify-between gap-2">
           <View>
             <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-ledger-green">🧳 Currently Traveling</Text>
@@ -172,7 +180,7 @@ export default function TripPicker({
           </View>
           <Pressable
             onPress={() => {
-              onTripSelect?.(activeTrip.name);
+              onTripSelect?.(activeTrip.id);
               onCurrencyChange?.(activeTrip.currency);
             }}
             className="min-h-9 px-3 rounded-lg bg-ledger-green items-center justify-center shrink-0"
@@ -197,19 +205,21 @@ export default function TripPicker({
           <View key={y} className="mb-2">
             <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1.5">{y}</Text>
             {byYear[y].map((t) => {
-              const isSelected = t.name === selectedTrip;
+              const isSelected = t.id === selectedTripId;
               return (
                 <Pressable
                   key={t.id}
                   onPress={() => {
-                    onTripSelect?.(t.name);
+                    onTripSelect?.(t.id);
                     onCurrencyChange?.(t.currency);
                   }}
                   className={`flex-row items-center justify-between px-3.5 py-2.5 rounded-lg mb-1 border ${
                     isSelected ? 'bg-ledger-green/10 border-ledger-green/30' : 'bg-paper border-ink/10'
                   }`}
                 >
-                  <Text className={`font-body-semibold text-sm ${isSelected ? 'text-ledger-green' : 'text-ink'}`}>{t.name}</Text>
+                  <Text className={`font-body-semibold text-sm ${isSelected ? 'text-ledger-green' : 'text-ink'}`}>
+                    {t.name}{t.archived ? ' (archived)' : ''}
+                  </Text>
                   <Text className="font-body text-xs text-muted-text">{t.currency}</Text>
                 </Pressable>
               );
@@ -217,6 +227,14 @@ export default function TripPicker({
           </View>
         ))}
       </View>
+
+      {archivedCount > 0 && (
+        <Pressable onPress={() => setShowArchived((v) => !v)} className="mt-1 self-start">
+          <Text className="font-body text-xs text-muted-text underline">
+            {showArchived ? 'Hide archived' : `Show archived (${archivedCount})`}
+          </Text>
+        </Pressable>
+      )}
 
       {selectedTripObj && (
         <View className="mt-3 pt-3 border-t border-ink/10">
