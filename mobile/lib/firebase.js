@@ -929,74 +929,16 @@ async function batchUpdateDocs(collectionRef, computeUpdates) {
   return toUpdate.length;
 }
 
-// One-time migration (P1-4): every expenses/cashMovements doc used to join
-// its trip by the plain-string tripName field, not the trip's own stable
-// id - if a trip was deleted and a new one later created with the same
-// name, its entries would silently reattach to the new trip. This adds
-// tripId to every existing doc it can confidently match, so every read-side
-// query can switch to the real join key. Triggered once per account from
-// AuthContext, guarded by the same settings/seed_state doc seedOnce uses -
-// but unlike seedOnce, the flag is written only after both batchUpdateDocs
-// calls fully succeed, not atomically with them: this can span many more
-// than one 400-write batch (batchUpdateDocs chunks internally), so it
-// structurally can't be one atomic commit the way seedOnce's handful of
-// default docs can. Each per-doc update already skips docs that have
-// tripId set, so a retry after an interrupted run is cheap, not a full
-// rewrite.
-export async function backfillTripIds() {
-  const seedStateRef = doc(dbInstance, 'settings', 'seed_state');
-  const state = await getDoc(seedStateRef);
-  if (state.exists() && state.data().tripIdBackfillV1) return null;
-
-  const tripsSnap = await getDocs(tripsRef);
-  const byId = new Set();
-  const byName = new Map();
-  tripsSnap.docs
-    .map((d) => /** @type {import('./types').Trip} */ ({ id: d.id, ...d.data() }))
-    .sort((a, b) => (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0))
-    .forEach((trip) => {
-      byId.add(trip.id);
-      const key = trip.name?.trim().toLowerCase();
-      // Sorted oldest-first, so a later Map.set on a name collision leaves
-      // the most-recently-created trip as the match - an inherent,
-      // unavoidable ambiguity in the pre-migration data (two trips once
-      // shared a name), not something this backfill can resolve perfectly.
-      if (key) byName.set(key, trip);
-    });
-
-  const orphanedTripNames = new Set();
-  const matchByTripName = (tripName) => {
-    if (!tripName) return null;
-    const match = byName.get(tripName.trim().toLowerCase());
-    if (!match) orphanedTripNames.add(tripName);
-    return match;
-  };
-
-  const expensesUpdated = await batchUpdateDocs(expensesRef, (entry) => {
-    if (entry.tripId || normalizeLedger(entry.ledger) !== 'travel' || !entry.tripName) return null;
-    const match = matchByTripName(entry.tripName);
-    return match ? { tripId: match.id } : null;
-  });
-
-  const cashMovementsUpdated = await batchUpdateDocs(cashMovementsRef, (movement, docSnap) => {
-    if (movement.tripId) return null;
-    // An 'opening' doc's id already encodes its tripId (see
-    // setOpeningCash) - recoverable with zero ambiguity, no name-matching
-    // needed.
-    const openingMatch = docSnap.id.match(/^opening_(.+)$/);
-    if (openingMatch && byId.has(openingMatch[1])) return { tripId: openingMatch[1] };
-    if (!movement.tripName) return null;
-    const match = matchByTripName(movement.tripName);
-    return match ? { tripId: match.id } : null;
-  });
-
-  const summary = { expensesUpdated, cashMovementsUpdated, orphanedTripNames: [...orphanedTripNames] };
-  // Persisted (not just returned) so the one production run's result stays
-  // inspectable afterward, rather than only visible in whichever device's
-  // console happened to be open at the moment it ran.
-  await setDoc(seedStateRef, { tripIdBackfillV1: true, tripIdBackfillV1Summary: summary }, { merge: true });
-  return summary;
-}
+// backfillTripIds (P1-4) used to live here - a one-time migration that
+// tagged every pre-existing expenses/cashMovements doc with its trip's
+// stable id. Removed once it had run successfully in production
+// (settings/seed_state.tripIdBackfillV1 - see its summary field for the
+// final counts): it was self-gating on that same flag, so leaving it in
+// bought nothing further, and every ongoing write already stamps tripId
+// directly (AddEntryForm, BalanceStrip, TripSettings). Every read-side
+// join still keeps its own permanent tripId-first/tripName-fallback
+// (travel.js, TripSettings.js, computeTripCashStats, resolveAskQuery) -
+// that safety net doesn't depend on this function existing.
 
 // Shared by members and guests - both are just "a person" as far as
 // entries, trips, cards and payment methods are concerned. A guest rename
