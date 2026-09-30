@@ -43,6 +43,7 @@ export default function EntryList({
   members = [],
   instruments = [],
   creditCards = [],
+  cardTransactions = [],
   currentCurrency = 'INR',
   pendingDeletes = {},
   onDelete,
@@ -199,6 +200,7 @@ export default function EntryList({
                   members={members}
                   instruments={instruments}
                   creditCards={creditCards}
+                  cardTransactions={cardTransactions}
                   ledger={ledger}
                   currentCurrency={currentCurrency}
                   tripEntries={isTravel ? entries : []}

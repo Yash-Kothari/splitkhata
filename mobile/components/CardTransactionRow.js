@@ -210,6 +210,12 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
                 💳 ~{formatReward(perTxn.estimated, 'inr')}
               </Text>
             )}
+            {(txn.category === 'travel_bonus' || txn.category === 'smartbuy_hotel') && (
+              <Text className="font-body-medium text-2xs px-1.5 py-0.5 rounded bg-mustard/20 text-mustard">
+                {txn.category === 'travel_bonus' ? 'Travel with Points' : 'SmartBuy'}
+                {txn.travelMultiplier ? ` ×${txn.travelMultiplier}` : txn.category === 'travel_bonus' ? ' (no multiplier - base points only)' : ''}
+              </Text>
+            )}
             {txn.pointsRedeemed > 0 && (
               <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-mustard/20 text-mustard">
                 🎟 -{txn.pointsRedeemed.toLocaleString('en-IN')} pts

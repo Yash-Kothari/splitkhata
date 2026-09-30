@@ -2716,7 +2716,10 @@ export function inferCardRewardFields(card, householdCategory, params, travelMul
     case 'hdfc_diners_slab_milestone': {
       const categories = params?.categories || CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone.categories;
       const matchKey = Object.keys(DINERS_CATEGORY_KEYWORDS).find((key) => categoryNameMatches(name, DINERS_CATEGORY_KEYWORDS[key]));
-      const key = matchKey && categories.some((c) => c.key === matchKey) ? matchKey : 'regular';
+      // A multiplier typed for this entry means it was a SmartBuy booking,
+      // whatever its category is called.
+      const wanted = bookingMultiplier != null ? 'smartbuy_hotel' : matchKey;
+      const key = wanted && categories.some((c) => c.key === wanted) ? wanted : 'regular';
       return key === 'smartbuy_hotel' && bookingMultiplier != null ? { category: key, travelMultiplier: bookingMultiplier } : { category: key };
     }
     case 'sbi_two_channel_cashback':
@@ -2730,7 +2733,11 @@ export function inferCardRewardFields(card, householdCategory, params, travelMul
       if (categoryNameMatches(name, AXIS_EXCLUDED_KEYWORDS)) return { channel: 'excluded', isBonusEligible: false };
       return { channel: null, isBonusEligible: true };
     case 'hsbc_premier_flat_capped':
-      if (categoryNameMatches(name, HSBC_PREMIER_TRAVEL_KEYWORDS)) {
+      // A multiplier typed for this entry means it was a Travel with Points
+      // booking, whatever its category is called; the category name alone
+      // ("Travel with Points") also marks one, at base points until a
+      // multiplier is entered.
+      if (bookingMultiplier != null || categoryNameMatches(name, HSBC_PREMIER_TRAVEL_KEYWORDS)) {
         return bookingMultiplier != null ? { category: 'travel_bonus', travelMultiplier: bookingMultiplier } : { category: 'travel_bonus' };
       }
       if (categoryNameMatches(name, HSBC_PREMIER_FUEL_KEYWORDS)) return { category: 'fuel_excluded' };
@@ -2748,13 +2755,17 @@ export function inferCardRewardFields(card, householdCategory, params, travelMul
 // afterward. Pure preview - never touches saved data, never picks a card
 // for the user. `cards`/`cardTransactions` are every tracked card and all
 // of its transactions.
-export function rankCardsForEntry(cards, cardTransactions, amount, householdCategory, date, travelMultiplier) {
+export function rankCardsForEntry(cards, cardTransactions, amount, householdCategory, date, travelBooking) {
   if (!amount || !date || !cards?.length) return [];
   return cards
     .filter((card) => !isStatementOnlyCard(card))
     .map((card) => {
       const params = resolveStrategyParamsForDate(card.strategyParamsHistory, date);
-      const fields = inferCardRewardFields(card, householdCategory, params, travelMultiplier);
+      // travelBooking = { cardId, multiplier }: the multiplier typed for the card
+      // this entry is being paid with - another card in the ranking never
+      // borrows it.
+      const multiplier = travelBooking && travelBooking.cardId === card.id ? travelBooking.multiplier : undefined;
+      const fields = inferCardRewardFields(card, householdCategory, params, multiplier);
       const cardTxns = cardTransactions.filter((t) => t.cardId === card.id);
       const draft = { id: '__rank_preview__', date, amount, ...fields };
       const preview = previewTransactionReward(card, cardTxns, draft);

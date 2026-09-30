@@ -137,20 +137,31 @@ export default function AddEntryForm({
   // where the amount/category are being typed - the reward engine already
   // models every card's real terms, this just surfaces it at the moment
   // it's actually useful instead of only in the Cards tab after the fact.
-  // A category named "Travel with Points" (HSBC Premier) or "SmartBuy" (Diners)
-  // marks a portal booking on that card - its multiplier varies per booking
-  // (Premier's runs 2X-12X), so it's typed here rather than guessed. Only
-  // shown when the chosen card would actually treat the category that way.
+  // On an HSBC Premier or Diners card, a portal booking (Travel with Points /
+  // SmartBuy) earns accelerated points at a multiplier that varies per booking
+  // (Premier's runs 2X-12X) - so it's typed here, and typing one is what marks
+  // the entry as a booking, whatever its category is called. Blank = a normal
+  // purchase (a category literally named "Travel with Points" / "SmartBuy" also
+  // counts as a booking, at base points until a multiplier is entered).
   const selectedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
-  const bookingCategory =
+  const bookingKind =
     selectedCard && !isStatementOnlyCard(selectedCard)
-      ? inferCardRewardFields(selectedCard, category, resolveStrategyParamsForDate(selectedCard.strategyParamsHistory, date)).category
+      ? { hsbc_premier_flat_capped: 'travel_with_points', hdfc_diners_slab_milestone: 'smartbuy' }[selectedCard.rewardStrategy] || null
       : null;
-  const showTravelMultiplier = bookingCategory === 'travel_bonus' || bookingCategory === 'smartbuy_hotel';
+  const showTravelMultiplier = bookingKind != null;
   const effectiveTravelMultiplier = showTravelMultiplier ? travelMultiplier : '';
+  const selectedCardId = selectedCard?.id;
   const rankedCards = useMemo(
-    () => rankCardsForEntry(creditCards, cardTransactions, parseAmountInput(amount) || 0, category, date, effectiveTravelMultiplier),
-    [creditCards, cardTransactions, amount, category, date, effectiveTravelMultiplier],
+    () =>
+      rankCardsForEntry(
+        creditCards,
+        cardTransactions,
+        parseAmountInput(amount) || 0,
+        category,
+        date,
+        effectiveTravelMultiplier ? { cardId: selectedCardId, multiplier: effectiveTravelMultiplier } : null,
+      ),
+    [creditCards, cardTransactions, amount, category, date, effectiveTravelMultiplier, selectedCardId],
   );
 
   // Real household spending repeats far more than a blank form assumes -
@@ -709,13 +720,13 @@ export default function AddEntryForm({
             {showTravelMultiplier && (
               <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
                 <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-                  {bookingCategory === 'smartbuy_hotel' ? 'SmartBuy multiplier' : 'Travel with Points multiplier'}
+                  {bookingKind === 'smartbuy' ? 'SmartBuy multiplier (optional)' : 'Travel with Points multiplier (optional)'}
                 </Text>
                 <TextInput
                   value={travelMultiplier}
                   onChangeText={setTravelMultiplier}
                   keyboardType="decimal-pad"
-                  placeholder={bookingCategory === 'smartbuy_hotel' ? '10 (default)' : 'e.g. 12'}
+                  placeholder={bookingKind === 'smartbuy' ? '10 (default)' : 'e.g. 12'}
                   className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
                 />
               </View>

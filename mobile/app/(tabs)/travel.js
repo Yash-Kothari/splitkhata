@@ -219,6 +219,7 @@ export default function Travel() {
                 members={activeMembersList}
                 instruments={instruments}
                 creditCards={creditCards}
+                cardTransactions={cardTransactions}
                 currentCurrency={selectedTripObj.currency}
                 highlightId={highlightEntryId}
                 pendingDeletes={pendingDeletes}

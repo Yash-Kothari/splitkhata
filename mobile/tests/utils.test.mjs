@@ -2248,7 +2248,8 @@ test('inferCardRewardFields: a "Travel with Points" category on HSBC Premier is 
   assert.deepEqual(inferCardRewardFields(card, 'Travel with Points', {}), { category: 'travel_bonus' });
   assert.deepEqual(inferCardRewardFields(card, 'Travel with Points', {}, '12'), { category: 'travel_bonus', travelMultiplier: 12 });
   assert.deepEqual(inferCardRewardFields(card, 'Travel with Points', {}, ''), { category: 'travel_bonus' }, 'blank multiplier stays unset');
-  assert.deepEqual(inferCardRewardFields(card, 'Hotel', {}, '12'), { category: 'regular' }, 'a plain Hotel is not assumed to be a portal booking');
+  assert.deepEqual(inferCardRewardFields(card, 'Hotel', {}), { category: 'regular' }, 'a plain Hotel with no multiplier is not assumed to be a portal booking');
+  assert.deepEqual(inferCardRewardFields(card, 'Hotel', {}, '12'), { category: 'travel_bonus', travelMultiplier: 12 }, 'a typed multiplier marks a booking, whatever the category is called');
 });
 
 test('inferCardRewardFields: a "SmartBuy" category on Diners is a SmartBuy booking; blank multiplier keeps the 10X default', () => {
@@ -2256,7 +2257,8 @@ test('inferCardRewardFields: a "SmartBuy" category on Diners is a SmartBuy booki
   const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
   assert.deepEqual(inferCardRewardFields(card, 'SmartBuy', params), { category: 'smartbuy_hotel' });
   assert.deepEqual(inferCardRewardFields(card, 'SmartBuy Flights', params, 5), { category: 'smartbuy_hotel', travelMultiplier: 5 });
-  assert.deepEqual(inferCardRewardFields(card, 'Hotel', params, 5), { category: 'regular' });
+  assert.deepEqual(inferCardRewardFields(card, 'Hotel', params), { category: 'regular' });
+  assert.deepEqual(inferCardRewardFields(card, 'Hotel', params, 5), { category: 'smartbuy_hotel', travelMultiplier: 5 });
 });
 
 test('rankCardsForEntry: a Travel with Points entry earns base off the carry plus accelerated on its own amount', () => {
@@ -2265,10 +2267,14 @@ test('rankCardsForEntry: a Travel with Points entry earns base off the carry plu
     strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped }],
   };
   const carry = [{ id: 'a', cardId: 'p', date: '2026-09-01', amount: 10, category: 'regular' }]; // 0 points, Rs10 carried
-  const withMultiplier = rankCardsForEntry([card], carry, 5297.6, 'Travel with Points', '2026-09-02', '12');
+  const withMultiplier = rankCardsForEntry([card], carry, 5297.6, 'Travel with Points', '2026-09-02', { cardId: 'p', multiplier: '12' });
   assert.equal(withMultiplier[0].earned, 159 + 1716);
+  const anyCategoryName = rankCardsForEntry([card], carry, 5297.6, 'Hotel', '2026-09-02', { cardId: 'p', multiplier: '12' });
+  assert.equal(anyCategoryName[0].earned, 159 + 1716, 'the category name does not matter once a multiplier is typed');
   const noMultiplier = rankCardsForEntry([card], carry, 5297.6, 'Travel with Points', '2026-09-02');
   assert.equal(noMultiplier[0].earned, 159, 'no multiplier typed: base only');
+  const otherCard = rankCardsForEntry([card], carry, 5297.6, 'Hotel', '2026-09-02', { cardId: 'some-other-card', multiplier: '12' });
+  assert.equal(otherCard[0].earned, 159, 'a multiplier typed for a different card is not borrowed by this one');
 });
 
 // --- Duplicate-entry warning on add (P2-9) ---

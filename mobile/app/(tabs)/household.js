@@ -159,6 +159,7 @@ export default function Household() {
               members={members}
               instruments={instruments}
               creditCards={creditCards}
+              cardTransactions={cardTransactions}
               highlightId={highlightEntryId}
               pendingDeletes={pendingDeletes}
               onDelete={handleDelete}

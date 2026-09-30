@@ -50,6 +50,7 @@ export default function EditEntryRow({
   members,
   instruments: instrumentsProp,
   creditCards = [],
+  cardTransactions = [],
   ledger = 'household',
   currentCurrency = 'INR',
   tripEntries = [],
@@ -92,15 +93,21 @@ export default function EditEntryRow({
   const [date, setDate] = useState(entry.date);
   const [note, setNote] = useState(entry.note || '');
   const [tagsText, setTagsText] = useState((entry.tags || []).join(', '));
-  const [travelMultiplier, setTravelMultiplier] = useState('');
-  // Same as Add Entry: a "Travel with Points" / "SmartBuy" category on a
-  // Premier / Diners card marks a portal booking, whose multiplier is typed.
+  // The card transaction this entry created. If it's been marked a Travel with
+  // Points / SmartBuy booking (here, or by hand in the Cards tab), the box
+  // starts on its multiplier, so saving never silently drops the booking.
+  const linkedCardTxn = entry.cardTransactionId ? cardTransactions.find((t) => t.id === entry.cardTransactionId) : null;
+  const wasBooking = linkedCardTxn?.category === 'travel_bonus' || linkedCardTxn?.category === 'smartbuy_hotel';
+  const [initialTravelMultiplier] = useState(() => (wasBooking && linkedCardTxn.travelMultiplier ? String(linkedCardTxn.travelMultiplier) : ''));
+  const [travelMultiplier, setTravelMultiplier] = useState(initialTravelMultiplier);
+  // Same as Add Entry: on a Premier / Diners card, typing a multiplier marks
+  // the entry as a Travel with Points / SmartBuy booking.
   const selectedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
-  const bookingCategory =
+  const bookingKind =
     selectedCard && !isStatementOnlyCard(selectedCard)
-      ? inferCardRewardFields(selectedCard, category, resolveStrategyParamsForDate(selectedCard.strategyParamsHistory, date)).category
+      ? { hsbc_premier_flat_capped: 'travel_with_points', hdfc_diners_slab_milestone: 'smartbuy' }[selectedCard.rewardStrategy] || null
       : null;
-  const showTravelMultiplier = bookingCategory === 'travel_bonus' || bookingCategory === 'smartbuy_hotel';
+  const showTravelMultiplier = bookingKind != null;
   const effectiveTravelMultiplier = showTravelMultiplier ? travelMultiplier.trim() : '';
   const [saving, setSaving] = useState(false);
   const [slowSave, setSlowSave] = useState(false);
@@ -154,7 +161,14 @@ export default function EditEntryRow({
     try {
       if (oldTxnId && newCardId && oldCardId === newCardId) {
         const updates = { amount: parsedAmount, date, description: note.trim() || category };
-        if (category !== entry.category || effectiveTravelMultiplier !== '') {
+        // Re-infer the card transaction's reward fields only when this edit
+        // actually changes what they should be: the multiplier box was changed
+        // (including cleared), or the category changed on a transaction that
+        // wasn't a booking. An existing booking survives a category change
+        // unless its multiplier is cleared - otherwise re-inferring with the
+        // box's value would wipe a booking set here or in the Cards tab.
+        const multiplierChanged = effectiveTravelMultiplier !== initialTravelMultiplier;
+        if (multiplierChanged || (category !== entry.category && !wasBooking)) {
           const card = creditCards.find((c) => c.id === newCardId);
           Object.assign(updates, inferCardRewardFields(card, category, resolveStrategyParamsForDate(card?.strategyParamsHistory, date), effectiveTravelMultiplier));
         }
@@ -414,13 +428,13 @@ export default function EditEntryRow({
         {showTravelMultiplier && (
           <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
             <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-              {bookingCategory === 'smartbuy_hotel' ? 'SmartBuy multiplier' : 'Travel with Points multiplier'}
+              {bookingKind === 'smartbuy' ? 'SmartBuy multiplier (optional)' : 'Travel with Points multiplier (optional)'}
             </Text>
             <TextInput
               value={travelMultiplier}
               onChangeText={setTravelMultiplier}
               keyboardType="decimal-pad"
-              placeholder={bookingCategory === 'smartbuy_hotel' ? '10 (default)' : 'e.g. 12'}
+              placeholder={bookingKind === 'smartbuy' ? '10 (default)' : 'e.g. 12'}
               className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
             />
           </View>
