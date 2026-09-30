@@ -68,6 +68,7 @@ import {
   computeCardAnnualValue,
   getQuarterBounds,
   computeDinersCycleReward,
+  resolveCardParams,
   computeSbiCycleReward,
   computeHsbcCycleReward,
   computeSuperMoneyCycleReward,
@@ -1858,16 +1859,46 @@ test('HSBC Premier: a travel-bonus transaction applies its own multiplier on top
   assert.equal(totalReward, 1800, 'floor(10000*3/100)*6 = 300*6 = 1800');
 });
 
-test('HSBC Premier: Travel with Points earnings are capped at 18,000 points/month, even across bookings', () => {
+test('HSBC Premier: the 18,000/month Travel with Points limit counts only accelerated points, not the 1X base', () => {
   const params = CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped;
   const { perTransaction, totalReward } = computeHsbcPremierCycleReward(params, [
-    // floor(50000*3/100)*12 = 1500*12 = 18000, already at the cap alone
+    // base floor(50000*3/100) = 1500; 12X -> accelerated 1500*11 = 16500, under the 18000 limit
     { id: 't1', date: '2026-08-01', amount: 50000, category: 'travel_bonus', travelMultiplier: 12 },
+    // base 300; 6X -> accelerated wants 1500 but only 1500 of the limit is left (18000-16500)
     { id: 't2', date: '2026-08-02', amount: 10000, category: 'travel_bonus', travelMultiplier: 6 },
+    // base 300; 6X -> accelerated wants 1500 but the limit is now exhausted, so only the 1X base is earned
+    { id: 't3', date: '2026-08-03', amount: 10000, category: 'travel_bonus', travelMultiplier: 6 },
   ]);
-  assert.equal(perTransaction[0].earned, 18000);
-  assert.equal(perTransaction[1].earned, 0, 'the 18,000/month travel cap is already exhausted');
-  assert.equal(totalReward, 18000);
+  assert.equal(perTransaction[0].earned, 18000, '1500 base + 16500 accelerated');
+  assert.equal(perTransaction[1].earned, 1800, '300 base + 1500 accelerated, right up to the limit');
+  assert.equal(perTransaction[2].earned, 300, 'limit exhausted - the 1X base is still earned');
+  assert.equal(perTransaction[2].capCounted, 0);
+  assert.equal(totalReward, 20100);
+});
+
+test('HSBC Premier: Travel with Points base uses the carry-forward pool, accelerated points never do', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped;
+  const { perTransaction } = computeHsbcPremierCycleReward(params, [
+    { id: 't0', date: '2026-08-01', amount: 10, category: 'regular' }, // under ₹100: 0 points, ₹10 carried forward
+    // (5297.6 + 10 carried) = 5307.6 -> 53 units * 3 = 159 base; accelerated is on 5297.6 alone: 52 units * 3 * 11 = 1716
+    { id: 't1', date: '2026-08-02', amount: 5297.6, category: 'travel_bonus', travelMultiplier: 12 },
+    // ₹7.60 is still carried after the booking: 7.6 + 92.5 = 100.1 -> one unit
+    { id: 't2', date: '2026-08-03', amount: 92.5, category: 'regular' },
+  ]);
+  assert.equal(perTransaction[0].earned, 0);
+  assert.equal(perTransaction[1].earned, 159 + 1716);
+  assert.equal(perTransaction[1].capCounted, 1716, 'only the accelerated part counts toward the 18,000 limit');
+  assert.equal(perTransaction[2].earned, 3, 'the remainder left over from the booking carries on to the next spend');
+});
+
+test('HSBC Premier: a Travel with Points refund returns the base in full and only what the limit actually charged', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped;
+  const { perTransaction, totalReward } = computeHsbcPremierCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 10000, category: 'travel_bonus', travelMultiplier: 6 }, // 300 base + 1500 accelerated
+    { id: 't2', date: '2026-08-05', amount: -10000, category: 'travel_bonus', travelMultiplier: 6 }, // full refund
+  ]);
+  assert.equal(perTransaction[1].earned, -1800);
+  assert.equal(totalReward, 0);
 });
 
 test('HSBC Premier: a blank/null categoryMonthlyCap means uncapped, not "no room left"', () => {
@@ -2249,16 +2280,66 @@ test('computeCardCapStatus (Diners) reports remaining room per category for the 
     strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone }],
   };
   const txns = [
-    { id: 't1', date: '2026-08-05', amount: 9000, category: 'smartbuy_hotel' }, // floor(9000/150)*5*10 = 3000
+    { id: 't1', date: '2026-08-05', amount: 9000, category: 'smartbuy_hotel' }, // base floor(9000/150)*5 = 300; 10X = 3000 total, 2700 accelerated
     { id: 't2', date: '2026-08-06', amount: 759, category: 'grocery' }, // floor(759/150)*5 = 25
   ];
   const statuses = computeCardCapStatus(card, txns, txns, '2026-08-12');
   const smartbuy = statuses.find((s) => s.key === 'smartbuy_hotel');
   const grocery = statuses.find((s) => s.key === 'grocery');
-  assert.equal(smartbuy.earned, 3000);
-  assert.equal(smartbuy.remaining, 7000, '10000 cap - 3000 earned so far this month');
+  assert.equal(smartbuy.earned, 2700, 'only the accelerated 9X counts toward the SmartBuy limit, not the 1X base');
+  assert.equal(smartbuy.remaining, 7300, '10000 cap - 2700 accelerated so far this month');
   assert.equal(grocery.earned, 25);
   assert.equal(grocery.remaining, 1975, '2000 cap - 25 earned so far this month');
+});
+
+test('Diners: the SmartBuy 10,000/month limit counts only accelerated points, and the 1X base is always earned', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { perTransaction, totalReward } = computeDinersCycleReward(params, [
+    // base floor(150000/150)*5 = 5000; 10X = 50000 total, 45000 accelerated - well past the 10000 limit
+    { id: 't1', date: '2026-08-01', amount: 150000, category: 'smartbuy_hotel' },
+    // limit already used up: still earns its 1X base (floor(15000/150)*5 = 500), no accelerated points
+    { id: 't2', date: '2026-08-02', amount: 15000, category: 'smartbuy_hotel' },
+  ]);
+  assert.equal(perTransaction[0].earned, 15000, '5000 base + 10000 accelerated (the limit)');
+  assert.equal(perTransaction[0].capCounted, 10000);
+  assert.equal(perTransaction[1].earned, 500, 'base only once the accelerated limit is exhausted');
+  assert.equal(perTransaction[1].capCounted, 0);
+  assert.equal(totalReward, 15500);
+});
+
+test('Diners: a 1X category cap (grocery) still caps the full points, since it has no accelerated part', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { perTransaction } = computeDinersCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 150000, category: 'grocery' }, // 5000 points wanted, 2000/month cap
+  ]);
+  assert.equal(perTransaction[0].earned, 2000);
+});
+
+test('Diners: weekend dining keeps its cap on the full 2X points (only SmartBuy is accelerated-only)', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { perTransaction } = computeDinersCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 30000, category: 'weekend_dining' }, // base 1000, 2X = 2000, day cap 1000
+  ]);
+  assert.equal(perTransaction[0].earned, 1000);
+});
+
+test('Diners: a SmartBuy refund reverses the base in full and the accelerated part only up to what the limit charged', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const { perTransaction, totalReward } = computeDinersCycleReward(params, [
+    { id: 't1', date: '2026-08-01', amount: 9000, category: 'smartbuy_hotel' }, // 300 base + 2700 accelerated
+    { id: 't2', date: '2026-08-10', amount: -9000, category: 'smartbuy_hotel' },
+  ]);
+  assert.equal(perTransaction[1].earned, -3000);
+  assert.equal(totalReward, 0);
+});
+
+test('resolveCardParams fills capBasis onto a stored rule set saved before it existed', () => {
+  const stored = JSON.parse(JSON.stringify(CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone));
+  stored.categories.forEach((c) => delete c.capBasis);
+  const card = { rewardStrategy: 'hdfc_diners_slab_milestone', strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: stored }] };
+  const params = resolveCardParams(card, '2026-08-01');
+  assert.equal(params.categories.find((c) => c.key === 'smartbuy_hotel').capBasis, 'accelerated');
+  assert.equal(params.categories.find((c) => c.key === 'weekend_dining').capBasis, undefined);
 });
 
 test('computeCardCapStatus (Diners) scopes a day-period cap to only that day, not the whole month', () => {

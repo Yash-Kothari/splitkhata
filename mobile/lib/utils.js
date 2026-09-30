@@ -1907,7 +1907,10 @@ export const CARD_STRATEGY_DEFAULTS = {
       // does mean the latter. Two purchases either side of a mid-month
       // statement date used to get 2,000 points apiece on a "2,000/month"
       // grocery cap, because the cap was reset by the cycle instead of the month.
-      { key: 'smartbuy_hotel', label: 'Smartbuy Booking', multiplier: 10, capAmount: 10000, capPeriod: 'month', capScope: 'calendar_month' },
+      // capBasis: 'accelerated' - HDFC's 10,000/month SmartBuy limit counts only the
+      // accelerated points (the 9X above the 1X base), not the whole 10X. The base
+      // points are always earned and never use up any of the cap.
+      { key: 'smartbuy_hotel', label: 'Smartbuy Booking', multiplier: 10, capAmount: 10000, capPeriod: 'month', capScope: 'calendar_month', capBasis: 'accelerated' },
       // creditOn: this category's points for a whole calendar month land together on the 1st of the next month, not with the statement.
       { key: 'grocery', label: 'Grocery', multiplier: 1, capAmount: 2000, capPeriod: 'month', capScope: 'calendar_month', creditOn: 'first_of_next_month' },
       { key: 'utility', label: 'Utility', multiplier: 1, capAmount: 2000, capPeriod: 'month', capScope: 'calendar_month' },
@@ -2193,7 +2196,15 @@ export function computeDinersCycleReward(params, transactions, ctx) {
         : category.multiplier;
     // A refund (negative amount) reverses points at the same rate, rounded toward zero.
     const basePoints = Math.trunc(txn.amount / params.unitAmount) * params.pointsPerUnit;
-    let earned = basePoints * effectiveMultiplier;
+    // capBasis 'accelerated' (SmartBuy): the cap counts only the points above
+    // the 1X base. The base is always earned and sits outside every cap here
+    // (only the cycle cap below still applies to it); everything the checks
+    // below limit, and every bucket they charge, is just the accelerated part.
+    // A category at 1X has no accelerated part, so it falls through to the
+    // plain full-points cap (grocery/utility/insurance).
+    const acceleratedBasis = category.capBasis === 'accelerated' && effectiveMultiplier > 1;
+    const uncappedBase = acceleratedBasis ? basePoints : 0;
+    let earned = acceleratedBasis ? basePoints * (effectiveMultiplier - 1) : basePoints * effectiveMultiplier;
 
     // A month-period cap is by calendar month by default (ctx, shared across
     // cycles) unless this category is explicitly statement_cycle-scoped
@@ -2238,9 +2249,14 @@ export function computeDinersCycleReward(params, transactions, ctx) {
       extraTotals[extraKey] = Math.max(0, (extraTotals[extraKey] || 0) + earned);
     }
 
+    // What this transaction charged its cap bucket(s) - the accelerated part
+    // for a capBasis 'accelerated' category, otherwise the full earned
+    // amount. The Caps card sums this so it always matches the ledger.
+    const capCounted = acceleratedBasis ? earned : null;
+    earned += uncappedBase;
     earned = earned < 0 ? Math.max(earned, -cycleTotal) : applyCycleCap(earned, cycleTotal, params.cycleCap);
     cycleTotal += earned;
-    perTransaction.push({ id: txn.id, basePoints, categoryKey: category.key, multiplier: effectiveMultiplier, earned });
+    perTransaction.push({ id: txn.id, basePoints, categoryKey: category.key, multiplier: effectiveMultiplier, earned, capCounted: capCounted ?? earned });
   }
 
   return { totalReward: cycleTotal, perTransaction, unit: 'points' };
@@ -2440,37 +2456,54 @@ export function computeHsbcPremierCycleReward(params, transactions, ctx) {
   // HSBC's own Rewards T&C worked example carries a sub-₹100 remainder
   // forward to the next qualifying transaction rather than dropping it
   // (₹130 -> 3pts + ₹30 carried, ₹270+₹30=₹300 -> 6pts, ...) - this pool is
-  // shared by regular and capped-category spend since both earn at the same
-  // baseRate; Travel with Points is a separate booking product with its own
-  // multiplier and cap, so it doesn't participate. Call-local, same as
-  // before: it's a rounding carry within this cycle's own statement, not a
-  // calendar-month cap.
+  // shared by regular, capped-category and Travel with Points spend since all
+  // earn at the same baseRate (for Travel with Points only the 1X base uses
+  // the pool - its accelerated part never earns on carried rupees).
+  // Call-local, same as before: it's a rounding carry within this cycle's
+  // own statement, not a calendar-month cap.
   let carry = 0;
   const perTransaction = [];
 
   for (const txn of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
     const month = getMonthKey(txn.date);
     let points = 0;
+    // Only Travel with Points has an accelerated part: the 18,000/month limit
+    // counts just the points above the 1X base (base * (multiplier - 1)), and
+    // the base itself is always earned. capCounted is what a transaction
+    // charged that limit, which the Caps card sums.
+    let capCounted = 0;
     if (txn.category === 'fuel_excluded') {
       points = 0;
     } else if (txn.amount < 0) {
       // A refund reverses points at the base rate (rounded toward zero),
-      // skipping the carry pool, and bounded by what that month's bucket has
-      // actually earned so far - a refund can't take back more than was given.
-      const rate = txn.category === 'travel_bonus' ? params.baseRate * (txn.travelMultiplier || 1) : params.baseRate;
-      const raw = Math.trunc(txn.amount / 100) * rate;
+      // skipping the carry pool. For Travel with Points the base part comes
+      // back in full, and the accelerated part is bounded by what that
+      // month's bucket has actually earned so far - a refund can't take back
+      // more accelerated points than were given.
+      const baseRaw = Math.trunc(txn.amount / 100) * params.baseRate;
       if (txn.category === 'travel_bonus') {
-        points = Math.max(raw, -getTravel(month));
-        setTravel(month, getTravel(month) + points);
+        const acceleratedRaw = baseRaw * Math.max(0, (txn.travelMultiplier || 1) - 1);
+        capCounted = Math.max(acceleratedRaw, -getTravel(month));
+        setTravel(month, getTravel(month) + capCounted);
+        points = baseRaw + capCounted;
       } else {
-        points = raw;
+        points = baseRaw;
       }
       if (txn.category === 'capped_category') setCapped(month, getCapped(month) + txn.amount);
     } else if (txn.category === 'travel_bonus') {
       const multiplier = txn.travelMultiplier || 1;
-      const raw = Math.floor((txn.amount * params.baseRate) / 100) * multiplier;
-      points = applyCycleCap(raw, getTravel(month), params.travelBonusMonthlyCap);
-      setTravel(month, getTravel(month) + points);
+      // The 1X base rides the shared sub-₹100 carry pool like any other
+      // spend (carried-forward rupees can tip a booking into one more unit)...
+      const total = carry + txn.amount;
+      const wholeUnits = Math.floor(total / 100);
+      carry = total - wholeUnits * 100;
+      const baseTravelPoints = wholeUnits * params.baseRate;
+      // ...but carried-forward rupees only ever earn base points: the
+      // accelerated part is worked out on this booking's own amount alone.
+      const acceleratedRaw = Math.floor(txn.amount / 100) * params.baseRate * Math.max(0, multiplier - 1);
+      capCounted = applyCycleCap(acceleratedRaw, getTravel(month), params.travelBonusMonthlyCap);
+      setTravel(month, getTravel(month) + capCounted);
+      points = baseTravelPoints + capCounted;
     } else {
       let eligibleAmount = txn.amount;
       if (txn.category === 'capped_category') {
@@ -2491,7 +2524,7 @@ export function computeHsbcPremierCycleReward(params, transactions, ctx) {
       points = wholeUnits * params.baseRate;
     }
     totalPoints += points;
-    perTransaction.push({ id: txn.id, earned: points });
+    perTransaction.push({ id: txn.id, earned: points, capCounted });
   }
 
   return { totalReward: totalPoints, perTransaction, unit: 'points' };
@@ -2544,6 +2577,8 @@ export function resolveCardParams(card, date) {
         ...(c.monthlyCapAmount === undefined && d.monthlyCapAmount !== undefined ? { monthlyCapAmount: d.monthlyCapAmount } : {}),
         ...(c.creditOn === undefined && d.creditOn !== undefined ? { creditOn: d.creditOn } : {}),
         ...(c.capScope === undefined && d.capScope !== undefined ? { capScope: d.capScope } : {}),
+        // Rule sets saved before SmartBuy's cap was known to count only accelerated points.
+        ...(c.capBasis === undefined && d.capBasis !== undefined ? { capBasis: d.capBasis } : {}),
       };
     }),
   };
@@ -2977,10 +3012,12 @@ function computeDinersCapStatus(params, cardTransactions, currentCycleTxns, toda
             ? currentCycleTxns
             : cardTransactions.filter((t) => getMonthKey(t.date) === getMonthKey(today));
       const { perTransaction } = computeDinersCycleReward(params, periodTxns);
-      const earned = perTransaction.filter((p) => p.categoryKey === c.key).reduce((s, p) => s + p.earned, 0);
+      // capCounted is the accelerated part only for a capBasis 'accelerated'
+      // category (SmartBuy), and the full earned amount for everything else.
+      const earned = perTransaction.filter((p) => p.categoryKey === c.key).reduce((s, p) => s + p.capCounted, 0);
       results.push({
         key: index === 0 ? c.key : `${c.key}-monthly`,
-        label: c.label,
+        label: c.capBasis === 'accelerated' ? `${c.label} (accelerated points)` : c.label,
         capAmount: limit.amount,
         capPeriod: limit.period,
         earned,
@@ -3043,10 +3080,13 @@ function computeHsbcPremierCapStatus(params, cardTransactions, currentCycleTxns,
   if (params.travelBonusMonthlyCap != null) {
     const periodTxns = travelScope === 'statement_cycle' ? currentCycleTxns : cardTransactions.filter((t) => getMonthKey(t.date) === getMonthKey(today));
     const monthTxns = periodTxns.filter((t) => t.category === 'travel_bonus');
-    const { totalReward } = computeHsbcPremierCycleReward(params, monthTxns);
+    // The limit counts accelerated points only (base is always earned), so
+    // read what each booking charged it, not the bookings' total points.
+    const { perTransaction } = computeHsbcPremierCycleReward(params, monthTxns);
+    const accelerated = perTransaction.reduce((s, p) => s + p.capCounted, 0);
     results.push({
-      key: 'travel_bonus', label: 'Travel with Points', capAmount: params.travelBonusMonthlyCap, capPeriod: 'month',
-      earned: totalReward, remaining: Math.max(0, params.travelBonusMonthlyCap - totalReward), unit: 'points',
+      key: 'travel_bonus', label: 'Travel with Points (accelerated points)', capAmount: params.travelBonusMonthlyCap, capPeriod: 'month',
+      earned: accelerated, remaining: Math.max(0, params.travelBonusMonthlyCap - accelerated), unit: 'points',
     });
   }
   return results;
