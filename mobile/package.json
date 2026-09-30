@@ -2,7 +2,7 @@
   "name": "splitkhata-mobile",
   "description": "Splitkhata native iPhone app",
   "private": true,
-  "version": "3.0.2",
+  "version": "3.0.3",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo-google-fonts/fraunces": "^0.4.1",

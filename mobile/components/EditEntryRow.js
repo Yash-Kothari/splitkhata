@@ -442,7 +442,7 @@ export default function EditEntryRow({
           <TextInput
             value={tagsText}
             onChangeText={setTagsText}
-            placeholder="vacation, reimbursable"
+            placeholder="Vacation, Reimbursable"
             returnKeyType="done"
             onSubmitEditing={() => Keyboard.dismiss()}
             className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
