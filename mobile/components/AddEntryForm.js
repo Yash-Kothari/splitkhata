@@ -105,6 +105,7 @@ export default function AddEntryForm({
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
   const [tagsText, setTagsText] = useState('');
+  const [travelMultiplier, setTravelMultiplier] = useState('');
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [aiToolsOpen, setAiToolsOpen] = useState(false);
@@ -136,9 +137,20 @@ export default function AddEntryForm({
   // where the amount/category are being typed - the reward engine already
   // models every card's real terms, this just surfaces it at the moment
   // it's actually useful instead of only in the Cards tab after the fact.
+  // A category named "Travel with Points" (HSBC Premier) or "SmartBuy" (Diners)
+  // marks a portal booking on that card - its multiplier varies per booking
+  // (Premier's runs 2X-12X), so it's typed here rather than guessed. Only
+  // shown when the chosen card would actually treat the category that way.
+  const selectedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
+  const bookingCategory =
+    selectedCard && !isStatementOnlyCard(selectedCard)
+      ? inferCardRewardFields(selectedCard, category, resolveStrategyParamsForDate(selectedCard.strategyParamsHistory, date)).category
+      : null;
+  const showTravelMultiplier = bookingCategory === 'travel_bonus' || bookingCategory === 'smartbuy_hotel';
+  const effectiveTravelMultiplier = showTravelMultiplier ? travelMultiplier : '';
   const rankedCards = useMemo(
-    () => rankCardsForEntry(creditCards, cardTransactions, parseAmountInput(amount) || 0, category, date),
-    [creditCards, cardTransactions, amount, category, date],
+    () => rankCardsForEntry(creditCards, cardTransactions, parseAmountInput(amount) || 0, category, date, effectiveTravelMultiplier),
+    [creditCards, cardTransactions, amount, category, date, effectiveTravelMultiplier],
   );
 
   // Real household spending repeats far more than a blank form assumes -
@@ -338,6 +350,7 @@ export default function AddEntryForm({
       setRewardPoints('');
       setNote('');
       setTagsText('');
+      setTravelMultiplier('');
       setDate(todayISO());
       setSplitAcrossMonths(false);
       setCustomShares({});
@@ -424,7 +437,7 @@ export default function AddEntryForm({
           const inst = installments[i];
           try {
             const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, inst.date);
-            const fields = inferCardRewardFields(matchedCard, inst.category, params);
+            const fields = inferCardRewardFields(matchedCard, inst.category, params, effectiveTravelMultiplier);
             await addCardTransactionAndLink(createdIds[i], {
               cardId: matchedCard.id,
               amount: inst.amount,
@@ -471,7 +484,7 @@ export default function AddEntryForm({
       if (matchedCard) {
         try {
           const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, date);
-          const fields = inferCardRewardFields(matchedCard, category, params);
+          const fields = inferCardRewardFields(matchedCard, category, params, effectiveTravelMultiplier);
           await addCardTransactionAndLink(newEntryId, {
             cardId: matchedCard.id,
             amount: parsed,
@@ -692,6 +705,21 @@ export default function AddEntryForm({
             <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
               <PickerField label="Payment Method" value={paymentMethod} options={paymentMethodOptions} onChange={handlePaymentMethodChange} />
             </View>
+
+            {showTravelMultiplier && (
+              <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
+                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
+                  {bookingCategory === 'smartbuy_hotel' ? 'SmartBuy multiplier' : 'Travel with Points multiplier'}
+                </Text>
+                <TextInput
+                  value={travelMultiplier}
+                  onChangeText={setTravelMultiplier}
+                  keyboardType="decimal-pad"
+                  placeholder={bookingCategory === 'smartbuy_hotel' ? '10 (default)' : 'e.g. 12'}
+                  className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+                />
+              </View>
+            )}
 
             <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
               <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>

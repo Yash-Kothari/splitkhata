@@ -2241,6 +2241,36 @@ test('getRecentCombinations skips entries missing a category or payer, and respe
   assert.equal(combos.length, 2, 'the two blank-field entries are skipped, and the limit caps the rest');
 });
 
+// --- Travel with Points / SmartBuy inferred from the entry's category ---
+
+test('inferCardRewardFields: a "Travel with Points" category on HSBC Premier is a portal booking, and carries its typed multiplier', () => {
+  const card = { rewardStrategy: 'hsbc_premier_flat_capped' };
+  assert.deepEqual(inferCardRewardFields(card, 'Travel with Points', {}), { category: 'travel_bonus' });
+  assert.deepEqual(inferCardRewardFields(card, 'Travel with Points', {}, '12'), { category: 'travel_bonus', travelMultiplier: 12 });
+  assert.deepEqual(inferCardRewardFields(card, 'Travel with Points', {}, ''), { category: 'travel_bonus' }, 'blank multiplier stays unset');
+  assert.deepEqual(inferCardRewardFields(card, 'Hotel', {}, '12'), { category: 'regular' }, 'a plain Hotel is not assumed to be a portal booking');
+});
+
+test('inferCardRewardFields: a "SmartBuy" category on Diners is a SmartBuy booking; blank multiplier keeps the 10X default', () => {
+  const card = { rewardStrategy: 'hdfc_diners_slab_milestone' };
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  assert.deepEqual(inferCardRewardFields(card, 'SmartBuy', params), { category: 'smartbuy_hotel' });
+  assert.deepEqual(inferCardRewardFields(card, 'SmartBuy Flights', params, 5), { category: 'smartbuy_hotel', travelMultiplier: 5 });
+  assert.deepEqual(inferCardRewardFields(card, 'Hotel', params, 5), { category: 'regular' });
+});
+
+test('rankCardsForEntry: a Travel with Points entry earns base off the carry plus accelerated on its own amount', () => {
+  const card = {
+    id: 'p', name: 'HSBC Premier', rewardStrategy: 'hsbc_premier_flat_capped', billingCycleDay: 1,
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped }],
+  };
+  const carry = [{ id: 'a', cardId: 'p', date: '2026-09-01', amount: 10, category: 'regular' }]; // 0 points, Rs10 carried
+  const withMultiplier = rankCardsForEntry([card], carry, 5297.6, 'Travel with Points', '2026-09-02', '12');
+  assert.equal(withMultiplier[0].earned, 159 + 1716);
+  const noMultiplier = rankCardsForEntry([card], carry, 5297.6, 'Travel with Points', '2026-09-02');
+  assert.equal(noMultiplier[0].earned, 159, 'no multiplier typed: base only');
+});
+
 // --- Duplicate-entry warning on add (P2-9) ---
 
 test('findPossibleDuplicateEntry matches same date, amount, category and payer', () => {

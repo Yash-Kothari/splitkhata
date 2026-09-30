@@ -2677,6 +2677,7 @@ export function previewTransactionReward(card, existingCardTxns, draftTxn) {
 }
 
 const DINERS_CATEGORY_KEYWORDS = {
+  smartbuy_hotel: ['smartbuy', 'smart buy'],
   weekend_dining: ['dining', 'eating out', 'restaurant', 'food'],
   grocery: ['grocery', 'groceries', 'supermarket'],
   utility: ['utility', 'utilities', 'electricity', 'water bill', 'broadband', 'internet'],
@@ -2688,6 +2689,7 @@ const HSBC_LIVE_EXCLUDED_KEYWORDS = ['rent', 'fuel', 'insurance', 'education', '
 const HSBC_LIVE_NON_BONUS_KEYWORDS = ['amazon', 'flipkart', 'myntra', 'travel', 'flight', 'hotel', 'airline'];
 const HSBC_LIVE_BONUS_KEYWORDS = ['dining', 'eating out', 'restaurant', 'food delivery', 'grocery', 'groceries', 'shopping', 'utility', 'utilities'];
 const AXIS_EXCLUDED_KEYWORDS = ['repayment', 'utility', 'utilities', 'fuel', 'jewellery', 'jewelry', 'cash withdrawal', 'wallet', 'insurance', 'education', 'government', 'govt', 'financial institution', 'rent', 'emi', 'telecom', 'mobile bill', 'phone bill'];
+const HSBC_PREMIER_TRAVEL_KEYWORDS = ['travel with points'];
 const HSBC_PREMIER_FUEL_KEYWORDS = ['fuel', 'petrol', 'diesel'];
 const HSBC_PREMIER_CAPPED_KEYWORDS = ['insurance', 'utility', 'utilities', 'education', 'government', 'govt', 'wallet', 'real estate', 'jewellery', 'jewelry', 'tax', 'money transfer'];
 
@@ -2703,14 +2705,19 @@ function categoryNameMatches(categoryName, keywords) {
 // free text, not a fixed enum, so this is fuzzy keyword matching, not a
 // real classifier - it exists to save the common case, and the result is
 // always meant to be shown and correctable, never treated as final.
-export function inferCardRewardFields(card, householdCategory, params) {
+export function inferCardRewardFields(card, householdCategory, params, travelMultiplier) {
   const name = householdCategory;
+  // A portal booking's own multiplier (SmartBuy / Travel with Points) can't
+  // come from a category name - it's typed per entry. Blank/invalid leaves it
+  // unset, so SmartBuy falls back to its category default (10X) and Travel
+  // with Points earns just the 1X base.
+  const bookingMultiplier = Number(travelMultiplier) > 0 ? Number(travelMultiplier) : null;
   switch (card?.rewardStrategy) {
     case 'hdfc_diners_slab_milestone': {
       const categories = params?.categories || CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone.categories;
       const matchKey = Object.keys(DINERS_CATEGORY_KEYWORDS).find((key) => categoryNameMatches(name, DINERS_CATEGORY_KEYWORDS[key]));
       const key = matchKey && categories.some((c) => c.key === matchKey) ? matchKey : 'regular';
-      return { category: key };
+      return key === 'smartbuy_hotel' && bookingMultiplier != null ? { category: key, travelMultiplier: bookingMultiplier } : { category: key };
     }
     case 'sbi_two_channel_cashback':
       return { channel: categoryNameMatches(name, SBI_EXCLUDED_KEYWORDS) ? 'excluded' : 'online' };
@@ -2723,6 +2730,9 @@ export function inferCardRewardFields(card, householdCategory, params) {
       if (categoryNameMatches(name, AXIS_EXCLUDED_KEYWORDS)) return { channel: 'excluded', isBonusEligible: false };
       return { channel: null, isBonusEligible: true };
     case 'hsbc_premier_flat_capped':
+      if (categoryNameMatches(name, HSBC_PREMIER_TRAVEL_KEYWORDS)) {
+        return bookingMultiplier != null ? { category: 'travel_bonus', travelMultiplier: bookingMultiplier } : { category: 'travel_bonus' };
+      }
       if (categoryNameMatches(name, HSBC_PREMIER_FUEL_KEYWORDS)) return { category: 'fuel_excluded' };
       if (categoryNameMatches(name, HSBC_PREMIER_CAPPED_KEYWORDS)) return { category: 'capped_category' };
       return { category: 'regular' };
@@ -2738,13 +2748,13 @@ export function inferCardRewardFields(card, householdCategory, params) {
 // afterward. Pure preview - never touches saved data, never picks a card
 // for the user. `cards`/`cardTransactions` are every tracked card and all
 // of its transactions.
-export function rankCardsForEntry(cards, cardTransactions, amount, householdCategory, date) {
+export function rankCardsForEntry(cards, cardTransactions, amount, householdCategory, date, travelMultiplier) {
   if (!amount || !date || !cards?.length) return [];
   return cards
     .filter((card) => !isStatementOnlyCard(card))
     .map((card) => {
       const params = resolveStrategyParamsForDate(card.strategyParamsHistory, date);
-      const fields = inferCardRewardFields(card, householdCategory, params);
+      const fields = inferCardRewardFields(card, householdCategory, params, travelMultiplier);
       const cardTxns = cardTransactions.filter((t) => t.cardId === card.id);
       const draft = { id: '__rank_preview__', date, amount, ...fields };
       const preview = previewTransactionReward(card, cardTxns, draft);
@@ -3017,7 +3027,7 @@ function computeDinersCapStatus(params, cardTransactions, currentCycleTxns, toda
       const earned = perTransaction.filter((p) => p.categoryKey === c.key).reduce((s, p) => s + p.capCounted, 0);
       results.push({
         key: index === 0 ? c.key : `${c.key}-monthly`,
-        label: c.capBasis === 'accelerated' ? `${c.label} (accelerated points)` : c.label,
+        label: c.label,
         capAmount: limit.amount,
         capPeriod: limit.period,
         earned,
@@ -3085,7 +3095,7 @@ function computeHsbcPremierCapStatus(params, cardTransactions, currentCycleTxns,
     const { perTransaction } = computeHsbcPremierCycleReward(params, monthTxns);
     const accelerated = perTransaction.reduce((s, p) => s + p.capCounted, 0);
     results.push({
-      key: 'travel_bonus', label: 'Travel with Points (accelerated points)', capAmount: params.travelBonusMonthlyCap, capPeriod: 'month',
+      key: 'travel_bonus', label: 'Travel with Points', capAmount: params.travelBonusMonthlyCap, capPeriod: 'month',
       earned: accelerated, remaining: Math.max(0, params.travelBonusMonthlyCap - accelerated), unit: 'points',
     });
   }

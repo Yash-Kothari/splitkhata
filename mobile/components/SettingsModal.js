@@ -136,7 +136,7 @@ const CARD_PARAM_FIELDS = {
   hsbc_premier_flat_capped: [
     { key: 'baseRate', label: 'Base rate (%)' },
     { key: 'categoryMonthlyCap', label: 'Max capped-category spend per month (₹)' },
-    { key: 'travelBonusMonthlyCap', label: 'Max accelerated Travel with Points per month (pts, excl. 1X base)' },
+    { key: 'travelBonusMonthlyCap', label: 'Max Travel with Points bonus per month (pts)' },
   ],
 };
 
@@ -1919,7 +1919,7 @@ export default function SettingsModal({ visible, onClose }) {
                         {(newCardParams.categories || []).map((c) => (
                           <View key={c.key} className="rounded-full border border-ink/10 bg-paper px-2 py-1 mr-1.5 mb-1.5">
                             <Text className="font-body text-2xs text-muted-text">
-                              {c.label}: {c.multiplier}× {c.capAmount ? `(cap ${c.capAmount}/${c.capPeriod}${c.capBasis === 'accelerated' ? ', accelerated pts only' : ''})` : ''}
+                              {c.label}: {c.multiplier}× {c.capAmount ? `(cap ${c.capAmount}/${c.capPeriod})` : ''}
                             </Text>
                           </View>
                         ))}

@@ -92,6 +92,16 @@ export default function EditEntryRow({
   const [date, setDate] = useState(entry.date);
   const [note, setNote] = useState(entry.note || '');
   const [tagsText, setTagsText] = useState((entry.tags || []).join(', '));
+  const [travelMultiplier, setTravelMultiplier] = useState('');
+  // Same as Add Entry: a "Travel with Points" / "SmartBuy" category on a
+  // Premier / Diners card marks a portal booking, whose multiplier is typed.
+  const selectedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
+  const bookingCategory =
+    selectedCard && !isStatementOnlyCard(selectedCard)
+      ? inferCardRewardFields(selectedCard, category, resolveStrategyParamsForDate(selectedCard.strategyParamsHistory, date)).category
+      : null;
+  const showTravelMultiplier = bookingCategory === 'travel_bonus' || bookingCategory === 'smartbuy_hotel';
+  const effectiveTravelMultiplier = showTravelMultiplier ? travelMultiplier.trim() : '';
   const [saving, setSaving] = useState(false);
   const [slowSave, setSlowSave] = useState(false);
 
@@ -144,9 +154,9 @@ export default function EditEntryRow({
     try {
       if (oldTxnId && newCardId && oldCardId === newCardId) {
         const updates = { amount: parsedAmount, date, description: note.trim() || category };
-        if (category !== entry.category) {
+        if (category !== entry.category || effectiveTravelMultiplier !== '') {
           const card = creditCards.find((c) => c.id === newCardId);
-          Object.assign(updates, inferCardRewardFields(card, category, resolveStrategyParamsForDate(card?.strategyParamsHistory, date)));
+          Object.assign(updates, inferCardRewardFields(card, category, resolveStrategyParamsForDate(card?.strategyParamsHistory, date), effectiveTravelMultiplier));
         }
         await updateCardTransaction(oldTxnId, updates);
         return oldTxnId;
@@ -160,7 +170,7 @@ export default function EditEntryRow({
           date,
           description: note.trim() || category,
           linkedEntryId: entry.id,
-          ...inferCardRewardFields(newCard, category, resolveStrategyParamsForDate(newCard?.strategyParamsHistory, date)),
+          ...inferCardRewardFields(newCard, category, resolveStrategyParamsForDate(newCard?.strategyParamsHistory, date), effectiveTravelMultiplier),
         };
       }
       return await replaceCardTransaction(oldTxnId, newData);
@@ -400,6 +410,21 @@ export default function EditEntryRow({
         <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
           <PickerField label="Payment Method" value={paymentMethod || 'Not set'} options={paymentMethodOptions} onChange={handlePaymentMethodChange} />
         </View>
+
+        {showTravelMultiplier && (
+          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
+              {bookingCategory === 'smartbuy_hotel' ? 'SmartBuy multiplier' : 'Travel with Points multiplier'}
+            </Text>
+            <TextInput
+              value={travelMultiplier}
+              onChangeText={setTravelMultiplier}
+              keyboardType="decimal-pad"
+              placeholder={bookingCategory === 'smartbuy_hotel' ? '10 (default)' : 'e.g. 12'}
+              className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+            />
+          </View>
+        )}
 
         <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
