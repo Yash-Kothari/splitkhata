@@ -29,6 +29,7 @@ import {
   buildReceiptExtractionPrompt,
   buildReceiptExtractionSchema,
   rankCardsForEntry,
+  autoRewardPointsText,
   getRecentCombinations,
   inferCardRewardFields,
   resolveStrategyParamsForDate,
@@ -92,6 +93,7 @@ export default function AddEntryForm({
   const [amount, setAmount] = useState('');
   const [localAmount, setLocalAmount] = useState('');
   const [rewardPoints, setRewardPoints] = useState('');
+  const [rewardPointsTouched, setRewardPointsTouched] = useState(false);
   const [payer, setPayer] = useState(deviceName || membersList[0]);
   const [category, setCategory] = useState(categories[0] || 'Groceries');
   const [splitType, setSplitType] = useState('shared');
@@ -163,6 +165,14 @@ export default function AddEntryForm({
       ),
     [creditCards, cardTransactions, amount, category, date, effectiveTravelMultiplier, selectedCardId],
   );
+
+  // A travel entry's points come from its manual Reward Points field, which
+  // used to be typed by hand and never followed the card's calculation. On a
+  // points card it now fills itself from that calculation (as a negative,
+  // "earned") until the field is edited by hand.
+  const selectedRank = selectedCardId ? rankedCards.find((r) => r.card.id === selectedCardId) : null;
+  const autoRewardPoints = isTravel ? autoRewardPointsText(selectedRank) : '';
+  const rewardPointsValue = rewardPointsTouched ? rewardPoints : autoRewardPoints;
 
   // Real household spending repeats far more than a blank form assumes -
   // one tap on a recent combination fills category/payer/payment method,
@@ -330,7 +340,7 @@ export default function AddEntryForm({
   // make Add silently do nothing.
   const amountInvalid = amount !== '' && !(parseAmountInput(amount) > 0);
   const localAmountInvalid = isTravel && localAmount !== '' && !(parseAmountInput(localAmount) > 0);
-  const pointsInvalid = isTravel && rewardPoints !== '' && parseAmountInput(rewardPoints, { allowNegative: true }) == null;
+  const pointsInvalid = isTravel && rewardPointsValue !== '' && parseAmountInput(rewardPointsValue, { allowNegative: true }) == null;
   const dateInvalid = !isValidISODate(date);
   const inputInvalid = amountInvalid || localAmountInvalid || pointsInvalid || dateInvalid;
 
@@ -359,6 +369,7 @@ export default function AddEntryForm({
       setAmount('');
       setLocalAmount('');
       setRewardPoints('');
+      setRewardPointsTouched(false);
       setNote('');
       setTagsText('');
       setTravelMultiplier('');
@@ -405,7 +416,7 @@ export default function AddEntryForm({
     const tags = parseTagsInput(tagsText);
     const months = !isTravel && splitAcrossMonths ? Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2)) : 1;
     const parsedLocal = isTravel && localAmount ? parseAmountInput(localAmount) : null;
-    const parsedPoints = isTravel && rewardPoints ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
+    const parsedPoints = isTravel && rewardPointsValue ? parseAmountInput(rewardPointsValue, { allowNegative: true }) : null;
     const effectiveSplitAmong =
       splitType === 'shared' && splitAmong.length > 0 && splitAmong.length < membersList.length ? splitAmong : null;
 
@@ -662,13 +673,19 @@ export default function AddEntryForm({
                     Reward Points (+ spent / − earned)
                   </Text>
                   <TextInput
-                    value={rewardPoints}
-                    onChangeText={setRewardPoints}
+                    value={rewardPointsValue}
+                    onChangeText={(v) => {
+                      setRewardPoints(v);
+                      setRewardPointsTouched(true);
+                    }}
                     keyboardType="numbers-and-punctuation"
                     placeholder="Optional"
                     className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
                   />
                   {pointsInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter whole or decimal points, e.g. 1500 or -250</Text> : null}
+                  {!rewardPointsTouched && autoRewardPoints ? (
+                    <Text className="font-body text-2xs text-muted-text mt-1">Filled from {selectedRank.card.name}'s calculation - edit to override.</Text>
+                  ) : null}
                 </View>
               </>
             )}
@@ -767,19 +784,26 @@ export default function AddEntryForm({
             </View>
           </View>
 
-          {rankedCards.length > 0 && (
-            <Text className="font-body text-2xs text-muted-text mt-2">
-              💳{' '}
-              {rankedCards
-                .map((r) => `${r.card.name || r.card.id} → ${r.unit === 'points' ? `${Math.round(r.earned).toLocaleString('en-IN')} pts` : formatCurrency(r.earned)}`)
-                .join('. ')}
-              {rankedCards[0].capStatus.length > 0
-                ? `. ${rankedCards[0].card.name || rankedCards[0].card.id} cap: ${rankedCards[0].capStatus
-                    .map((c) => (c.unit === 'points' ? `${Math.round(c.remaining).toLocaleString('en-IN')} pts` : formatCurrency(c.remaining)))
-                    .join(', ')} left this ${rankedCards[0].capStatus[0].capPeriod}.`
-                : ''}
-            </Text>
-          )}
+          {rankedCards.length > 0 && (() => {
+            // Caps are shown for the card actually being paid with (the top-ranked
+            // one only when paying with cash/UPI), each labelled, and as they'd
+            // stand after this entry is logged.
+            const capCard = rankedCards.find((r) => r.card.id === selectedCardId) || rankedCards[0];
+            const periodWord = { day: 'today', cycle: 'this cycle', month: 'this month' };
+            const capText = (c) =>
+              `${c.label} ${c.unit === 'points' ? `${Math.round(c.remaining).toLocaleString('en-IN')} pts` : formatCurrency(c.remaining)} left ${periodWord[c.capPeriod] || 'this month'}`;
+            return (
+              <Text className="font-body text-2xs text-muted-text mt-2">
+                💳{' '}
+                {rankedCards
+                  .map((r) => `${r.card.name || r.card.id} → ${r.unit === 'points' ? `${Math.round(r.earned).toLocaleString('en-IN')} pts` : formatCurrency(r.earned)}`)
+                  .join('. ')}
+                {capCard.capStatus.length > 0
+                  ? `. ${capCard.card.name || capCard.card.id} after this entry: ${capCard.capStatus.map(capText).join(', ')}.`
+                  : ''}
+              </Text>
+            );
+          })()}
 
           {splitType === 'custom' && (
             <CustomSplitEditor members={membersList} total={parseAmountInput(amount) || 0} shares={customShares} onChange={setCustomShares} />

@@ -21,6 +21,8 @@ import {
   isValidISODate,
   isCashPaid,
   parseTagsInput,
+  rankCardsForEntry,
+  autoRewardPointsText,
 } from '../lib/utils';
 
 const SPLIT_TYPE_OPTIONS = [
@@ -69,6 +71,7 @@ export default function EditEntryRow({
   const [amount, setAmount] = useState(String(entry.amount ?? ''));
   const [localAmount, setLocalAmount] = useState(entry.localAmount != null ? String(entry.localAmount) : '');
   const [rewardPoints, setRewardPoints] = useState(entry.rewardPoints != null ? String(entry.rewardPoints) : '');
+  const [rewardPointsManual, setRewardPointsManual] = useState(false);
   const [isWithdrawal, setIsWithdrawal] = useState(Boolean(entry.isWithdrawal));
   const [payer, setPayer] = useState(entry.payer);
   const [category, setCategory] = useState(entry.category);
@@ -89,6 +92,7 @@ export default function EditEntryRow({
   // Legacy household entries may have no payment method at all - keep that
   // as-is unless it's changed, rather than silently stamping "Cash" on save.
   const [paymentMethod, setPaymentMethod] = useState(resolveInstrument(instruments, entry)?.label || entry.paymentMethod || '');
+  const [initialPaymentMethod] = useState(paymentMethod);
   const selectedInstrument = instruments.find((i) => i.label === paymentMethod) || null;
   const [date, setDate] = useState(entry.date);
   const [note, setNote] = useState(entry.note || '');
@@ -109,6 +113,38 @@ export default function EditEntryRow({
       : null;
   const showTravelMultiplier = bookingKind != null;
   const effectiveTravelMultiplier = showTravelMultiplier ? travelMultiplier.trim() : '';
+  // A travel entry's points are a manual field. On a points card it follows
+  // the reward engine's calculation (as a negative, "earned"): straight away
+  // for an entry with no points yet, and for one that already has points only
+  // once something that changes the calculation is edited - so opening an
+  // entry never quietly rewrites points that were typed or credited by hand.
+  // Editing the field yourself always wins.
+  const otherCardTxns = useMemo(
+    () => cardTransactions.filter((t) => t.id !== entry.cardTransactionId),
+    [cardTransactions, entry.cardTransactionId],
+  );
+  const calcRank = useMemo(() => {
+    if (!isTravel || !selectedCard || bookingKind == null) return null;
+    return (
+      rankCardsForEntry(
+        [selectedCard],
+        otherCardTxns,
+        parseAmountInput(amount) || 0,
+        category,
+        date,
+        effectiveTravelMultiplier ? { cardId: selectedCard.id, multiplier: effectiveTravelMultiplier } : null,
+      )[0] || null
+    );
+  }, [isTravel, selectedCard, bookingKind, otherCardTxns, amount, category, date, effectiveTravelMultiplier]);
+  const calcInputsChanged =
+    amount !== String(entry.amount ?? '') ||
+    date !== entry.date ||
+    category !== entry.category ||
+    paymentMethod !== initialPaymentMethod ||
+    travelMultiplier !== initialTravelMultiplier;
+  const followCalc = isTravel && !rewardPointsManual && bookingKind != null && (entry.rewardPoints == null || calcInputsChanged);
+  const autoRewardPoints = followCalc ? autoRewardPointsText(calcRank) : '';
+  const rewardPointsValue = followCalc ? autoRewardPoints : rewardPoints;
   const [saving, setSaving] = useState(false);
   const [slowSave, setSlowSave] = useState(false);
 
@@ -221,8 +257,8 @@ export default function EditEntryRow({
       notify('Check the local amount', 'Enter an amount like 1200 or 1200.50, or leave it empty.');
       return;
     }
-    const parsedPoints = isTravel && rewardPoints ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
-    if (isTravel && rewardPoints && parsedPoints == null) {
+    const parsedPoints = isTravel && rewardPointsValue ? parseAmountInput(rewardPointsValue, { allowNegative: true }) : null;
+    if (isTravel && rewardPointsValue && parsedPoints == null) {
       notify('Check the reward points', 'Enter points like 1500 or -250, or leave it empty.');
       return;
     }
@@ -371,12 +407,18 @@ export default function EditEntryRow({
                 Reward Points (+ spent / − earned)
               </Text>
               <TextInput
-                value={rewardPoints}
-                onChangeText={setRewardPoints}
+                value={rewardPointsValue}
+                onChangeText={(v) => {
+                  setRewardPoints(v);
+                  setRewardPointsManual(true);
+                }}
                 keyboardType="numbers-and-punctuation"
                 placeholder="Optional"
                 className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
               />
+              {followCalc && autoRewardPoints ? (
+                <Text className="font-body text-2xs text-muted-text mt-1">Filled from {selectedCard.name}'s calculation - edit to override.</Text>
+              ) : null}
             </View>
           </>
         )}

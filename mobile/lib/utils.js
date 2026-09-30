@@ -2767,16 +2767,29 @@ export function rankCardsForEntry(cards, cardTransactions, amount, householdCate
       const multiplier = travelBooking && travelBooking.cardId === card.id ? travelBooking.multiplier : undefined;
       const fields = inferCardRewardFields(card, householdCategory, params, multiplier);
       const cardTxns = cardTransactions.filter((t) => t.cardId === card.id);
-      const draft = { id: '__rank_preview__', date, amount, ...fields };
+      const draft = { id: '__rank_preview__', cardId: card.id, date, amount, ...fields };
       const preview = previewTransactionReward(card, cardTxns, draft);
       const earned = preview?.earned ?? preview?.estimated ?? 0;
       const unit = CARD_REWARD_STRATEGIES.find((s) => s.key === card.rewardStrategy)?.unit || 'inr';
       const { cycleStart, cycleEnd } = getCardCycleForDate(date, card.billingCycleDay ?? 1);
       const currentCycleTxns = getTransactionsInCycle(cardTxns, card.id, cycleStart, cycleEnd);
-      const capStatus = computeCardCapStatus(card, cardTxns, currentCycleTxns, date);
+      // Caps as they'd stand AFTER this entry is logged - the room actually left
+      // once it's counted, not the room before it (a 12X booking should visibly
+      // use up its accelerated points).
+      const capStatus = computeCardCapStatus(card, [...cardTxns, draft], [...currentCycleTxns, draft], date);
       return { card, earned, unit, capStatus, inferredFields: fields };
     })
     .sort((a, b) => b.earned - a.earned);
+}
+
+// What a travel entry's manual "Reward Points (+ spent / - earned)" field
+// should read for a points-earning card: the points the reward engine says
+// this entry earns, as a negative number (earned points are entered as minus).
+// Empty for a cashback card, a refund, or nothing earned - those leave the
+// field alone.
+export function autoRewardPointsText(rank) {
+  if (!rank || rank.unit !== 'points' || !(rank.earned > 0)) return '';
+  return String(-Math.round(rank.earned));
 }
 
 // Recent combinations of category/payer/paymentMethod, ranked by how often
