@@ -36,6 +36,9 @@ export default function TripPicker({
   const [searchTerm, setSearchTerm] = useState('');
   const [saving, setSaving] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  // With a trip selected the picker folds into one line so Add Entry stays
+  // near the top of a phone screen; "Change" opens the full list again.
+  const [browsing, setBrowsing] = useState(false);
 
   // Archiving only declutters this browse list - an archived trip's entries
   // stay fully searchable/askable/exportable, and it's still reachable here
@@ -74,6 +77,7 @@ export default function TripPicker({
     try {
       const newTripId = await addTripToDb(trimmed, currency, Number(year) || currentYear(), trips, startDate || null, endDate || null);
       if (newTripId) onTripSelect?.(newTripId);
+      setBrowsing(false);
       onCurrencyChange?.(currency);
       setName('');
       setCurrency('INR');
@@ -149,6 +153,25 @@ export default function TripPicker({
     </View>
   );
 
+  const activeBanner =
+    activeTrip && activeTrip.id !== selectedTripId && (
+    <View className="mt-3 rounded-lg border border-ledger-green/40 bg-ledger-green/10 px-3.5 py-2.5 flex-row items-center justify-between gap-2">
+      <View>
+        <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-ledger-green">🧳 Currently Traveling</Text>
+        <Text className="font-body-semibold text-sm text-ink mt-0.5">{activeTrip.name}</Text>
+      </View>
+      <Pressable
+        onPress={() => {
+          onTripSelect?.(activeTrip.id);
+          onCurrencyChange?.(activeTrip.currency);
+        }}
+        className="min-h-9 px-3 rounded-lg bg-ledger-green items-center justify-center shrink-0"
+      >
+        <Text className="font-body-semibold text-xs text-white">Switch to it</Text>
+      </Pressable>
+    </View>
+  );
+
   if (trips.length === 0) {
     return (
       <Card className="px-5 py-4 mb-4">
@@ -161,34 +184,52 @@ export default function TripPicker({
     );
   }
 
+  if (selectedTripObj && !browsing && !addingTrip) {
+    const dates =
+      selectedTripObj.startDate && selectedTripObj.endDate ? `${selectedTripObj.startDate} → ${selectedTripObj.endDate}` : '';
+    return (
+      <Card className="px-4 py-3 mb-4">
+        <View className="flex-row items-center justify-between" style={{ gap: 8 }}>
+          <View className="flex-1">
+            <Text className="font-display text-base text-ink" numberOfLines={1}>
+              {isTripActive(selectedTripObj, todayISO()) ? '🧳 ' : ''}
+              {selectedTripObj.name}
+            </Text>
+            <Text className="font-mono text-2xs text-muted-text mt-0.5" numberOfLines={1}>
+              {[dates, selectedTripObj.currency, `Cash ${cashStats.balance.toFixed(2)} ${selectedTripObj.currency}`].filter(Boolean).join(' · ')}
+            </Text>
+          </View>
+          <Pressable onPress={() => setBrowsing(true)} className="px-2.5 py-1.5 rounded-md bg-paper border border-ink/10">
+            <Text className="font-body-semibold text-xs text-muted-text">Change</Text>
+          </Pressable>
+          <Pressable onPress={onOpenSettings} className="px-2.5 py-1.5 rounded-md bg-paper border border-ink/10">
+            <Text className="font-body-semibold text-xs text-muted-text">Settings</Text>
+          </Pressable>
+        </View>
+        {activeBanner}
+      </Card>
+    );
+  }
+
   return (
     <Card className="px-5 py-4 mb-4">
       <View className="flex-row items-center justify-between">
         <Text className="font-display text-lg text-ink">Trips</Text>
-        <Pressable onPress={() => setAddingTrip((v) => !v)} className="px-2.5 py-1 rounded-md bg-paper border border-ink/10">
-          <Text className="font-body-semibold text-xs text-muted-text">{addingTrip ? 'Cancel' : '+ Add Trip'}</Text>
-        </Pressable>
+        <View className="flex-row" style={{ gap: 8 }}>
+          {selectedTripObj && !addingTrip && (
+            <Pressable onPress={() => setBrowsing(false)} className="px-2.5 py-1 rounded-md bg-paper border border-ink/10">
+              <Text className="font-body-semibold text-xs text-muted-text">Done</Text>
+            </Pressable>
+          )}
+          <Pressable onPress={() => setAddingTrip((v) => !v)} className="px-2.5 py-1 rounded-md bg-paper border border-ink/10">
+            <Text className="font-body-semibold text-xs text-muted-text">{addingTrip ? 'Cancel' : '+ Add Trip'}</Text>
+          </Pressable>
+        </View>
       </View>
 
       {addingTrip && addTripForm}
 
-      {!searchTerm.trim() && activeTrip && activeTrip.id !== selectedTripId && (
-        <View className="mt-3 rounded-lg border border-ledger-green/40 bg-ledger-green/10 px-3.5 py-2.5 flex-row items-center justify-between gap-2">
-          <View>
-            <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-ledger-green">🧳 Currently Traveling</Text>
-            <Text className="font-body-semibold text-sm text-ink mt-0.5">{activeTrip.name}</Text>
-          </View>
-          <Pressable
-            onPress={() => {
-              onTripSelect?.(activeTrip.id);
-              onCurrencyChange?.(activeTrip.currency);
-            }}
-            className="min-h-9 px-3 rounded-lg bg-ledger-green items-center justify-center shrink-0"
-          >
-            <Text className="font-body-semibold text-xs text-white">Switch to it</Text>
-          </Pressable>
-        </View>
-      )}
+      {!searchTerm.trim() && activeBanner}
 
       <TextInput
         value={searchTerm}
@@ -212,6 +253,7 @@ export default function TripPicker({
                   onPress={() => {
                     onTripSelect?.(t.id);
                     onCurrencyChange?.(t.currency);
+                    setBrowsing(false);
                   }}
                   className={`flex-row items-center justify-between px-3.5 py-2.5 rounded-lg mb-1 border ${
                     isSelected ? 'bg-ledger-green/10 border-ledger-green/30' : 'bg-paper border-ink/10'

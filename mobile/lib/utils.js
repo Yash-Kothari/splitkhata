@@ -1196,11 +1196,23 @@ export function isTripActive(trip, today = todayISO()) {
   return today >= trip.startDate && today <= trip.endDate;
 }
 
-// Picks the trip currently in progress by date range, if any - ties (two
-// trips somehow overlapping today) resolve to whichever comes first in the
-// given list. Trips without both dates set can never be "active".
+// Picks the trip currently in progress by date range, if any (archived trips
+// never count). If two overlap today the one that started last wins - that's
+// the one just begun. Trips without both dates set can never be "active".
 export function getActiveTrip(trips, today = todayISO()) {
-  return trips.find((trip) => isTripActive(trip, today)) || null;
+  const active = (trips || []).filter((trip) => !trip.archived && isTripActive(trip, today));
+  if (active.length === 0) return null;
+  return active.reduce((best, trip) => (trip.startDate > best.startDate ? trip : best));
+}
+
+// Which trip the Travel tab should open on: the one in progress today, else
+// the one last used on this device (if it still exists and isn't archived),
+// else nothing.
+export function pickDefaultTrip(trips, lastTripId, today = todayISO()) {
+  const active = getActiveTrip(trips, today);
+  if (active) return active;
+  const last = lastTripId ? (trips || []).find((trip) => trip.id === lastTripId) : null;
+  return last && !last.archived ? last : null;
 }
 
 export function getPreviousMonthKey(monthKey) {

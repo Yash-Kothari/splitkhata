@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, ScrollView, Platform, useWindowDimensions, KeyboardAvoidingView } from 'react-native';
+import { View, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
 import {
   subscribeToExpenses,
   subscribeToCategories,
@@ -104,12 +104,6 @@ export default function Household() {
     }
   }, [pendingJump, setPendingJump]);
 
-  // order-* classes only work on the website; on the phone the rail (budget
-  // alerts, forecast, reminder) rendered below the entire passbook, so the
-  // stacked column is reversed there instead to put it first, as on the web.
-  const { width } = useWindowDimensions();
-  const nativeStacked = Platform.OS !== 'web' && width < 1024;
-
   return (
     <View className="flex-1 bg-paper">
       <AppHeader badge="🏠 Household Ledger" />
@@ -129,11 +123,10 @@ export default function Household() {
 
         {/* Two-column shell above 1024px: the ledger (add entry + passbook)
             on the left, a context rail (alerts, forecast, charts) on the
-            right - order-* keeps the rail's time-sensitive alerts appearing
-            first when stacked on a narrow screen, same as before this
-            split, while visually becoming the right-hand column at lg:. */}
-        <View className="flex-col lg:flex-row" style={nativeStacked ? { gap: 20, flexDirection: 'column-reverse' } : { gap: 20 }}>
-          <View className="order-2 lg:order-1 lg:flex-1">
+            right. Stacked on a phone the ledger comes first, so Add Entry is
+            right under the balance and the charts sit below the passbook. */}
+        <View className="flex-col lg:flex-row" style={{ gap: 20 }}>
+          <View className="lg:flex-1">
             <View className="px-4">
               <AddEntryForm
                 deviceName={memberForUser(user, members) || undefined}
@@ -167,7 +160,7 @@ export default function Household() {
             />
           </View>
 
-          <View className="order-1 lg:order-2 w-full lg:w-96 px-4" style={{ gap: 16 }}>
+          <View className="w-full lg:w-96 px-4" style={{ gap: 16 }}>
             {entries && <BudgetAlerts entries={entries} ledger="household" month={getMonthKey(todayISO())} budgets={budgets} />}
             {entries && (
               <MonthForecast entries={entries} recurringRules={recurringRules} budgets={budgets} overallBudget={overallBudget} />

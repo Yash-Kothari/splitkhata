@@ -112,6 +112,8 @@ import {
   getCardBillingCycleKey,
   toCsv,
   buildFullBackupJson,
+  pickDefaultTrip,
+  getActiveTrip,
 } from '../lib/utils.js';
 
 test('uses Yash and Kruti as default pair names', () => {
@@ -3456,4 +3458,38 @@ test('shouldRelockAfterBackground: native re-locks after 60s hidden, the website
 test('shouldRelockAfterBackground: never re-locks when the PIN was never enabled', () => {
   assert.equal(shouldRelockAfterBackground({ lastKnown: null, hiddenForMs: 999999, platform: 'ios' }), false);
   assert.equal(shouldRelockAfterBackground({ lastKnown: { enabled: false }, hiddenForMs: 999999, platform: 'ios' }), false);
+});
+
+test('pickDefaultTrip - the trip in progress today wins, boundaries included', () => {
+  const trips = [
+    { id: 'a', name: 'Goa', startDate: '2026-10-01', endDate: '2026-10-07' },
+    { id: 'b', name: 'Old', startDate: '2026-01-01', endDate: '2026-01-05' },
+  ];
+  assert.equal(pickDefaultTrip(trips, 'b', '2026-10-01').id, 'a');
+  assert.equal(pickDefaultTrip(trips, 'b', '2026-10-07').id, 'a');
+  assert.equal(pickDefaultTrip(trips, 'b', '2026-10-04').id, 'a');
+});
+
+test('pickDefaultTrip - falls back to the last trip used, never an archived or missing one', () => {
+  const trips = [
+    { id: 'a', name: 'Goa', startDate: '2026-10-01', endDate: '2026-10-07' },
+    { id: 'b', name: 'Old', startDate: '2026-01-01', endDate: '2026-01-05' },
+    { id: 'c', name: 'Gone', archived: true },
+  ];
+  assert.equal(pickDefaultTrip(trips, 'b', '2026-11-01').id, 'b');
+  assert.equal(pickDefaultTrip(trips, 'c', '2026-11-01'), null);
+  assert.equal(pickDefaultTrip(trips, 'zzz', '2026-11-01'), null);
+  assert.equal(pickDefaultTrip(trips, '', '2026-11-01'), null);
+  assert.equal(pickDefaultTrip([], 'a', '2026-11-01'), null);
+});
+
+test('getActiveTrip - ignores archived and undated trips; overlap picks the latest start', () => {
+  const trips = [
+    { id: 'undated', name: 'No dates' },
+    { id: 'arch', name: 'Archived', archived: true, startDate: '2026-10-01', endDate: '2026-10-09' },
+    { id: 'early', name: 'Early', startDate: '2026-09-28', endDate: '2026-10-09' },
+    { id: 'late', name: 'Late', startDate: '2026-10-03', endDate: '2026-10-09' },
+  ];
+  assert.equal(getActiveTrip(trips, '2026-10-04').id, 'late');
+  assert.equal(getActiveTrip(trips.slice(0, 2), '2026-10-04'), null);
 });

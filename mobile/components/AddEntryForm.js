@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, Keyboard } from 'react-native';
+import { View, Text, TextInput, Pressable, ActivityIndicator, Keyboard, ScrollView } from 'react-native';
 import { notify, confirmAsync } from '../lib/dialogs';
 import * as ImagePicker from 'expo-image-picker';
 import PickerField from './PickerField';
@@ -39,6 +39,13 @@ import {
   findPossibleDuplicateEntry,
   parseTagsInput,
 } from '../lib/utils';
+
+// Field widths for the entry grid. On a phone short fields pair up two to a
+// row (47% + the 14px gap fits even a 320px screen) and text fields take the
+// full row, so the form is about half as tall as one field per row.
+const FIELD_HALF = 'w-[47%] sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]';
+const FIELD_FULL = 'w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]';
+const FIELD_TEXT = 'w-full lg:w-[calc(33.333%-9.333px)]';
 
 const SPLIT_TYPE_OPTIONS = [
   { value: 'shared', label: 'Split' },
@@ -109,8 +116,13 @@ export default function AddEntryForm({
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [aiToolsOpen, setAiToolsOpen] = useState(false);
+  // Rarely-used fields (tags, reward points, multi-month) sit behind one
+  // toggle; they open by themselves when something fills them in (Quick Add,
+  // a recent combination) so a value is never hidden.
+  const [moreToggle, setMoreToggle] = useState(null);
   const [splitAcrossMonths, setSplitAcrossMonths] = useState(false);
   const [monthsCount, setMonthsCount] = useState('6');
+  const moreOpen = moreToggle ?? Boolean(tagsText.trim() || rewardPoints.trim() || splitAcrossMonths);
   const [quickAddText, setQuickAddText] = useState('');
   const [quickAddStatus, setQuickAddStatus] = useState({ state: 'idle', error: '' });
   const [suggestingCategory, setSuggestingCategory] = useState(false);
@@ -368,6 +380,7 @@ export default function AddEntryForm({
       setTravelMultiplier('');
       setDate(todayISO());
       setSplitAcrossMonths(false);
+      setMoreToggle(null);
       setCustomShares({});
       setMonthsCount('6');
       setSplitAmong(membersList);
@@ -530,7 +543,7 @@ export default function AddEntryForm({
           {recentCombinations.length > 0 && (
             <View className="mb-3">
               <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1.5">Recent</Text>
-              <View className="flex-row flex-wrap gap-1.5">
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
                 {recentCombinations.map((c) => (
                   <Pressable
                     key={`${c.category}|${c.payer}|${c.paymentMethod}`}
@@ -543,7 +556,7 @@ export default function AddEntryForm({
                     </Text>
                   </Pressable>
                 ))}
-              </View>
+              </ScrollView>
             </View>
           )}
 
@@ -625,7 +638,7 @@ export default function AddEntryForm({
           )}
 
           <View className="flex-row flex-wrap" style={{ gap: 14 }}>
-            <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
+            <View className={FIELD_HALF}>
               <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
                 Amount (₹){isTravel ? ' - real cost' : ''}
               </Text>
@@ -645,58 +658,32 @@ export default function AddEntryForm({
               {amountInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter an amount like 1200 or 1200.50</Text> : null}
             </View>
 
-            {isTravel && (
-              <>
-                <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
-                  <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-                    Local Amount ({currentCurrency})
-                  </Text>
-                  <TextInput
-                    value={localAmount}
-                    onChangeText={setLocalAmount}
-                    keyboardType="decimal-pad"
-                    placeholder="Optional"
-                    className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-                  />
-                  {localAmountInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter an amount like 1200 or 1200.50</Text> : null}
-                </View>
-
-                <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
-                  <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-                    Reward Points (+ spent / − earned)
-                  </Text>
-                  <TextInput
-                    value={rewardPoints}
-                    onChangeText={setRewardPoints}
-                    keyboardType="numbers-and-punctuation"
-                    placeholder="Optional"
-                    className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-                  />
-                  {pointsInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter whole or decimal points, e.g. 1500 or -250</Text> : null}
-                </View>
-              </>
-            )}
-
-            <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
-              <PickerField label="Split Type" value={splitType} options={SPLIT_TYPE_OPTIONS} onChange={setSplitType} />
-            </View>
-
-            <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
-              <PickerField label="Who Paid" value={payer} options={membersList} onChange={setPayer} />
-            </View>
-
-            {splitType === 'owed' && (
-              <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
-                <PickerField
-                  label="Who Owes the Full Amount"
-                  value={owedBy}
-                  options={membersList.filter((p) => p !== payer)}
-                  onChange={setOwedBy}
+            {isTravel ? (
+              <View className={FIELD_HALF}>
+                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
+                  Local Amount ({currentCurrency})
+                </Text>
+                <TextInput
+                  value={localAmount}
+                  onChangeText={setLocalAmount}
+                  keyboardType="decimal-pad"
+                  placeholder="Optional"
+                  className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
                 />
+                {localAmountInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter an amount like 1200 or 1200.50</Text> : null}
+              </View>
+            ) : (
+              <View className={FIELD_HALF}>
+                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
+                <DateField
+                  value={date}
+                  onChange={setDate}
+                  className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+                />
+                {dateInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Use the format YYYY-MM-DD</Text> : null}
               </View>
             )}
-
-            <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)] order-last lg:order-none">
+            <View className={FIELD_FULL}>
               <PickerField
                 label="Category"
                 value={category}
@@ -717,12 +704,31 @@ export default function AddEntryForm({
               ) : null}
             </View>
 
-            <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
+            <View className={FIELD_HALF}>
+              <PickerField label="Who Paid" value={payer} options={membersList} onChange={setPayer} />
+            </View>
+
+            <View className={FIELD_HALF}>
+              <PickerField label="Split Type" value={splitType} options={SPLIT_TYPE_OPTIONS} onChange={setSplitType} />
+            </View>
+
+            {splitType === 'owed' && (
+              <View className={FIELD_FULL}>
+                <PickerField
+                  label="Who Owes the Full Amount"
+                  value={owedBy}
+                  options={membersList.filter((p) => p !== payer)}
+                  onChange={setOwedBy}
+                />
+              </View>
+            )}
+
+            <View className={isTravel || showTravelMultiplier ? FIELD_HALF : FIELD_FULL}>
               <PickerField label="Payment Method" value={paymentMethod} options={paymentMethodOptions} onChange={handlePaymentMethodChange} />
             </View>
 
             {showTravelMultiplier && (
-              <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
+              <View className={FIELD_HALF}>
                 <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
                   {bookingKind === 'smartbuy' ? 'SmartBuy multiplier (optional)' : 'Travel with Points multiplier (optional)'}
                 </Text>
@@ -736,17 +742,18 @@ export default function AddEntryForm({
               </View>
             )}
 
-            <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
-              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
-              <DateField
-                value={date}
-                onChange={setDate}
-                className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-              />
-              {dateInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Use the format YYYY-MM-DD</Text> : null}
-            </View>
-
-            <View className="w-full lg:w-[calc(33.333%-9.333px)]">
+            {isTravel && (
+              <View className={FIELD_HALF}>
+                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
+                <DateField
+                  value={date}
+                  onChange={setDate}
+                  className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+                />
+                {dateInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Use the format YYYY-MM-DD</Text> : null}
+              </View>
+            )}
+            <View className={FIELD_TEXT}>
               <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
               <TextInput
                 value={note}
@@ -758,17 +765,6 @@ export default function AddEntryForm({
               />
             </View>
 
-            <View className="w-full lg:w-[calc(33.333%-9.333px)]">
-              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Tags (optional)</Text>
-              <TextInput
-                value={tagsText}
-                onChangeText={setTagsText}
-                placeholder="Vacation, Reimbursable"
-                returnKeyType="done"
-                onSubmitEditing={() => Keyboard.dismiss()}
-                className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-              />
-            </View>
           </View>
 
           {rankedCards.length > 0 && (() => {
@@ -812,39 +808,78 @@ export default function AddEntryForm({
             </View>
           )}
 
-          {!isTravel && (
-            <View className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3 mb-3 mt-3">
-              <Pressable onPress={() => setSplitAcrossMonths((v) => !v)} className="flex-row items-center gap-2.5">
-                <View
-                  className={`w-4 h-4 rounded border items-center justify-center ${
-                    splitAcrossMonths ? 'bg-ledger-green border-ledger-green' : 'border-ink/30 bg-paper'
-                  }`}
-                >
-                  {splitAcrossMonths && <Text className="text-white text-xs">✓</Text>}
-                </View>
-                <Text className="font-body-semibold text-sm text-ink flex-1">Split across multiple months</Text>
-              </Pressable>
-              <Text className="font-body text-2xs text-muted-text mt-1 ml-7">
-                For lump-sum payments that cover several months - spreads the amount evenly across one entry per month.
-              </Text>
+          <Pressable onPress={() => setMoreToggle(!moreOpen)} className="mt-3 flex-row items-center">
+            <Text className="font-body-semibold text-xs text-muted-text">
+              {moreOpen ? '▾' : '▸'} More details{' '}
+              <Text className="font-body text-2xs">{isTravel ? '(tags, reward points)' : '(tags, split across months)'}</Text>
+            </Text>
+          </Pressable>
 
-              {splitAcrossMonths && (
-                <View className="mt-3 ml-7 max-w-[8rem]">
-                  <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Number of Months</Text>
+          {moreOpen && (
+            <>
+              <View className="flex-row flex-wrap mt-3" style={{ gap: 14 }}>
+                <View className={isTravel ? FIELD_HALF : FIELD_FULL}>
+                  <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Tags (optional)</Text>
                   <TextInput
-                    value={monthsCount}
-                    onChangeText={setMonthsCount}
-                    keyboardType="number-pad"
-                    className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2 bg-paper shadow-2xs"
+                    value={tagsText}
+                    onChangeText={setTagsText}
+                    placeholder="Vacation, Reimbursable"
+                    returnKeyType="done"
+                    onSubmitEditing={() => Keyboard.dismiss()}
+                    className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
                   />
-                  {parseAmountInput(amount) > 0 && (
-                    <Text className="font-body text-2xs text-muted-text mt-1">
-                      ~{(parseAmountInput(amount) / Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2))).toFixed(2)} / month
+                </View>
+                {isTravel && (
+                  <View className={FIELD_HALF}>
+                    <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
+                      Reward Points (+ spent / − earned)
                     </Text>
+                    <TextInput
+                      value={rewardPoints}
+                      onChangeText={setRewardPoints}
+                      keyboardType="numbers-and-punctuation"
+                      placeholder="Optional"
+                      className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+                    />
+                    {pointsInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter whole or decimal points, e.g. 1500 or -250</Text> : null}
+                  </View>
+                )}
+              </View>
+              {!isTravel && (
+                <View className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3 mt-3">
+                  <Pressable onPress={() => setSplitAcrossMonths((v) => !v)} className="flex-row items-center gap-2.5">
+                    <View
+                      className={`w-4 h-4 rounded border items-center justify-center ${
+                        splitAcrossMonths ? 'bg-ledger-green border-ledger-green' : 'border-ink/30 bg-paper'
+                      }`}
+                    >
+                      {splitAcrossMonths && <Text className="text-white text-xs">✓</Text>}
+                    </View>
+                    <Text className="font-body-semibold text-sm text-ink flex-1">Split across multiple months</Text>
+                  </Pressable>
+                  <Text className="font-body text-2xs text-muted-text mt-1 ml-7">
+                    For lump-sum payments that cover several months - spreads the amount evenly across one entry per month.
+                  </Text>
+
+                  {splitAcrossMonths && (
+                    <View className="mt-3 ml-7 max-w-[8rem]">
+                      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Number of Months</Text>
+                      <TextInput
+                        value={monthsCount}
+                        onChangeText={setMonthsCount}
+                        keyboardType="number-pad"
+                        className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2 bg-paper shadow-2xs"
+                      />
+                      {parseAmountInput(amount) > 0 && (
+                        <Text className="font-body text-2xs text-muted-text mt-1">
+                          ~{(parseAmountInput(amount) / Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2))).toFixed(2)} / month
+                        </Text>
+                      )}
+                    </View>
                   )}
                 </View>
               )}
-            </View>
+            </>
           )}
 
           <Pressable

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, ScrollView, Platform, KeyboardAvoidingView, useWindowDimensions } from 'react-native';
+import { View, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
 import {
   subscribeToExpenses,
   subscribeToTrips,
@@ -18,7 +18,8 @@ import { useAuth } from '../../lib/AuthContext';
 import { useJump } from '../../lib/JumpContext';
 import { useUndoDelete } from '../../lib/useUndoDelete';
 import { usePaymentInstruments } from '../../lib/usePaymentInstruments';
-import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger, formatCurrency, memberForUser } from '../../lib/utils';
+import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger, formatCurrency, memberForUser, pickDefaultTrip } from '../../lib/utils';
+import { getJSON, setJSON } from '../../lib/deviceStore';
 import { reportError } from '../../lib/errorReporting';
 import AppHeader from '../../components/AppHeader';
 import TripPicker from '../../components/TripPicker';
@@ -29,6 +30,8 @@ import AddEntryForm from '../../components/AddEntryForm';
 import EntryList from '../../components/EntryList';
 import CategoryChart from '../../components/CategoryChart';
 import UndoToast from '../../components/UndoToast';
+
+const LAST_TRIP_KEY = 'splitkhata:lastTripId';
 
 export default function Travel() {
   const { user } = useAuth();
@@ -45,13 +48,12 @@ export default function Travel() {
   const [cardTransactions, setCardTransactions] = useState([]);
   const instruments = usePaymentInstruments(creditCards);
 
-  const [selectedTripId, setSelectedTripId] = useState('');
+  const [pickedTripId, setSelectedTripId] = useState('');
+  // The trip opened last on this device, read once so the tab can reopen on
+  // it when no trip is in progress (undefined = not read yet).
+  const [lastTripId, setLastTripId] = useState(undefined);
   const [currentCurrency, setCurrentCurrency] = useState('INR');
   const [showSettings, setShowSettings] = useState(false);
-  // Tailwind's order-* classes only apply on the website - see
-  // household.js for the same pattern and the reasoning.
-  const { width } = useWindowDimensions();
-  const nativeStacked = Platform.OS !== 'web' && width < 1024;
 
   // Mirrors household.js - deleting a linked entry also deletes the card
   // transaction it created (see AddEntryForm's handleSubmit).
@@ -108,7 +110,27 @@ export default function Travel() {
   useEffect(() => subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')), []);
   useEffect(() => subscribeToCardTransactions(setCardTransactions, (err) => reportError(err, 'Could not load card transactions')), []);
 
+  // Open on the trip in progress today (else the last one used) instead of an
+  // empty screen. It's only a default: any trip picked explicitly (the list, a
+  // search jump, a new trip) takes over.
+  const defaultTripId = useMemo(
+    () => (lastTripId === undefined ? '' : pickDefaultTrip(trips, lastTripId)?.id || ''),
+    [trips, lastTripId],
+  );
+  const selectedTripId = pickedTripId || defaultTripId;
   const selectedTripObj = trips.find((t) => t.id === selectedTripId) || null;
+
+  useEffect(() => {
+    let cancelled = false;
+    getJSON(LAST_TRIP_KEY, '').then((id) => !cancelled && setLastTripId(typeof id === 'string' ? id : ''));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (selectedTripId) setJSON(LAST_TRIP_KEY, selectedTripId);
+  }, [selectedTripId]);
 
   const tripEntries = useMemo(
     () =>
@@ -190,11 +212,11 @@ export default function Travel() {
           )}
         </View>
 
-        {/* Two-column shell above 1024px - see household.js for the same
-            pattern and the reasoning behind the order-* stacking. */}
+        {/* Two-column shell above 1024px - see household.js; on a phone the
+            ledger (Add Entry + entries) stacks first, charts below. */}
         {selectedTripObj && allTravelEntries && (
-          <View className="flex-col lg:flex-row" style={nativeStacked ? { gap: 20, flexDirection: 'column-reverse' } : { gap: 20 }}>
-            <View className="order-2 lg:order-1 lg:flex-1">
+          <View className="flex-col lg:flex-row" style={{ gap: 20 }}>
+            <View className="lg:flex-1">
               <View className="px-4">
                 <AddEntryForm
                   deviceName={memberForUser(user, members) || undefined}
@@ -227,7 +249,7 @@ export default function Travel() {
               />
             </View>
 
-            <View className="order-1 lg:order-2 w-full lg:w-96 px-4" style={{ gap: 16 }}>
+            <View className="w-full lg:w-96 px-4" style={{ gap: 16 }}>
               <BudgetAlerts entries={tripEntries} ledger="travel" month={null} budgets={selectedTripObj.categoryBudgets || {}} />
 
               <CategoryChart
