@@ -2705,17 +2705,24 @@ function categoryNameMatches(categoryName, keywords) {
 // free text, not a fixed enum, so this is fuzzy keyword matching, not a
 // real classifier - it exists to save the common case, and the result is
 // always meant to be shown and correctable, never treated as final.
-export function inferCardRewardFields(card, householdCategory, params, travelMultiplier) {
+// `bookings: false` (travel-ledger entries) switches the portal-booking
+// detection off entirely: a travel entry never gets a Travel with Points /
+// SmartBuy category or multiplier, whatever its category is called or what
+// was typed - its points live in its own manual Reward Points field, separate
+// from the card's. Those bookings are entered on the Cards tab instead.
+export function inferCardRewardFields(card, householdCategory, params, travelMultiplier, { bookings = true } = {}) {
   const name = householdCategory;
   // A portal booking's own multiplier (SmartBuy / Travel with Points) can't
   // come from a category name - it's typed per entry. Blank/invalid leaves it
   // unset, so SmartBuy falls back to its category default (10X) and Travel
   // with Points earns just the 1X base.
-  const bookingMultiplier = Number(travelMultiplier) > 0 ? Number(travelMultiplier) : null;
+  const bookingMultiplier = bookings && Number(travelMultiplier) > 0 ? Number(travelMultiplier) : null;
   switch (card?.rewardStrategy) {
     case 'hdfc_diners_slab_milestone': {
       const categories = params?.categories || CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone.categories;
-      const matchKey = Object.keys(DINERS_CATEGORY_KEYWORDS).find((key) => categoryNameMatches(name, DINERS_CATEGORY_KEYWORDS[key]));
+      const matchKey = Object.keys(DINERS_CATEGORY_KEYWORDS).find(
+        (key) => (bookings || key !== 'smartbuy_hotel') && categoryNameMatches(name, DINERS_CATEGORY_KEYWORDS[key]),
+      );
       // A multiplier typed for this entry means it was a SmartBuy booking,
       // whatever its category is called.
       const wanted = bookingMultiplier != null ? 'smartbuy_hotel' : matchKey;
@@ -2737,7 +2744,7 @@ export function inferCardRewardFields(card, householdCategory, params, travelMul
       // booking, whatever its category is called; the category name alone
       // ("Travel with Points") also marks one, at base points until a
       // multiplier is entered.
-      if (bookingMultiplier != null || categoryNameMatches(name, HSBC_PREMIER_TRAVEL_KEYWORDS)) {
+      if (bookingMultiplier != null || (bookings && categoryNameMatches(name, HSBC_PREMIER_TRAVEL_KEYWORDS))) {
         return bookingMultiplier != null ? { category: 'travel_bonus', travelMultiplier: bookingMultiplier } : { category: 'travel_bonus' };
       }
       if (categoryNameMatches(name, HSBC_PREMIER_FUEL_KEYWORDS)) return { category: 'fuel_excluded' };
@@ -2755,7 +2762,7 @@ export function inferCardRewardFields(card, householdCategory, params, travelMul
 // afterward. Pure preview - never touches saved data, never picks a card
 // for the user. `cards`/`cardTransactions` are every tracked card and all
 // of its transactions.
-export function rankCardsForEntry(cards, cardTransactions, amount, householdCategory, date, travelBooking) {
+export function rankCardsForEntry(cards, cardTransactions, amount, householdCategory, date, travelBooking, options) {
   if (!amount || !date || !cards?.length) return [];
   return cards
     .filter((card) => !isStatementOnlyCard(card))
@@ -2765,7 +2772,7 @@ export function rankCardsForEntry(cards, cardTransactions, amount, householdCate
       // this entry is being paid with - another card in the ranking never
       // borrows it.
       const multiplier = travelBooking && travelBooking.cardId === card.id ? travelBooking.multiplier : undefined;
-      const fields = inferCardRewardFields(card, householdCategory, params, multiplier);
+      const fields = inferCardRewardFields(card, householdCategory, params, multiplier, options);
       const cardTxns = cardTransactions.filter((t) => t.cardId === card.id);
       const draft = { id: '__rank_preview__', cardId: card.id, date, amount, ...fields };
       const preview = previewTransactionReward(card, cardTxns, draft);
@@ -2780,16 +2787,6 @@ export function rankCardsForEntry(cards, cardTransactions, amount, householdCate
       return { card, earned, unit, capStatus, inferredFields: fields };
     })
     .sort((a, b) => b.earned - a.earned);
-}
-
-// What a travel entry's manual "Reward Points (+ spent / - earned)" field
-// should read for a points-earning card: the points the reward engine says
-// this entry earns, as a negative number (earned points are entered as minus).
-// Empty for a cashback card, a refund, or nothing earned - those leave the
-// field alone.
-export function autoRewardPointsText(rank) {
-  if (!rank || rank.unit !== 'points' || !(rank.earned > 0)) return '';
-  return String(-Math.round(rank.earned));
 }
 
 // Recent combinations of category/payer/paymentMethod, ranked by how often

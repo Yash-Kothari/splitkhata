@@ -77,7 +77,6 @@ import {
   previewTransactionReward,
   inferCardRewardFields,
   rankCardsForEntry,
-  autoRewardPointsText,
   getRecentCombinations,
   findPossibleDuplicateEntry,
   resolveStrategyParamsForDate,
@@ -2262,27 +2261,6 @@ test('inferCardRewardFields: a "SmartBuy" category on Diners is a SmartBuy booki
   assert.deepEqual(inferCardRewardFields(card, 'Hotel', params, 5), { category: 'smartbuy_hotel', travelMultiplier: 5 });
 });
 
-test('autoRewardPointsText: earned points on a points card become a negative number for the travel Reward Points field', () => {
-  assert.equal(autoRewardPointsText({ unit: 'points', earned: 1875 }), '-1875');
-  assert.equal(autoRewardPointsText({ unit: 'points', earned: 158.6 }), '-159', 'rounded to whole points');
-  assert.equal(autoRewardPointsText({ unit: 'inr', earned: 530 }), '', 'a cashback card has no points to fill');
-  assert.equal(autoRewardPointsText({ unit: 'points', earned: 0 }), '', 'nothing earned leaves the field alone');
-  assert.equal(autoRewardPointsText({ unit: 'points', earned: -300 }), '', 'a refund is not auto-filled');
-  assert.equal(autoRewardPointsText(null), '');
-});
-
-test('autoRewardPointsText matches the engine for the ₹5,297.60 Travel with Points booking', () => {
-  const card = {
-    id: 'p', name: 'HSBC Premier', rewardStrategy: 'hsbc_premier_flat_capped', billingCycleDay: 1,
-    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped }],
-  };
-  const carry = [{ id: 'a', cardId: 'p', date: '2026-09-01', amount: 10, category: 'regular' }]; // Rs10 carried forward
-  const [rank] = rankCardsForEntry([card], carry, 5297.6, 'Flight', '2026-09-26', { cardId: 'p', multiplier: '12' });
-  assert.equal(autoRewardPointsText(rank), '-1875');
-  const [noCarry] = rankCardsForEntry([card], [], 5297.6, 'Flight', '2026-09-26', { cardId: 'p', multiplier: '12' });
-  assert.equal(autoRewardPointsText(noCarry), '-1872', 'without the carried Rs10: 52 units -> 156 base + 1716 accelerated');
-});
-
 test('rankCardsForEntry: cap status is what is left AFTER this entry, so a booking visibly uses its accelerated points', () => {
   const card = {
     id: 'p', name: 'HSBC Premier', rewardStrategy: 'hsbc_premier_flat_capped', billingCycleDay: 1,
@@ -2294,6 +2272,27 @@ test('rankCardsForEntry: cap status is what is left AFTER this entry, so a booki
   const travelCap = after[0].capStatus.find((c) => c.key === 'travel_bonus');
   assert.equal(travelCap.earned, 1716);
   assert.equal(travelCap.remaining, 18000 - 1716);
+});
+
+test('inferCardRewardFields: bookings:false (travel entries) never marks a Travel with Points / SmartBuy booking', () => {
+  const premier = { rewardStrategy: 'hsbc_premier_flat_capped' };
+  const diners = { rewardStrategy: 'hdfc_diners_slab_milestone' };
+  const dinersParams = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const off = { bookings: false };
+  assert.deepEqual(inferCardRewardFields(premier, 'Travel with Points', {}, '12', off), { category: 'regular' });
+  assert.deepEqual(inferCardRewardFields(premier, 'Flight', {}, '12', off), { category: 'regular' });
+  assert.deepEqual(inferCardRewardFields(diners, 'SmartBuy', dinersParams, '5', off), { category: 'regular' });
+  assert.deepEqual(inferCardRewardFields(premier, 'Insurance', {}, '12', off), { category: 'capped_category' }, 'other category rules still apply');
+  assert.deepEqual(inferCardRewardFields(diners, 'Eating Out', dinersParams, '', off), { category: 'weekend_dining' }, 'other Diners rules still apply');
+});
+
+test('rankCardsForEntry: bookings:false ignores a typed multiplier, so a travel entry earns base points only', () => {
+  const card = {
+    id: 'p', name: 'HSBC Premier', rewardStrategy: 'hsbc_premier_flat_capped', billingCycleDay: 1,
+    strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped }],
+  };
+  const [rank] = rankCardsForEntry([card], [], 5297.6, 'Flight', '2026-09-26', { cardId: 'p', multiplier: '12' }, { bookings: false });
+  assert.equal(rank.earned, 156, '52 units * 3, no accelerated part');
 });
 
 test('rankCardsForEntry: a Travel with Points entry earns base off the carry plus accelerated on its own amount', () => {

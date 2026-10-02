@@ -29,7 +29,6 @@ import {
   buildReceiptExtractionPrompt,
   buildReceiptExtractionSchema,
   rankCardsForEntry,
-  autoRewardPointsText,
   getRecentCombinations,
   inferCardRewardFields,
   resolveStrategyParamsForDate,
@@ -93,7 +92,6 @@ export default function AddEntryForm({
   const [amount, setAmount] = useState('');
   const [localAmount, setLocalAmount] = useState('');
   const [rewardPoints, setRewardPoints] = useState('');
-  const [rewardPointsTouched, setRewardPointsTouched] = useState(false);
   const [payer, setPayer] = useState(deviceName || membersList[0]);
   const [category, setCategory] = useState(categories[0] || 'Groceries');
   const [splitType, setSplitType] = useState('shared');
@@ -139,15 +137,18 @@ export default function AddEntryForm({
   // where the amount/category are being typed - the reward engine already
   // models every card's real terms, this just surfaces it at the moment
   // it's actually useful instead of only in the Cards tab after the fact.
-  // On an HSBC Premier or Diners card, a portal booking (Travel with Points /
-  // SmartBuy) earns accelerated points at a multiplier that varies per booking
-  // (Premier's runs 2X-12X) - so it's typed here, and typing one is what marks
-  // the entry as a booking, whatever its category is called. Blank = a normal
-  // purchase (a category literally named "Travel with Points" / "SmartBuy" also
-  // counts as a booking, at base points until a multiplier is entered).
+  // On a household entry paid with an HSBC Premier or Diners card, a portal
+  // booking (Travel with Points / SmartBuy) earns accelerated points at a
+  // multiplier that varies per booking (Premier's runs 2X-12X) - so it's typed
+  // here, and typing one is what marks the entry as a booking, whatever its
+  // category is called. Blank = a normal purchase (a category literally named
+  // "Travel with Points" / "SmartBuy" also counts as a booking, at base points
+  // until a multiplier is entered). Travel-ledger entries never do this: their
+  // points are their own manual Reward Points field, separate from the card's,
+  // and a travel booking's accelerated points are entered on the Cards tab.
   const selectedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
   const bookingKind =
-    selectedCard && !isStatementOnlyCard(selectedCard)
+    !isTravel && selectedCard && !isStatementOnlyCard(selectedCard)
       ? { hsbc_premier_flat_capped: 'travel_with_points', hdfc_diners_slab_milestone: 'smartbuy' }[selectedCard.rewardStrategy] || null
       : null;
   const showTravelMultiplier = bookingKind != null;
@@ -162,17 +163,10 @@ export default function AddEntryForm({
         category,
         date,
         effectiveTravelMultiplier ? { cardId: selectedCardId, multiplier: effectiveTravelMultiplier } : null,
+        { bookings: !isTravel },
       ),
-    [creditCards, cardTransactions, amount, category, date, effectiveTravelMultiplier, selectedCardId],
+    [creditCards, cardTransactions, amount, category, date, effectiveTravelMultiplier, selectedCardId, isTravel],
   );
-
-  // A travel entry's points come from its manual Reward Points field, which
-  // used to be typed by hand and never followed the card's calculation. On a
-  // points card it now fills itself from that calculation (as a negative,
-  // "earned") until the field is edited by hand.
-  const selectedRank = selectedCardId ? rankedCards.find((r) => r.card.id === selectedCardId) : null;
-  const autoRewardPoints = isTravel ? autoRewardPointsText(selectedRank) : '';
-  const rewardPointsValue = rewardPointsTouched ? rewardPoints : autoRewardPoints;
 
   // Real household spending repeats far more than a blank form assumes -
   // one tap on a recent combination fills category/payer/payment method,
@@ -340,7 +334,7 @@ export default function AddEntryForm({
   // make Add silently do nothing.
   const amountInvalid = amount !== '' && !(parseAmountInput(amount) > 0);
   const localAmountInvalid = isTravel && localAmount !== '' && !(parseAmountInput(localAmount) > 0);
-  const pointsInvalid = isTravel && rewardPointsValue !== '' && parseAmountInput(rewardPointsValue, { allowNegative: true }) == null;
+  const pointsInvalid = isTravel && rewardPoints !== '' && parseAmountInput(rewardPoints, { allowNegative: true }) == null;
   const dateInvalid = !isValidISODate(date);
   const inputInvalid = amountInvalid || localAmountInvalid || pointsInvalid || dateInvalid;
 
@@ -369,7 +363,6 @@ export default function AddEntryForm({
       setAmount('');
       setLocalAmount('');
       setRewardPoints('');
-      setRewardPointsTouched(false);
       setNote('');
       setTagsText('');
       setTravelMultiplier('');
@@ -416,7 +409,7 @@ export default function AddEntryForm({
     const tags = parseTagsInput(tagsText);
     const months = !isTravel && splitAcrossMonths ? Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2)) : 1;
     const parsedLocal = isTravel && localAmount ? parseAmountInput(localAmount) : null;
-    const parsedPoints = isTravel && rewardPointsValue ? parseAmountInput(rewardPointsValue, { allowNegative: true }) : null;
+    const parsedPoints = isTravel && rewardPoints ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
     const effectiveSplitAmong =
       splitType === 'shared' && splitAmong.length > 0 && splitAmong.length < membersList.length ? splitAmong : null;
 
@@ -459,7 +452,7 @@ export default function AddEntryForm({
           const inst = installments[i];
           try {
             const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, inst.date);
-            const fields = inferCardRewardFields(matchedCard, inst.category, params, effectiveTravelMultiplier);
+            const fields = inferCardRewardFields(matchedCard, inst.category, params, effectiveTravelMultiplier, { bookings: !isTravel });
             await addCardTransactionAndLink(createdIds[i], {
               cardId: matchedCard.id,
               amount: inst.amount,
@@ -506,7 +499,7 @@ export default function AddEntryForm({
       if (matchedCard) {
         try {
           const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, date);
-          const fields = inferCardRewardFields(matchedCard, category, params, effectiveTravelMultiplier);
+          const fields = inferCardRewardFields(matchedCard, category, params, effectiveTravelMultiplier, { bookings: !isTravel });
           await addCardTransactionAndLink(newEntryId, {
             cardId: matchedCard.id,
             amount: parsed,
@@ -673,19 +666,13 @@ export default function AddEntryForm({
                     Reward Points (+ spent / − earned)
                   </Text>
                   <TextInput
-                    value={rewardPointsValue}
-                    onChangeText={(v) => {
-                      setRewardPoints(v);
-                      setRewardPointsTouched(true);
-                    }}
+                    value={rewardPoints}
+                    onChangeText={setRewardPoints}
                     keyboardType="numbers-and-punctuation"
                     placeholder="Optional"
                     className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
                   />
                   {pointsInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter whole or decimal points, e.g. 1500 or -250</Text> : null}
-                  {!rewardPointsTouched && autoRewardPoints ? (
-                    <Text className="font-body text-2xs text-muted-text mt-1">Filled from {selectedRank.card.name}'s calculation - edit to override.</Text>
-                  ) : null}
                 </View>
               </>
             )}
