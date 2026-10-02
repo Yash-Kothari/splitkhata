@@ -118,7 +118,7 @@ const CARD_PARAM_FIELDS = {
   ],
   hsbc_tiered_cashback_aggregate: [
     { key: 'bonusRate', label: 'Bonus category rate (%)' },
-    { key: 'bonusMonthlyCap', label: 'Max bonus cashback per month (₹)' },
+    { key: 'bonusMonthlyCap', label: 'Max bonus cashback per statement (₹)' },
     { key: 'baseRate', label: 'Base rate (%)' },
     { key: 'annualMilestoneTarget', label: 'Annual fee-waiver spend (₹)' },
     { key: 'annualMilestoneLabel', label: 'Annual milestone reward', isText: true },

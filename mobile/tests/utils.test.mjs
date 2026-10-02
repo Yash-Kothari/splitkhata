@@ -1723,8 +1723,19 @@ test('HSBC Live+: a blank/null bonusMonthlyCap means uncapped, not "capped at ze
   assert.equal(bonusEarned, 800, 'a cleared cap field must not silently zero out every bonus-tier reward');
 });
 
-test('HSBC Live+: the bonus cap resets every calendar month, not once per call', () => {
+test('HSBC Live+: the ₹1,200 bonus cap is per statement - a statement spanning two calendar months gets one cap, not one per month', () => {
   const params = CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate;
+  assert.equal(params.bonusCapScope, 'statement_cycle');
+  const { bonusEarned } = computeHsbcCycleReward(params, [
+    { id: 't1', date: '2026-08-28', amount: 8000, isBonusEligible: true }, // 800
+    { id: 't2', date: '2026-08-29', amount: 8000, isBonusEligible: true }, // 800 -> 1600 so far
+    { id: 't3', date: '2026-09-02', amount: 8000, isBonusEligible: true }, // 800 -> 2400, same statement
+  ]);
+  assert.equal(bonusEarned, 1200, 'one cap for the whole Aug 28 - Sep 27 statement');
+});
+
+test('HSBC Live+: with a calendar_month scope passed directly, the bonus cap resets every calendar month', () => {
+  const params = { ...CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate, bonusCapScope: 'calendar_month' };
   const { bonusEarned } = computeHsbcCycleReward(params, [
     { id: 't1', date: '2026-08-28', amount: 8000, isBonusEligible: true }, // Aug: round(8000*10/100)=800
     { id: 't2', date: '2026-08-29', amount: 8000, isBonusEligible: true }, // Aug: another 800, combined 1600 capped to 1200
@@ -1737,8 +1748,8 @@ test('HSBC Live+: the bonus cap resets every calendar month, not once per call',
   );
 });
 
-test('HSBC Live+: a lifetime history spanning many months caps independently per month', () => {
-  const params = CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate;
+test('HSBC Live+: with a calendar_month scope, a lifetime history spanning many months caps independently per month', () => {
+  const params = { ...CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate, bonusCapScope: 'calendar_month' };
   const { bonusEarned } = computeHsbcCycleReward(params, [
     { id: 't1', date: '2026-06-05', amount: 8000, isBonusEligible: true }, // Jun: 800
     { id: 't2', date: '2026-07-05', amount: 8000, isBonusEligible: true }, // Jul: 800
@@ -2426,18 +2437,23 @@ test('computeCardCapStatus (Diners) scopes a day-period cap to only that day, no
   assert.equal(status.remaining, 980);
 });
 
-test('computeCardCapStatus (HSBC Live+) reports the bonus-category cap remaining for the current month', () => {
+test('computeCardCapStatus (HSBC Live+) reports the bonus-category cap remaining for the current statement', () => {
   const card = {
     rewardStrategy: 'hsbc_tiered_cashback_aggregate',
     strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }],
   };
-  const txns = [
-    { id: 't1', date: '2026-08-01', amount: 8000, isBonusEligible: true, channel: null }, // round(8000*10/100) = 800
-    { id: 't2', date: '2026-07-31', amount: 50000, isBonusEligible: true, channel: null }, // different month, excluded
-  ];
-  const [status] = computeCardCapStatus(card, txns, txns, '2026-08-15');
+  const thisStatement = [{ id: 't1', date: '2026-08-01', amount: 8000, isBonusEligible: true, channel: null }]; // round(8000*10/100) = 800
+  const earlier = { id: 't2', date: '2026-07-10', amount: 50000, isBonusEligible: true, channel: null }; // an earlier statement
+  const [status] = computeCardCapStatus(card, [...thisStatement, earlier], thisStatement, '2026-08-15');
+  assert.equal(status.capPeriod, 'cycle', 'the limit resets with each statement');
   assert.equal(status.earned, 800);
-  assert.equal(status.remaining, 400, '1200 cap - 800 earned, last month\'s spend does not count');
+  assert.equal(status.remaining, 400, '1200 cap - 800 earned this statement; an earlier statement does not count');
+});
+
+test('resolveCardParams: an HSBC Live+ card saved with a calendar_month cap scope is still treated as per statement', () => {
+  const stored = { ...CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate, bonusCapScope: 'calendar_month' };
+  const card = { rewardStrategy: 'hsbc_tiered_cashback_aggregate', strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: stored }] };
+  assert.equal(resolveCardParams(card, '2026-08-01').bonusCapScope, 'statement_cycle');
 });
 
 test('computeCardCapStatus (SBI) reads the current billing cycle, not the calendar month', () => {
@@ -3276,7 +3292,7 @@ test('P0-11: a Diners monthly cap (grocery) is shared by both cycles a calendar 
   assert.equal(ledger.total, 2000, 'the 2,000/month cap covers both purchases together, not 2,000 each');
 });
 
-test('P0-11: HSBC Live+ ₹1,200/month bonus cap is shared across a mid-month statement date', () => {
+test('HSBC Live+: through the ledger, each statement gets its own ₹1,200 cap even when two statements fall in one calendar month', () => {
   const card = {
     id: 'h1', rewardStrategy: 'hsbc_tiered_cashback_aggregate', billingCycleDay: 15,
     strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }],
@@ -3286,7 +3302,10 @@ test('P0-11: HSBC Live+ ₹1,200/month bonus cap is shared across a mid-month st
     { id: 'b', cardId: 'h1', date: '2026-08-20', amount: 12000, isBonusEligible: true }, // cycle 08-15..09-15, same calendar month
   ];
   const ledger = computeCardRewardLedger(card, txns, '2026-12-31');
-  assert.equal(ledger.total, 1200, 'one ₹1,200 cap for the whole of August, not ₹1,200 twice');
+  assert.equal(ledger.total, 2400, 'two statements, ₹1,200 each - the cap follows the statement, not the calendar month');
+  const stored = { ...CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate, bonusCapScope: 'calendar_month' };
+  const oldCard = { ...card, strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: stored }] };
+  assert.equal(computeCardRewardLedger(oldCard, txns, '2026-12-31').total, 2400, 'a card saved with the old calendar-month scope behaves the same');
 });
 
 test('P0-11: statement_cycle capScope opts out and resets with each cycle', () => {

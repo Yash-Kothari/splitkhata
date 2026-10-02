@@ -50,5 +50,38 @@
     </noscript>
     <!-- The root element for your Expo app. -->
     <div id="root"></div>
+    <!-- Offline support: registers sw.js (see public/sw.js). Only on https, so
+         the local dev server is never cached. The base path (/splitkhata) is
+         read off the app bundle's own URL instead of being hardcoded. -->
+    <script>
+      (function () {
+        if (!('serviceWorker' in navigator) || location.protocol !== 'https:') return;
+        window.addEventListener('load', function () {
+          var bundle = document.querySelector('script[src*="/_expo/static/js/"]');
+          if (!bundle) return;
+          var base = new URL(bundle.src).pathname.split('/_expo/')[0];
+          navigator.serviceWorker
+            .register(base + '/sw.js', { scope: base + '/' })
+            .then(function () {
+              return navigator.serviceWorker.ready;
+            })
+            .then(function (reg) {
+              // The first visit loaded everything before the worker existed, so
+              // hand it the list of files this page used to cache them too.
+              var urls = performance
+                .getEntriesByType('resource')
+                .map(function (e) {
+                  return e.name;
+                })
+                .filter(function (u) {
+                  return u.indexOf(location.origin + base + '/') === 0;
+                });
+              urls.push(location.origin + base + '/');
+              if (reg.active) reg.active.postMessage({ type: 'cache-urls', urls: urls });
+            })
+            .catch(function () {});
+        });
+      })();
+    </script>
   </body>
 </html>

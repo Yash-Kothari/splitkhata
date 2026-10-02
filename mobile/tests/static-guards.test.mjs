@@ -29,3 +29,14 @@ test('no global crypto.randomUUID (undefined on Hermes) - use expo-crypto', () =
   assert.deepEqual(offenders.map((f) => f.slice(root.length + 1)), []);
 });
 
+
+test('offline support: service worker exists, is registered, and only touches same-origin files', () => {
+  const sw = readFileSync(join(root, 'public', 'sw.js'), 'utf8');
+  const html = readFileSync(join(root, 'public', 'index.html'), 'utf8');
+  assert.ok(html.includes("register(base + '/sw.js'"), 'public/index.html must register sw.js');
+  assert.ok(html.includes("location.protocol !== 'https:'"), 'registration must skip the local dev server');
+  // Firestore/Auth/Sentry/AI calls are cross-origin; caching them would break sync.
+  assert.ok(sw.includes('url.origin !== self.location.origin'), 'sw.js must ignore cross-origin requests');
+  assert.ok(sw.includes("request.method !== 'GET'"), 'sw.js must ignore non-GET requests');
+  assert.ok(sw.includes("request.mode === 'navigate'"), 'sw.js must serve the cached shell for page loads');
+});

@@ -1860,7 +1860,7 @@ If the receipt shows multiple totals (subtotal, tax, tip, grand total), use the 
 //
 // 1. A card's reward for a period is computed over the WHOLE set of
 //    transactions in that billing cycle, never per-transaction-then-summed.
-//    Caps (SBI's ₹2,000/channel, Diners' 75,000/cycle, HSBC's ₹1,200/month,
+//    Caps (SBI's ₹2,000/channel, Diners' 75,000/cycle, HSBC's ₹1,200/statement,
 //    Premier's ₹1L/category) are enforced against a running cycle total, not
 //    against each transaction in isolation - capping each transaction at
 //    the same number (like the old sheets did) lets a second qualifying
@@ -1935,8 +1935,10 @@ export const CARD_STRATEGY_DEFAULTS = {
   },
   hsbc_tiered_cashback_aggregate: {
     bonusRate: 10,
+    // The ₹1,200 bonus cap is per statement, not per calendar month (the field is
+    // still called bonusMonthlyCap - it is a stored key, renaming it would orphan saved rule sets).
     bonusMonthlyCap: 1200,
-    bonusCapScope: 'calendar_month',
+    bonusCapScope: 'statement_cycle',
     baseRate: 1.5,
     annualMilestoneTarget: 200000,
     annualMilestoneLabel: 'Annual fee waived',
@@ -2304,24 +2306,38 @@ export function computeSbiCycleReward(params, transactions) {
 // HSBC Live+: 10% on dining/food-delivery/grocery/shopping/utility spend
 // (Amazon/Flipkart/Myntra explicitly excluded from this tier despite
 // reading as "shopping" - encode that by leaving isBonusEligible false for
-// those), capped ₹1,200/calendar month combined; 1.5% uncapped on everything
-// else not flagged excluded. HSBC's own product terms state the cap is per
-// calendar month, not per billing cycle - bucket by calendar month and apply
-// the cap separately to each one, the same way computeDinersCycleReward
-// buckets its own month-scoped category caps, since a billing cycle whose
-// start day isn't the 1st spans two calendar months and would otherwise let
-// one cap cover both (or split one month's cap across two cycles).
-// `ctx` (optional, shared across cycles by computeCardRewardLedger, same
-// convention as computeDinersCycleReward) is what lets the ₹1,200/calendar-
-// month bonus cap survive past one billing cycle: without it, a card whose
-// billing day isn't the 1st could apply the cap twice to one calendar month
-// (once per cycle it spans). Only the capped bonus tier needs this - the
-// uncapped base tier is unaffected either way, so it's still computed fresh
-// from just the transactions this call was given.
+// those), capped ₹1,200 per STATEMENT (billing cycle) combined; 1.5% uncapped
+// on everything else not flagged excluded. The cap applies once to the whole
+// statement's eligible spend, whichever calendar months it touches, and
+// resets with the next statement.
+// (A 'calendar_month' bonusCapScope is still honoured when passed directly -
+// the cap then follows calendar months across cycles via `ctx`, shared by
+// computeCardRewardLedger like computeDinersCycleReward's - but a saved card
+// is always resolved to 'statement_cycle' (see resolveCardParams).)
 export function computeHsbcCycleReward(params, transactions, ctx) {
   const scope = params.bonusCapScope || 'calendar_month';
   ctx = ctx || {};
   ctx.hsbcBonusByMonth = ctx.hsbcBonusByMonth || {};
+
+  if (scope === 'statement_cycle') {
+    // One cap for the whole statement, however many calendar months it spans,
+    // and both tiers rounded once on the statement aggregate.
+    let eligibleAll = 0;
+    let baseAll = 0;
+    for (const t of transactions) {
+      if (t.channel === 'excluded') continue;
+      if (t.isBonusEligible) eligibleAll += t.amount;
+      else baseAll += t.amount;
+    }
+    const bonusRaw = Math.round((eligibleAll * params.bonusRate) / 100);
+    const bonusEarned = bonusRaw < 0 ? bonusRaw : applyCycleCap(bonusRaw, 0, params.bonusMonthlyCap);
+    const baseEarned = Math.round((baseAll * params.baseRate) / 100);
+    const perTransaction = transactions.map((t) => ({
+      id: t.id,
+      estimated: t.channel === 'excluded' ? 0 : Math.round((t.amount * (t.isBonusEligible ? params.bonusRate : params.baseRate)) / 100),
+    }));
+    return { totalReward: bonusEarned + baseEarned, bonusEarned, baseEarned, eligibleSum: eligibleAll, baseSum: baseAll, perTransaction, unit: 'inr' };
+  }
 
   const byMonth = {};
   for (const t of transactions) {
@@ -2341,13 +2357,7 @@ export function computeHsbcCycleReward(params, transactions, ctx) {
     baseSum += base;
     baseEarned += Math.round((base * params.baseRate) / 100);
 
-    if (scope === 'statement_cycle') {
-      // Resets with every cycle - exactly the old call-local behaviour.
-      const bonusRaw = Math.round((eligible * params.bonusRate) / 100);
-      bonusEarned += bonusRaw < 0 ? bonusRaw : applyCycleCap(bonusRaw, 0, params.bonusMonthlyCap);
-      continue;
-    }
-    // calendar_month (default): carry this month's running eligible spend and
+    // calendar_month: carry this month's running eligible spend and
     // bonus already paid across cycles via ctx, and only book the delta this
     // cycle adds - so a purchase either side of a mid-month statement date
     // shares one cap instead of getting one each.
@@ -2563,6 +2573,10 @@ export function resolveCardParams(card, date) {
   for (const key of ['bonusCapScope', 'categoryCapScope', 'travelBonusCapScope']) {
     if (withScopeDefaults[key] === undefined && defaults[key] !== undefined) withScopeDefaults[key] = defaults[key];
   }
+  // HSBC Live+'s bonus cap is per statement, whatever a rule set saved earlier
+  // says (cards created while it was modelled as a calendar-month cap store
+  // 'calendar_month'; there is no setting for this, it is the bank's rule).
+  if (card.rewardStrategy === 'hsbc_tiered_cashback_aggregate') withScopeDefaults.bonusCapScope = 'statement_cycle';
   if (!defaults.categories || !withScopeDefaults.categories) return withScopeDefaults;
   const defaultByKey = Object.fromEntries(defaults.categories.map((c) => [c.key, c]));
   return {
@@ -3069,7 +3083,7 @@ function computeHsbcLiveCapStatus(params, cardTransactions, currentCycleTxns, to
     key: 'bonus',
     label: 'Bonus category cashback',
     capAmount: params.bonusMonthlyCap,
-    capPeriod: 'month',
+    capPeriod: scope === 'statement_cycle' ? 'cycle' : 'month',
     earned: bonusEarned,
     remaining: Math.max(0, params.bonusMonthlyCap - bonusEarned),
     unit: 'inr',
@@ -3174,7 +3188,7 @@ export function applyRewardOverrides(cycleReward, transactions, card, asOfDate, 
   if (overrides.size === 0) return cycleReward;
 
   if (card?.rewardStrategy === 'hsbc_tiered_cashback_aggregate') {
-    const params = resolveStrategyParamsForDate(card.strategyParamsHistory, asOfDate ?? todayISO());
+    const params = resolveCardParams(card, asOfDate ?? todayISO());
     const nonOverridden = transactions.filter((t) => !overrides.has(t.id));
     const { totalReward: recomputedTotal } = computeHsbcCycleReward(params, nonOverridden, ctx);
     const overrideTotal = [...overrides.values()].reduce((sum, v) => sum + v, 0);
