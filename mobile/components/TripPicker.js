@@ -4,6 +4,7 @@ import { notify } from '../lib/dialogs';
 import Card from './Card';
 import PickerField from './PickerField';
 import DateField from './DateField';
+import TripImport from './TripImport';
 import { addTripToDb } from '../lib/firebase';
 import { DEFAULT_CURRENCIES, sortTripsRecentFirst, isTripActive, todayISO, isValidISODate, computeTripCashStats } from '../lib/utils';
 
@@ -16,6 +17,7 @@ function currentYear() {
 // traveling" banner, search + year-grouped browse list, 3-tile summary.
 export default function TripPicker({
   trips,
+  members = [],
   cashMovements,
   entries,
   dbCurrencies,
@@ -223,6 +225,7 @@ export default function TripPicker({
               <Text className="font-body-semibold text-xs text-muted-text">Done</Text>
             </Pressable>
           )}
+          {!addingTrip && <TripImport trips={trips} members={members} onImported={onTripSelect} />}
           <Pressable onPress={() => setAddingTrip((v) => !v)} className="px-2.5 py-1 rounded-md bg-paper border border-ink/10">
             <Text className="font-body-semibold text-xs text-muted-text">{addingTrip ? 'Cancel' : '+ Add Trip'}</Text>
           </Pressable>

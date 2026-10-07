@@ -611,6 +611,25 @@ export async function addTripToDb(name, currency, year, existingTrips = [], star
   return ref.id;
 }
 
+// TEMPORARY (one-time trip import, see components/TripImport.js; remove once
+// the trip is in). Writes the trip and every entry in ONE atomic batch with
+// fixed ids, so it is all-or-nothing and a second run can't duplicate. Refuses
+// if that trip id already exists.
+export async function importTripBundle(bundle) {
+  const { trip, entries } = bundle;
+  const tripRef = doc(tripsRef, trip.id);
+  if ((await getDoc(tripRef)).exists()) throw new Error('This trip was already imported.');
+  const batch = writeBatch(dbInstance);
+  const { id: _tripId, ...tripFields } = trip;
+  batch.set(tripRef, { ...tripFields, createdAt: serverTimestamp() });
+  entries.forEach((entry) => {
+    const { id, ...fields } = entry;
+    batch.set(doc(expensesRef, id), { ...fields, tripId: trip.id, createdAt: serverTimestamp() });
+  });
+  await track(batch.commit(), 'Could not import the trip');
+  return entries.length;
+}
+
 export async function updateTripInDb(tripId, updates) {
   if (!tripId) return;
   await updateDoc(doc(dbInstance, 'trips', tripId), updates);

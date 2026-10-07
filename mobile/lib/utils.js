@@ -1219,6 +1219,45 @@ export function getActiveTrip(trips, today = todayISO()) {
   return active.reduce((best, trip) => (trip.startDate > best.startDate ? trip : best));
 }
 
+// TEMPORARY (one-time trip import, see components/TripImport.js): checks a
+// {trip, entries} file before anything is written. Returns a list of
+// problems (empty = good to import). Pure.
+export function validateTripBundle(bundle, memberNames = [], existingTripNames = []) {
+  const errors = [];
+  const trip = bundle?.trip;
+  const entries = bundle?.entries;
+  if (!trip || typeof trip.name !== 'string' || !trip.name.trim()) errors.push('The file has no trip name.');
+  if (!trip?.id || typeof trip.id !== 'string') errors.push('The trip has no id.');
+  if (!trip?.currency) errors.push('The trip has no currency.');
+  if (trip?.name && existingTripNames.some((n) => String(n).trim().toLowerCase() === trip.name.trim().toLowerCase()))
+    errors.push(`A trip named "${trip.name}" already exists - nothing was imported.`);
+  if (!Array.isArray(entries) || entries.length === 0) {
+    errors.push('The file has no entries.');
+    return errors;
+  }
+  if (entries.length > 450) errors.push('Too many entries for one import (max 450).');
+  const ids = new Set();
+  entries.forEach((e, i) => {
+    const label = `Entry ${i + 1} (${e?.note || 'no note'})`;
+    if (!e?.id || ids.has(e.id)) errors.push(`${label}: missing or duplicate id.`);
+    ids.add(e?.id);
+    if (!isValidISODate(e?.date)) errors.push(`${label}: bad date.`);
+    if (!(typeof e?.amount === 'number' && Number.isFinite(e.amount) && e.amount >= 0)) errors.push(`${label}: bad amount.`);
+    if (!memberNames.includes(e?.payer)) errors.push(`${label}: payer "${e?.payer}" is not a member.`);
+    if (!e?.category) errors.push(`${label}: no category.`);
+    if (!['shared', 'owed', 'personal', 'custom'].includes(e?.splitType)) errors.push(`${label}: unknown split type.`);
+    if (e?.splitType === 'owed' && (!memberNames.includes(e.owedBy) || e.owedBy === e.payer)) errors.push(`${label}: bad "owed by".`);
+    if (e?.splitType === 'custom') {
+      const shares = Object.entries(e.splitShares || {});
+      const sum = shares.reduce((t, [, v]) => t + Number(v), 0);
+      if (!shares.length || shares.some(([n]) => !memberNames.includes(n)) || Math.abs(sum - e.amount) > 0.02)
+        errors.push(`${label}: custom split does not add up to the amount.`);
+    }
+    if (e?.ledger !== 'travel') errors.push(`${label}: not a travel entry.`);
+  });
+  return errors;
+}
+
 // Most recent trip first (the trip list used to show them in creation order,
 // so the newest of a year sat at the bottom). A trip sorts by its start date,
 // or by when it was created if it has no dates; ties keep the later-created
