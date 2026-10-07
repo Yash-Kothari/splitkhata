@@ -298,18 +298,6 @@ export default function BalanceStrip({
         </Text>
       )}
 
-      {isTravel && cashStats && (cashStats.opening || cashStats.withdrawn || cashStats.spent) ? (
-        <Text className="font-body text-sm text-muted-text mt-1">
-          💵 Cash left:{' '}
-          <Text className={`font-mono-bold ${cashStats.balance < 0 ? 'text-stamp-red' : 'text-ink'}`}>
-            {cashCurrency} {cashStats.balance.toFixed(2)}
-          </Text>
-          <Text className="font-mono text-2xs">
-            {'  '}({(cashStats.opening + cashStats.withdrawn).toFixed(2)} in, {cashStats.spent.toFixed(2)} spent)
-          </Text>
-        </Text>
-      ) : null}
-
       {isTravel && totalPointsSpent !== 0 && (
         <Text className="font-body text-sm text-muted-text mt-1">
           💳 Points {totalPointsSpent > 0 ? 'spent' : 'earned'}:{' '}
@@ -343,6 +331,18 @@ export default function BalanceStrip({
             <Text className="font-mono text-ink">{Math.round(pointsBalance.amount).toLocaleString('en-IN')} pts</Text>
           </Text>
         )
+      ) : null}
+
+      {isTravel && cashStats && (cashStats.opening || cashStats.withdrawn || cashStats.spent) ? (
+        <Text className="font-body text-sm text-muted-text mt-1">
+          💵 Cash left:{' '}
+          <Text className={`font-mono-bold ${cashStats.balance < 0 ? 'text-stamp-red' : 'text-ink'}`}>
+            {cashCurrency} {cashStats.balance.toFixed(2)}
+          </Text>
+          <Text className="font-mono text-2xs">
+            {'  '}({(cashStats.opening + cashStats.withdrawn).toFixed(2)} in, {cashStats.spent.toFixed(2)} spent)
+          </Text>
+        </Text>
       ) : null}
 
       {isTravel && dbMembers.length > 0 && (

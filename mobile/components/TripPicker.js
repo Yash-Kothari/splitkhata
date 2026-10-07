@@ -5,7 +5,7 @@ import Card from './Card';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import { addTripToDb } from '../lib/firebase';
-import { DEFAULT_CURRENCIES, isTripActive, todayISO, isValidISODate, computeTripCashStats } from '../lib/utils';
+import { DEFAULT_CURRENCIES, sortTripsRecentFirst, isTripActive, todayISO, isValidISODate, computeTripCashStats } from '../lib/utils';
 
 function currentYear() {
   return new Date().getFullYear();
@@ -93,7 +93,7 @@ export default function TripPicker({
     }
   }
 
-  const filteredTrips = browsableTrips.filter((t) => t.name.toLowerCase().includes(searchTerm.trim().toLowerCase()));
+  const filteredTrips = sortTripsRecentFirst(browsableTrips).filter((t) => t.name.toLowerCase().includes(searchTerm.trim().toLowerCase()));
   const byYear = {};
   filteredTrips.forEach((t) => {
     const y = t.year || 'Other';

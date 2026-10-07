@@ -1219,6 +1219,18 @@ export function getActiveTrip(trips, today = todayISO()) {
   return active.reduce((best, trip) => (trip.startDate > best.startDate ? trip : best));
 }
 
+// Most recent trip first (the trip list used to show them in creation order,
+// so the newest of a year sat at the bottom). A trip sorts by its start date,
+// or by when it was created if it has no dates; ties keep the later-created
+// one first. Pure - returns a new array.
+export function sortTripsRecentFirst(trips) {
+  const key = (t) => t.startDate || t.createdAt?.toDate?.()?.toISOString?.().slice(0, 10) || (typeof t.createdAt === 'string' ? t.createdAt.slice(0, 10) : '');
+  return (trips || [])
+    .map((trip, index) => ({ trip, index, k: key(trip) }))
+    .sort((a, b) => (a.k === b.k ? b.index - a.index : a.k < b.k ? 1 : -1))
+    .map((x) => x.trip);
+}
+
 // Which trip the Travel tab opens on by itself: only the one in progress
 // today. Once a trip's end date passes it is just another trip in the list.
 export function pickDefaultTrip(trips, today = todayISO()) {

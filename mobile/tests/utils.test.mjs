@@ -113,6 +113,7 @@ import {
   toCsv,
   buildFullBackupJson,
   pickDefaultTrip,
+  sortTripsRecentFirst,
   isWithdrawalEntry,
   getActiveTrip,
 } from '../lib/utils.js';
@@ -3523,4 +3524,17 @@ test('a ₹0 entry (stay paid with reward points) is accepted and still counts i
   // and it adds nothing to the money balance or the trip total
   assert.equal(computeBalance(entries, 'travel', ['Yash', 'Kruti']).status, 'settled');
   assert.equal(computeTripTotalSpend(entries), 0);
+});
+
+test('sortTripsRecentFirst - newest start date first, undated trips by creation, later-created wins ties', () => {
+  const trips = [
+    { id: 'a', name: 'Old', startDate: '2026-01-05' },
+    { id: 'b', name: 'Malaysia', startDate: '2026-10-02' },
+    { id: 'c', name: 'Mid', startDate: '2026-05-10' },
+    { id: 'd', name: 'Undated first', createdAt: '2026-03-01T00:00:00Z' },
+    { id: 'e', name: 'Undated later', createdAt: '2026-03-01T00:00:00Z' },
+  ];
+  assert.deepEqual(sortTripsRecentFirst(trips).map((t) => t.id), ['b', 'c', 'e', 'd', 'a']);
+  assert.deepEqual(trips.map((t) => t.id), ['a', 'b', 'c', 'd', 'e'], 'input is not mutated');
+  assert.deepEqual(sortTripsRecentFirst(null), []);
 });
