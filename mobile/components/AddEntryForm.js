@@ -346,7 +346,8 @@ export default function AddEntryForm({
   // Shown under each field and block Add - bad input used to either save
   // wrong ("1,200" as ₹1, a typed date that no month view could find) or
   // make Add silently do nothing.
-  const amountInvalid = amount !== '' && !(parseAmountInput(amount) > 0);
+  // 0 is a valid amount: a stay paid entirely with reward points still gets logged (with its points).
+  const amountInvalid = amount !== '' && parseAmountInput(amount) == null;
   const localAmountInvalid = isTravel && localAmount !== '' && !(parseAmountInput(localAmount) > 0);
   const pointsInvalid = isTravel && rewardPoints !== '' && parseAmountInput(rewardPoints, { allowNegative: true }) == null;
   const dateInvalid = !isValidISODate(date);
@@ -354,7 +355,7 @@ export default function AddEntryForm({
 
   async function handleSubmit() {
     const parsed = parseAmountInput(amount);
-    if (!parsed || parsed <= 0 || inputInvalid) return;
+    if (parsed == null || inputInvalid) return;
     if (splitType === 'owed' && (!owedBy || owedBy === payer)) {
       notify('Pick who owes', 'The person who owes must be different from who paid.');
       return;
@@ -461,7 +462,8 @@ export default function AddEntryForm({
       // the purchase's original date (P1-14 - installments used to drop the
       // card entirely, since addExpensesBatch never did this step).
       const linkedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
-      const matchedCard = isStatementOnlyCard(linkedCard) ? null : linkedCard;
+      // No card transaction for a ₹0 entry - there is no spend to earn on.
+      const matchedCard = isStatementOnlyCard(linkedCard) || parsed === 0 ? null : linkedCard;
       if (matchedCard) {
         for (let i = 0; i < installments.length; i += 1) {
           const inst = installments[i];
@@ -510,7 +512,7 @@ export default function AddEntryForm({
       // failure here shouldn't undo the expense that already saved fine.
       // A statement-only card tracks just its statement amounts - copying every entry would double-count them.
       const linkedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
-      const matchedCard = isStatementOnlyCard(linkedCard) ? null : linkedCard;
+      const matchedCard = isStatementOnlyCard(linkedCard) || parsed === 0 ? null : linkedCard;
       if (matchedCard) {
         try {
           const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, date);

@@ -3509,3 +3509,18 @@ test('a cash-paid entry is never a withdrawal, even with a stale isWithdrawal fl
   // and the flagged purchase is excluded from the trip total like any other cash purchase
   assert.equal(computeTripTotalSpend([atm, flagged, normal]), 5221.69);
 });
+
+test('a ₹0 entry (stay paid with reward points) is accepted and still counts its points', () => {
+  assert.equal(parseAmountInput('0'), 0);
+  assert.equal(parseAmountInput('0.00'), 0);
+  assert.equal(parseAmountInput('-5'), null);
+  const entries = [
+    { id: 'a', ledger: 'travel', amount: 0, rewardPoints: 4000, payer: 'Yash', split: true, splitType: 'shared' },
+  ];
+  const points = computeBalance(entries, 'travel', ['Yash', 'Kruti'], 'rewardPoints');
+  assert.equal(points.status, 'owes');
+  assert.equal(points.amount, 2000);
+  // and it adds nothing to the money balance or the trip total
+  assert.equal(computeBalance(entries, 'travel', ['Yash', 'Kruti']).status, 'settled');
+  assert.equal(computeTripTotalSpend(entries), 0);
+});

@@ -160,7 +160,8 @@ export default function EditEntryRow({
     const oldTxnId = entry.cardTransactionId || null;
     const trackedCardId = (id) => (id && !isStatementOnlyCard(creditCards.find((c) => c.id === id)) ? id : null);
     const oldCardId = trackedCardId(resolveInstrument(instruments, entry)?.cardId || null);
-    const newCardId = trackedCardId(selectedInstrument?.cardId || null);
+    // A ₹0 entry has no spend to earn on, so it carries no card transaction.
+    const newCardId = parsedAmount === 0 ? null : trackedCardId(selectedInstrument?.cardId || null);
     try {
       if (oldTxnId && newCardId && oldCardId === newCardId) {
         const updates = { amount: parsedAmount, date, description: note.trim() || category };
@@ -207,7 +208,8 @@ export default function EditEntryRow({
     // Bad input used to make Save silently do nothing, or save wrong
     // ("1,200" as ₹1, a typed date that no month view could find).
     const parsed = parseAmountInput(amount);
-    if (!(parsed > 0)) {
+    // 0 is allowed (a stay paid entirely with reward points).
+    if (parsed == null) {
       notify('Check the amount', 'Enter an amount like 1200 or 1200.50.');
       return;
     }
