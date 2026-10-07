@@ -2866,6 +2866,54 @@ export function getRecentCombinations(entries, limit = 5, windowSize = 40) {
     .slice(0, limit);
 }
 
+// Entries that say how you usually enter things: not a settlement, a trip
+// rollup or an ATM withdrawal (none of those is something you'd add again).
+function isRepeatableEntry(e) {
+  return Boolean(e && e.category && e.payer && e.splitType !== 'settlement' && !e.isTripRollup && !isWithdrawalEntry(e));
+}
+
+// Payer and payment method of the entry added most recently, so Add Entry can
+// start from them. Newest by creation time (falling back to its date).
+export function getLastEntryDefaults(entries) {
+  let best = null;
+  for (const e of entries || []) {
+    if (!isRepeatableEntry(e)) continue;
+    const key = `${e.createdAt || ''}|${e.date || ''}`;
+    if (!best || key > best.key) best = { key, e };
+  }
+  return best ? { payer: best.e.payer, paymentMethod: best.e.paymentMethod || null } : null;
+}
+
+// What an earlier entry with a similar note used: type "Uber" and, if earlier
+// "Uber" entries were Commute on Axis Supermoney, that pair comes back as a
+// suggestion. Matches on the whole note first, then on one containing the
+// other (4+ letters). The most common pair wins, ties go to the newest.
+// Returns null when there is nothing to suggest. Pure.
+export function suggestFromNote(entries, noteText, minLength = 3) {
+  const norm = (t) => String(t || '').toLowerCase().replace(/\(\d+\/\d+\)/g, '').replace(/\s+/g, ' ').trim();
+  const needle = norm(noteText);
+  if (needle.length < minLength) return null;
+  const candidates = (entries || []).filter((e) => isRepeatableEntry(e) && norm(e.note));
+  const exact = candidates.filter((e) => norm(e.note) === needle);
+  // Then notes that contain what was typed ("uber eats" -> "Uber Eats dinner"),
+  // then notes that are contained in it ("uber eats" -> "Uber"), 4+ letters.
+  const longer = needle.length >= 4 ? candidates.filter((e) => norm(e.note).includes(needle)) : [];
+  const shorter = candidates.filter((e) => norm(e.note).length >= 4 && needle.includes(norm(e.note)));
+  const matches = exact.length ? exact : longer.length ? longer : shorter;
+  if (!matches.length) return null;
+  const tally = new Map();
+  for (const e of matches) {
+    const key = `${e.category}|${e.paymentMethod || ''}`;
+    const t = tally.get(key) || { category: e.category, paymentMethod: e.paymentMethod || null, count: 0, last: '' };
+    t.count += 1;
+    const stamp = `${e.date || ''}|${e.createdAt || ''}`;
+    if (stamp > t.last) t.last = stamp;
+    tally.set(key, t);
+  }
+  const best = [...tally.values()].sort((a, b) => b.count - a.count || b.last.localeCompare(a.last))[0];
+  return { category: best.category, paymentMethod: best.paymentMethod, count: best.count };
+}
+
 // Same date, amount, category and payer as an entry already on the books -
 // most likely a re-entered expense (forgot it was already logged), not a
 // second real purchase. Settlements, trip rollups and withdrawals are

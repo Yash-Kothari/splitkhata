@@ -30,6 +30,8 @@ import {
   buildReceiptExtractionSchema,
   rankCardsForEntry,
   getRecentCombinations,
+  getLastEntryDefaults,
+  suggestFromNote,
   inferCardRewardFields,
   resolveStrategyParamsForDate,
   formatCurrency,
@@ -101,15 +103,23 @@ export default function AddEntryForm({
   const [amount, setAmount] = useState('');
   const [localAmount, setLocalAmount] = useState('');
   const [rewardPoints, setRewardPoints] = useState('');
-  const [payer, setPayer] = useState(deviceName || membersList[0]);
+  // Who paid and how: whatever the user picked, else what the last entry on this
+  // ledger used (a stretch of entries on one card / by one person), else the
+  // device's person and the first method. Derived, so entries arriving late
+  // update the default but never override a pick.
+  const lastEntry = useMemo(() => getLastEntryDefaults(recentEntries), [recentEntries]);
+  const [payerChoice, setPayer] = useState(null);
+  const payer = [payerChoice, lastEntry?.payer, deviceName].find((p) => p && membersList.includes(p)) || membersList[0];
   const [category, setCategory] = useState(categories[0] || 'Groceries');
   const [splitType, setSplitType] = useState('shared');
-  const [owedBy, setOwedBy] = useState(() => membersList.find((p) => p !== (deviceName || membersList[0])) || '');
+  const [owedBy, setOwedBy] = useState('');
   const [splitAmong, setSplitAmong] = useState(membersList);
   const [customShares, setCustomShares] = useState({});
   const customSharesCheck = checkCustomSharesTotal(customShares, parseAmountInput(amount) || 0);
   const customSplitInvalid = splitType === 'custom' && !customSharesCheck.ok;
-  const [paymentMethod, setPaymentMethod] = useState(paymentMethodOptions[0] || 'Cash');
+  const [paymentChoice, setPaymentMethod] = useState(null);
+  const paymentMethod =
+    [paymentChoice, lastEntry?.paymentMethod].find((m) => m && paymentMethodOptions.includes(m)) || paymentMethodOptions[0] || 'Cash';
   const selectedInstrument = instruments.find((i) => i.label === paymentMethod) || null;
   const [date, setDate] = useState(todayISO());
   const [note, setNote] = useState('');
@@ -186,6 +196,14 @@ export default function AddEntryForm({
   // one tap on a recent combination fills category/payer/payment method,
   // leaving only the amount to type.
   const recentCombinations = useMemo(() => getRecentCombinations(recentEntries), [recentEntries]);
+  // "Uber" typed -> what earlier "Uber" entries used, as a tap-to-apply chip.
+  // Never applied on its own: category drives card rewards and budgets.
+  const noteSuggestion = useMemo(() => {
+    const suggestion = suggestFromNote(recentEntries, note);
+    if (!suggestion || !categories.includes(suggestion.category)) return null;
+    const method = suggestion.paymentMethod && paymentMethodOptions.includes(suggestion.paymentMethod) ? suggestion.paymentMethod : null;
+    return suggestion.category === category && (!method || method === paymentMethod) ? null : { ...suggestion, paymentMethod: method };
+  }, [recentEntries, note, category, paymentMethod, categories, paymentMethodOptions]);
   function applyRecentCombination(combo) {
     setCategory(combo.category);
     setPayer(combo.payer);
@@ -197,14 +215,6 @@ export default function AddEntryForm({
   }, [ledger, categories.join('|')]);
 
   useEffect(() => {
-    if (deviceName && membersList.includes(deviceName)) {
-      setPayer(deviceName);
-    } else {
-      setPayer((prev) => (membersList.includes(prev) ? prev : membersList[0]));
-    }
-  }, [deviceName, membersList.join('|')]);
-
-  useEffect(() => {
     if (!owedBy || owedBy === payer || !membersList.includes(owedBy)) {
       setOwedBy(membersList.find((p) => p !== payer) || '');
     }
@@ -213,12 +223,6 @@ export default function AddEntryForm({
   useEffect(() => {
     setSplitAmong(membersList);
   }, [membersList.join('|')]);
-
-  useEffect(() => {
-    if (paymentMethodOptions.length && !paymentMethodOptions.includes(paymentMethod)) {
-      setPaymentMethod(paymentMethodOptions[0]);
-    }
-  }, [paymentMethodOptions.join('|')]);
 
   useEffect(() => {
     if (!isTravel || selectedInstrument?.type !== 'cash' || fifoResult == null) return;
@@ -767,6 +771,20 @@ export default function AddEntryForm({
                 onSubmitEditing={() => Keyboard.dismiss()}
                 className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
               />
+              {noteSuggestion ? (
+                <Pressable
+                  onPress={() => {
+                    setCategory(noteSuggestion.category);
+                    if (noteSuggestion.paymentMethod) handlePaymentMethodChange(noteSuggestion.paymentMethod);
+                  }}
+                  className="self-start mt-1.5 min-h-8 px-3 rounded-full border border-ledger-green/40 bg-ledger-green/10 items-center justify-center"
+                >
+                  <Text className="font-body-semibold text-xs text-ledger-green">
+                    💡 {noteSuggestion.category}
+                    {noteSuggestion.paymentMethod ? ` · ${noteSuggestion.paymentMethod}` : ''} (as before)
+                  </Text>
+                </Pressable>
+              ) : null}
             </View>
 
           </View>

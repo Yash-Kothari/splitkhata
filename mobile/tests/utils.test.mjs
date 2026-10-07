@@ -113,6 +113,8 @@ import {
   toCsv,
   buildFullBackupJson,
   pickDefaultTrip,
+  getLastEntryDefaults,
+  suggestFromNote,
   sortTripsRecentFirst,
   isWithdrawalEntry,
   getActiveTrip,
@@ -3537,4 +3539,33 @@ test('sortTripsRecentFirst - newest start date first, undated trips by creation,
   assert.deepEqual(sortTripsRecentFirst(trips).map((t) => t.id), ['b', 'c', 'e', 'd', 'a']);
   assert.deepEqual(trips.map((t) => t.id), ['a', 'b', 'c', 'd', 'e'], 'input is not mutated');
   assert.deepEqual(sortTripsRecentFirst(null), []);
+});
+
+test('getLastEntryDefaults - payer and payment method of the newest real entry', () => {
+  const entries = [
+    { category: 'Food', payer: 'Yash', paymentMethod: 'Cash', createdAt: '2026-10-01T10:00:00Z', date: '2026-10-01' },
+    { category: 'Commute', payer: 'Kruti', paymentMethod: 'Axis Supermoney', createdAt: '2026-10-03T10:00:00Z', date: '2026-10-02' },
+    { category: 'Settlement', payer: 'Yash', splitType: 'settlement', paymentMethod: 'UPI', createdAt: '2026-10-05T10:00:00Z', date: '2026-10-05' },
+    { category: 'Trip', payer: 'Yash', isTripRollup: true, createdAt: '2026-10-06T10:00:00Z', date: '2026-10-06' },
+  ];
+  assert.deepEqual(getLastEntryDefaults(entries), { payer: 'Kruti', paymentMethod: 'Axis Supermoney' });
+  assert.equal(getLastEntryDefaults([]), null);
+  assert.equal(getLastEntryDefaults(null), null);
+});
+
+test('suggestFromNote - the pair earlier entries with that note used, most common first', () => {
+  const e = (note, category, paymentMethod, date) => ({ note, category, paymentMethod, payer: 'Yash', date, createdAt: `${date}T00:00:00Z` });
+  const entries = [
+    e('Uber', 'Commute', 'Axis Supermoney', '2026-09-01'),
+    e('Uber', 'Commute', 'Axis Supermoney', '2026-09-05'),
+    e('Uber', 'Commute', 'UPI', '2026-09-10'),
+    e('Uber Eats dinner', 'Food', 'HSBC Live+', '2026-09-11'),
+    e('Rent (1/3)', 'Rent', 'UPI', '2026-08-01'),
+  ];
+  assert.deepEqual(suggestFromNote(entries, 'uber'), { category: 'Commute', paymentMethod: 'Axis Supermoney', count: 2 });
+  assert.equal(suggestFromNote(entries, 'Uber Eats')?.category, 'Food', 'loose match when there is no exact one');
+  assert.equal(suggestFromNote(entries, 'rent')?.category, 'Rent', 'installment suffix ignored');
+  assert.equal(suggestFromNote(entries, 'ub'), null, 'too short');
+  assert.equal(suggestFromNote(entries, 'Cinema'), null, 'no history');
+  assert.equal(suggestFromNote([{ note: 'Uber', category: 'Settlement', payer: 'Yash', splitType: 'settlement' }], 'Uber'), null, 'settlements are never suggested');
 });
