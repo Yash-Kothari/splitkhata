@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
+import { View, ScrollView, Platform, KeyboardAvoidingView, useWindowDimensions } from 'react-native';
 import {
   subscribeToExpenses,
   subscribeToTrips,
@@ -159,6 +159,22 @@ export default function Travel() {
     }
   }, [pendingJump, setPendingJump, trips]);
 
+  // Above 1024px the breakdown lives in the side rail, open. On a phone it
+  // sits right under Add Entry instead, folded to a one-line summary.
+  const { width } = useWindowDimensions();
+  const wide = width >= 1024;
+  const categoryChart = selectedTripObj && (
+    <CategoryChart
+      entries={tripEntries}
+      selectedMonth={null}
+      onMonthChange={() => {}}
+      availableMonths={[]}
+      ledger="travel"
+      budgets={selectedTripObj.categoryBudgets || {}}
+      collapsible={!wide}
+    />
+  );
+
   return (
     <View className="flex-1 bg-paper">
       <AppHeader badge={selectedTripObj ? `✈️ ${selectedTripObj.name}` : '✈️ Travel'} />
@@ -222,6 +238,8 @@ export default function Travel() {
                 />
               </View>
 
+              <View className="px-4">{!wide && categoryChart}</View>
+
               <EntryList
                 entries={tripEntries}
                 ledger="travel"
@@ -240,14 +258,7 @@ export default function Travel() {
             <View className="w-full lg:w-96 px-4" style={{ gap: 16 }}>
               <BudgetAlerts entries={tripEntries} ledger="travel" month={null} budgets={selectedTripObj.categoryBudgets || {}} />
 
-              <CategoryChart
-                entries={tripEntries}
-                selectedMonth={null}
-                onMonthChange={() => {}}
-                availableMonths={[]}
-                ledger="travel"
-                budgets={selectedTripObj.categoryBudgets || {}}
-              />
+              {wide && categoryChart}
             </View>
           </View>
         )}

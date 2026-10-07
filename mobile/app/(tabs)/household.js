@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { View, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
+import { View, ScrollView, Platform, KeyboardAvoidingView, useWindowDimensions } from 'react-native';
 import {
   subscribeToExpenses,
   subscribeToCategories,
@@ -104,6 +104,22 @@ export default function Household() {
     }
   }, [pendingJump, setPendingJump]);
 
+  // Above 1024px the breakdown lives in the side rail, open. On a phone it
+  // sits right under Add Entry instead, folded to a one-line summary.
+  const { width } = useWindowDimensions();
+  const wide = width >= 1024;
+  const categoryChart = entries && (
+    <CategoryChart
+      entries={entries}
+      selectedMonth={selectedMonth}
+      onMonthChange={setSelectedMonth}
+      availableMonths={availableMonths}
+      ledger="household"
+      budgets={budgets}
+      collapsible={!wide}
+    />
+  );
+
   return (
     <View className="flex-1 bg-paper">
       <AppHeader badge="🏠 Household Ledger" />
@@ -140,6 +156,8 @@ export default function Household() {
               />
             </View>
 
+            <View className="px-4">{!wide && categoryChart}</View>
+
             <EntryList
               title="Passbook Entries"
               emptyMessage="No entries recorded yet. Add your first expense above!"
@@ -166,16 +184,7 @@ export default function Household() {
               <MonthForecast entries={entries} recurringRules={recurringRules} budgets={budgets} overallBudget={overallBudget} />
             )}
             {entries && <MonthChart entries={entries} ledger="household" />}
-            {entries && (
-              <CategoryChart
-                entries={entries}
-                selectedMonth={selectedMonth}
-                onMonthChange={setSelectedMonth}
-                availableMonths={availableMonths}
-                ledger="household"
-                budgets={budgets}
-              />
-            )}
+            {wide && categoryChart}
             {entries && (
               <PersonSpendCard entries={entries} members={members} deviceMemberName={memberForUser(user, members)} />
             )}

@@ -134,7 +134,7 @@ function CategoryDrilldownModal({ category, entries, currency, isTravel, selecte
 // equivalent, so the donut is hand-drawn on react-native-svg (annular
 // sectors via SVG arc paths) - tapping a slice or a legend row opens the
 // same drilldown modal web opens on click.
-export default function CategoryChart({ entries, selectedMonth, onMonthChange, availableMonths, ledger, budgets = {} }) {
+export default function CategoryChart({ entries, selectedMonth, onMonthChange, availableMonths, ledger, budgets = {}, collapsible = false }) {
   // The passbook's "All Months" choice is shared with this chart: treat it as
   // no month filter. It used to be passed through as the month 'all', which
   // matched nothing - an empty donut captioned "Invalid Date".
@@ -148,6 +148,15 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
   const total = useMemo(() => data.reduce((sum, d) => sum + d.amount, 0), [data]);
   const currency = 'INR';
   const totalLabel = formatCurrency(total, currency);
+
+  // On a phone the chart sits between Add Entry and the passbook, folded to a
+  // one-line summary so it doesn't push the entries down a full screen.
+  const [openState, setOpenState] = useState(false);
+  const isOpen = !collapsible || openState;
+  const topSummary = data
+    .slice(0, 2)
+    .map((d) => `${d.category} ${total > 0 ? Math.round((d.amount / total) * 100) : 0}%`)
+    .join(', ');
 
   const [cardWidth, setCardWidth] = useState(0);
   const donutSize = cardWidth > 0 ? Math.max(MIN_DONUT_SIZE, Math.min(cardWidth - 32, MAX_DONUT_SIZE)) : MIN_DONUT_SIZE;
@@ -179,12 +188,27 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
 
   return (
     <Card className="p-4 mb-4" onLayout={(e) => setCardWidth(e.nativeEvent.layout.width)}>
-      <View className="flex-row items-center justify-between gap-2 mb-3">
+      <Pressable
+        disabled={!collapsible}
+        onPress={() => setOpenState((v) => !v)}
+        className={`flex-row items-center justify-between gap-2 ${isOpen ? 'mb-3' : ''}`}
+      >
         <View className="flex-1">
           <Text className="font-display text-lg text-ink">Category Breakdown</Text>
-          <Text className="font-body text-xs text-muted-text">{isTravel ? 'Spend by category' : 'Monthly spend & MoM comparison'}</Text>
+          <Text className="font-body text-xs text-muted-text" numberOfLines={1}>
+            {isOpen || data.length === 0
+              ? isTravel
+                ? 'Spend by category'
+                : 'Monthly spend & MoM comparison'
+              : `${totalLabel}${topSummary ? ` · ${topSummary}` : ''}`}
+          </Text>
         </View>
-        {!isTravel && (
+        {collapsible && (
+          <View className="px-2.5 py-1 rounded-md bg-paper border border-ink/10">
+            <Text className="font-body-semibold text-xs text-muted-text">{isOpen ? 'Collapse' : 'Expand'}</Text>
+          </View>
+        )}
+        {!isTravel && isOpen && (
           <View style={{ width: 150 }}>
             <PickerField
               value={selectedMonth}
@@ -194,9 +218,9 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
             />
           </View>
         )}
-      </View>
+      </Pressable>
 
-      {data.length === 0 ? (
+      {!isOpen ? null : data.length === 0 ? (
         <View className="border-2 border-dashed border-ink/20 rounded-xl py-10 items-center justify-center bg-paper/50">
           <Text className="font-body text-sm text-muted-text text-center px-4">
             {isTravel ? 'No expenses recorded yet.' : `No expenses recorded in ${monthLabel}.`}
