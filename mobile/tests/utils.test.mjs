@@ -3460,27 +3460,24 @@ test('shouldRelockAfterBackground: never re-locks when the PIN was never enabled
   assert.equal(shouldRelockAfterBackground({ lastKnown: { enabled: false }, hiddenForMs: 999999, platform: 'ios' }), false);
 });
 
-test('pickDefaultTrip - the trip in progress today wins, boundaries included', () => {
+test('pickDefaultTrip - only the trip in progress today, boundaries included', () => {
   const trips = [
     { id: 'a', name: 'Goa', startDate: '2026-10-01', endDate: '2026-10-07' },
     { id: 'b', name: 'Old', startDate: '2026-01-01', endDate: '2026-01-05' },
   ];
-  assert.equal(pickDefaultTrip(trips, 'b', '2026-10-01').id, 'a');
-  assert.equal(pickDefaultTrip(trips, 'b', '2026-10-07').id, 'a');
-  assert.equal(pickDefaultTrip(trips, 'b', '2026-10-04').id, 'a');
+  assert.equal(pickDefaultTrip(trips, '2026-10-01').id, 'a');
+  assert.equal(pickDefaultTrip(trips, '2026-10-07').id, 'a');
+  assert.equal(pickDefaultTrip(trips, '2026-10-04').id, 'a');
 });
 
-test('pickDefaultTrip - falls back to the last trip used, never an archived or missing one', () => {
+test('pickDefaultTrip - a finished or not-yet-started trip is never picked, so nothing is selected', () => {
   const trips = [
     { id: 'a', name: 'Goa', startDate: '2026-10-01', endDate: '2026-10-07' },
-    { id: 'b', name: 'Old', startDate: '2026-01-01', endDate: '2026-01-05' },
-    { id: 'c', name: 'Gone', archived: true },
+    { id: 'undated', name: 'No dates' },
   ];
-  assert.equal(pickDefaultTrip(trips, 'b', '2026-11-01').id, 'b');
-  assert.equal(pickDefaultTrip(trips, 'c', '2026-11-01'), null);
-  assert.equal(pickDefaultTrip(trips, 'zzz', '2026-11-01'), null);
-  assert.equal(pickDefaultTrip(trips, '', '2026-11-01'), null);
-  assert.equal(pickDefaultTrip([], 'a', '2026-11-01'), null);
+  assert.equal(pickDefaultTrip(trips, '2026-10-08'), null);
+  assert.equal(pickDefaultTrip(trips, '2026-09-30'), null);
+  assert.equal(pickDefaultTrip([], '2026-10-04'), null);
 });
 
 test('getActiveTrip - ignores archived and undated trips; overlap picks the latest start', () => {

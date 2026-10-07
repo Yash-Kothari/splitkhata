@@ -18,8 +18,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { useJump } from '../../lib/JumpContext';
 import { useUndoDelete } from '../../lib/useUndoDelete';
 import { usePaymentInstruments } from '../../lib/usePaymentInstruments';
-import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger, formatCurrency, memberForUser, pickDefaultTrip } from '../../lib/utils';
-import { getJSON, setJSON } from '../../lib/deviceStore';
+import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger, formatCurrency, memberForUser, pickDefaultTrip, computeTripCashStats } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import AppHeader from '../../components/AppHeader';
 import TripPicker from '../../components/TripPicker';
@@ -30,8 +29,6 @@ import AddEntryForm from '../../components/AddEntryForm';
 import EntryList from '../../components/EntryList';
 import CategoryChart from '../../components/CategoryChart';
 import UndoToast from '../../components/UndoToast';
-
-const LAST_TRIP_KEY = 'splitkhata:lastTripId';
 
 export default function Travel() {
   const { user } = useAuth();
@@ -49,9 +46,6 @@ export default function Travel() {
   const instruments = usePaymentInstruments(creditCards);
 
   const [pickedTripId, setSelectedTripId] = useState('');
-  // The trip opened last on this device, read once so the tab can reopen on
-  // it when no trip is in progress (undefined = not read yet).
-  const [lastTripId, setLastTripId] = useState(undefined);
   const [currentCurrency, setCurrentCurrency] = useState('INR');
   const [showSettings, setShowSettings] = useState(false);
 
@@ -110,27 +104,13 @@ export default function Travel() {
   useEffect(() => subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')), []);
   useEffect(() => subscribeToCardTransactions(setCardTransactions, (err) => reportError(err, 'Could not load card transactions')), []);
 
-  // Open on the trip in progress today (else the last one used) instead of an
-  // empty screen. It's only a default: any trip picked explicitly (the list, a
-  // search jump, a new trip) takes over.
-  const defaultTripId = useMemo(
-    () => (lastTripId === undefined ? '' : pickDefaultTrip(trips, lastTripId)?.id || ''),
-    [trips, lastTripId],
-  );
+  // Open on the trip in progress today, so it's there without picking it. A
+  // finished trip is never reopened by itself - pick it from the list when you
+  // want to look back. Any trip picked explicitly (the list, a search jump, a
+  // new trip) takes over from this default.
+  const defaultTripId = useMemo(() => pickDefaultTrip(trips)?.id || '', [trips]);
   const selectedTripId = pickedTripId || defaultTripId;
   const selectedTripObj = trips.find((t) => t.id === selectedTripId) || null;
-
-  useEffect(() => {
-    let cancelled = false;
-    getJSON(LAST_TRIP_KEY, '').then((id) => !cancelled && setLastTripId(typeof id === 'string' ? id : ''));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (selectedTripId) setJSON(LAST_TRIP_KEY, selectedTripId);
-  }, [selectedTripId]);
 
   const tripEntries = useMemo(
     () =>
@@ -140,6 +120,13 @@ export default function Travel() {
           (e.tripId ? e.tripId === selectedTripId : e.tripName === selectedTripObj?.name),
       ),
     [allTravelEntries, selectedTripId, selectedTripObj],
+  );
+
+  // Cash left on the trip (local currency): shown on the trip bar and, when
+  // paying with cash, in Add Entry as what it will be after this entry.
+  const cashBalance = useMemo(
+    () => (selectedTripObj ? computeTripCashStats(allTravelEntries || [], cashMovements, selectedTripObj.id, selectedTripObj.name).balance : 0),
+    [allTravelEntries, cashMovements, selectedTripObj],
   );
 
   const activeMembersList = useMemo(
@@ -228,6 +215,7 @@ export default function Travel() {
                   currentCurrency={selectedTripObj.currency}
                   instruments={instruments}
                   tripEntries={tripEntries}
+                  cashBalance={cashBalance}
                   creditCards={creditCards}
                   cardTransactions={cardTransactions}
                   recentEntries={tripEntries}

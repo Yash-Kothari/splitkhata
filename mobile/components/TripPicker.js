@@ -195,9 +195,20 @@ export default function TripPicker({
               {isTripActive(selectedTripObj, todayISO()) ? '🧳 ' : ''}
               {selectedTripObj.name}
             </Text>
-            <Text className="font-mono text-2xs text-muted-text mt-0.5" numberOfLines={1}>
-              {[dates, selectedTripObj.currency, `Cash ${cashStats.balance.toFixed(2)} ${selectedTripObj.currency}`].filter(Boolean).join(' · ')}
-            </Text>
+            {dates ? (
+              <Text className="font-mono text-2xs text-muted-text mt-0.5" numberOfLines={1}>
+                {dates} · {selectedTripObj.currency}
+              </Text>
+            ) : null}
+            <View
+              className={`self-start mt-1.5 px-2.5 py-1 rounded-md border ${
+                cashStats.balance < 0 ? 'bg-stamp-red/10 border-stamp-red/30' : 'bg-ledger-green/10 border-ledger-green/30'
+              }`}
+            >
+              <Text className={`font-mono-bold text-xs ${cashStats.balance < 0 ? 'text-stamp-red' : 'text-ledger-green'}`}>
+                💵 Cash left: {selectedTripObj.currency} {cashStats.balance.toFixed(2)}
+              </Text>
+            </View>
           </View>
           <Pressable onPress={() => setBrowsing(true)} className="px-2.5 py-1.5 rounded-md bg-paper border border-ink/10">
             <Text className="font-body-semibold text-xs text-muted-text">Change</Text>

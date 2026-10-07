@@ -79,6 +79,7 @@ export default function AddEntryForm({
   currentCurrency = 'INR',
   instruments: instrumentsProp,
   tripEntries = [],
+  cashBalance = null,
   creditCards = [],
   cardTransactions = [],
   recentEntries = [],
@@ -766,6 +767,16 @@ export default function AddEntryForm({
             </View>
 
           </View>
+
+          {isTravel && cashBalance != null && selectedInstrument?.type === 'cash' && (() => {
+            const afterThis = cashBalance - (parseAmountInput(localAmount) || 0);
+            return (
+              <Text className={`font-mono-bold text-xs mt-2 ${afterThis < 0 ? 'text-stamp-red' : 'text-ledger-green'}`}>
+                💵 Cash left: {currentCurrency} {cashBalance.toFixed(2)}
+                {parseAmountInput(localAmount) > 0 ? ` → ${afterThis.toFixed(2)} after this` : ''}
+              </Text>
+            );
+          })()}
 
           {rankedCards.length > 0 && (() => {
             // Caps are shown for the card actually being paid with (the top-ranked

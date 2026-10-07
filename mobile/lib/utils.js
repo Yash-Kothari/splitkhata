@@ -1205,14 +1205,10 @@ export function getActiveTrip(trips, today = todayISO()) {
   return active.reduce((best, trip) => (trip.startDate > best.startDate ? trip : best));
 }
 
-// Which trip the Travel tab should open on: the one in progress today, else
-// the one last used on this device (if it still exists and isn't archived),
-// else nothing.
-export function pickDefaultTrip(trips, lastTripId, today = todayISO()) {
-  const active = getActiveTrip(trips, today);
-  if (active) return active;
-  const last = lastTripId ? (trips || []).find((trip) => trip.id === lastTripId) : null;
-  return last && !last.archived ? last : null;
+// Which trip the Travel tab opens on by itself: only the one in progress
+// today. Once a trip's end date passes it is just another trip in the list.
+export function pickDefaultTrip(trips, today = todayISO()) {
+  return getActiveTrip(trips, today);
 }
 
 export function getPreviousMonthKey(monthKey) {
