@@ -162,6 +162,9 @@ export default function EditEntryRow({
   // link instead of blocking the entry save.
   async function syncCardLink(parsedAmount) {
     const oldTxnId = entry.cardTransactionId || null;
+    // Entered with "Don't add to the card" (a closed statement): keep it off the
+    // card when edited too, instead of adding a transaction now.
+    if (entry.skipCardTracking && !oldTxnId) return null;
     const trackedCardId = (id) => (id && !isStatementOnlyCard(creditCards.find((c) => c.id === id)) ? id : null);
     const oldCardId = trackedCardId(resolveInstrument(instruments, entry)?.cardId || null);
     // A ₹0 entry has no spend to earn on, so it carries no card transaction.

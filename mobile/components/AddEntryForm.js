@@ -178,6 +178,12 @@ export default function AddEntryForm({
   const showTravelMultiplier = bookingKind != null;
   const effectiveTravelMultiplier = showTravelMultiplier ? travelMultiplier : '';
   const selectedCardId = selectedCard?.id;
+  // A card whose statement is already closed (backdated entries): keep the
+  // entry but don't add a transaction to that card, so its cycle totals and
+  // rewards stay as they were. Only offered for a tracked card.
+  const [skipCardTracking, setSkipCardTracking] = useState(false);
+  const canSkipCard = Boolean(selectedCard) && !isStatementOnlyCard(selectedCard);
+  const cardSkipped = canSkipCard && skipCardTracking;
   const rankedCards = useMemo(
     () =>
       rankCardsForEntry(
@@ -454,6 +460,7 @@ export default function AddEntryForm({
         paymentInstrumentId: selectedInstrument?.id || null,
         paymentType: selectedInstrument?.type || null,
         deviceName: deviceName || payer,
+        skipCardTracking: cardSkipped || null,
         installmentGroupId,
         installmentIndex: i + 1,
         installmentCount: months,
@@ -467,7 +474,7 @@ export default function AddEntryForm({
       // card entirely, since addExpensesBatch never did this step).
       const linkedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
       // No card transaction for a ₹0 entry - there is no spend to earn on.
-      const matchedCard = isStatementOnlyCard(linkedCard) || parsed === 0 ? null : linkedCard;
+      const matchedCard = isStatementOnlyCard(linkedCard) || parsed === 0 || cardSkipped ? null : linkedCard;
       if (matchedCard) {
         for (let i = 0; i < installments.length; i += 1) {
           const inst = installments[i];
@@ -506,6 +513,7 @@ export default function AddEntryForm({
         paymentType: selectedInstrument?.type || null,
         localAmount: parsedLocal,
         rewardPoints: parsedPoints,
+        skipCardTracking: cardSkipped || null,
         deviceName: deviceName || payer,
       });
 
@@ -516,7 +524,7 @@ export default function AddEntryForm({
       // failure here shouldn't undo the expense that already saved fine.
       // A statement-only card tracks just its statement amounts - copying every entry would double-count them.
       const linkedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
-      const matchedCard = isStatementOnlyCard(linkedCard) || parsed === 0 ? null : linkedCard;
+      const matchedCard = isStatementOnlyCard(linkedCard) || parsed === 0 || cardSkipped ? null : linkedCard;
       if (matchedCard) {
         try {
           const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, date);
@@ -798,6 +806,21 @@ export default function AddEntryForm({
               </Text>
             );
           })()}
+
+          {canSkipCard && (
+            <Pressable onPress={() => setSkipCardTracking((v) => !v)} className="mt-3 flex-row items-center gap-2.5">
+              <View
+                className={`w-4 h-4 rounded border items-center justify-center ${
+                  skipCardTracking ? 'bg-ledger-green border-ledger-green' : 'border-ink/30 bg-paper'
+                }`}
+              >
+                {skipCardTracking && <Text className="text-white text-xs">✓</Text>}
+              </View>
+              <Text className="font-body text-xs text-muted-text flex-1">
+                Don't add to {selectedCard.name || 'the card'} (statement already closed)
+              </Text>
+            </Pressable>
+          )}
 
           {rankedCards.length > 0 && (() => {
             // Caps are shown for the card actually being paid with (the top-ranked
