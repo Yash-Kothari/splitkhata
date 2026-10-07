@@ -113,6 +113,7 @@ import {
   toCsv,
   buildFullBackupJson,
   pickDefaultTrip,
+  isWithdrawalEntry,
   getActiveTrip,
 } from '../lib/utils.js';
 
@@ -3050,7 +3051,8 @@ test('isCashPaid goes by the saved instrument type, falling back to the legacy l
   assert.equal(isCashPaid({ paymentMethod: 'Cash' }), true, 'legacy entry');
   assert.equal(isCashPaid({ paymentMethod: 'Cash · Kruti' }), true, 'legacy entry with an owner suffix');
   assert.equal(isCashPaid({ paymentMethod: 'HDFC Diners' }), false);
-  assert.equal(isCashPaid({ isWithdrawal: true, paymentType: 'cash', paymentMethod: 'Cash' }), false, 'a withdrawal is never cash spend');
+  assert.equal(isCashPaid({ isWithdrawal: true, paymentType: 'debit', paymentMethod: 'Kruti Niyo' }), false, 'a withdrawal is never cash spend');
+  assert.equal(isCashPaid({ isWithdrawal: true, paymentType: 'cash', paymentMethod: 'Cash' }), true, 'a stale withdrawal flag on a cash purchase is ignored');
   assert.equal(isCashPaid(null), false);
 });
 
@@ -3489,4 +3491,21 @@ test('getActiveTrip - ignores archived and undated trips; overlap picks the late
   ];
   assert.equal(getActiveTrip(trips, '2026-10-04').id, 'late');
   assert.equal(getActiveTrip(trips.slice(0, 2), '2026-10-04'), null);
+});
+
+test('a cash-paid entry is never a withdrawal, even with a stale isWithdrawal flag (Malaysia trip)', () => {
+  const atm = { id: 'atm', ledger: 'travel', tripId: 't', amount: 5221.69, localAmount: 200, isWithdrawal: true, paymentType: 'debit', paymentMethod: 'Kruti Niyo' };
+  // 17 cash purchases carried the flag from the old Edit Entry checkbox (171 MYR), 5 did not (29 MYR)
+  const flagged = { id: 'f', ledger: 'travel', tripId: 't', amount: 4464.53, localAmount: 171, isWithdrawal: true, paymentType: 'cash', paymentMethod: 'Cash' };
+  const normal = { id: 'n', ledger: 'travel', tripId: 't', amount: 757.11, localAmount: 29, paymentType: 'cash', paymentMethod: 'Cash' };
+  const stats = computeTripCashStats([atm, flagged, normal], [], 't');
+  assert.equal(stats.withdrawn, 200);
+  assert.equal(stats.spent, 200);
+  assert.equal(stats.balance, 0);
+  assert.equal(isWithdrawalEntry(atm), true);
+  assert.equal(isWithdrawalEntry(flagged), false);
+  // label-only (pre-paymentType) cash entries behave the same
+  assert.equal(isWithdrawalEntry({ isWithdrawal: true, paymentMethod: 'Cash' }), false);
+  // and the flagged purchase is excluded from the trip total like any other cash purchase
+  assert.equal(computeTripTotalSpend([atm, flagged, normal]), 5221.69);
 });

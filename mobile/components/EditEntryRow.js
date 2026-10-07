@@ -20,6 +20,7 @@ import {
   parseAmountInput,
   isValidISODate,
   isCashPaid,
+  isWithdrawalEntry,
   parseTagsInput,
 } from '../lib/utils';
 
@@ -69,7 +70,6 @@ export default function EditEntryRow({
   const [amount, setAmount] = useState(String(entry.amount ?? ''));
   const [localAmount, setLocalAmount] = useState(entry.localAmount != null ? String(entry.localAmount) : '');
   const [rewardPoints, setRewardPoints] = useState(entry.rewardPoints != null ? String(entry.rewardPoints) : '');
-  const [isWithdrawal, setIsWithdrawal] = useState(Boolean(entry.isWithdrawal));
   const [payer, setPayer] = useState(entry.payer);
   const [category, setCategory] = useState(entry.category);
   const [splitType, setSplitType] = useState(entry.splitType || (entry.split ? 'shared' : 'personal'));
@@ -115,7 +115,7 @@ export default function EditEntryRow({
   const [saving, setSaving] = useState(false);
   const [slowSave, setSlowSave] = useState(false);
 
-  const tripWithdrawals = useMemo(() => tripEntries.filter((e) => e.isWithdrawal), [tripEntries]);
+  const tripWithdrawals = useMemo(() => tripEntries.filter(isWithdrawalEntry), [tripEntries]);
   const otherCashEntries = useMemo(
     () => tripEntries.filter(isCashPaid),
     [tripEntries],
@@ -256,7 +256,9 @@ export default function EditEntryRow({
           cardTransactionId,
           localAmount: parsedLocal,
           rewardPoints: parsedPoints,
-          isWithdrawal: isTravel ? isWithdrawal : false,
+          // Withdrawals are only created from Trip Settings; editing one keeps
+          // it, and a stale flag on a cash-paid entry is dropped here.
+          isWithdrawal: isTravel && isWithdrawalEntry(entry),
         });
       }
       onSaved?.();
@@ -451,21 +453,6 @@ export default function EditEntryRow({
             className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
           />
         </View>
-
-        {isTravel && (
-          <View className="w-full">
-            <Pressable onPress={() => setIsWithdrawal((v) => !v)} className="flex-row items-center gap-2.5">
-              <View
-                className={`w-4 h-4 rounded border items-center justify-center ${
-                  isWithdrawal ? 'bg-ledger-green border-ledger-green' : 'border-ink/30 bg-paper'
-                }`}
-              >
-                {isWithdrawal && <Text className="text-white text-xs">✓</Text>}
-              </View>
-              <Text className="font-body-semibold text-sm text-ink flex-1">Cash withdrawal (exclude from spend totals)</Text>
-            </Pressable>
-          </View>
-        )}
 
         <View className="w-full">
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>

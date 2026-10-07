@@ -692,13 +692,27 @@ export function excludeCashSpend(entries) {
 // not its label - labels change on rename and gain " · Owner" suffixes when
 // two methods share a name, and either silently brought the double counting
 // above back. Entries saved before paymentType existed fall back to the old
-// label check. A withdrawal is never "cash spend": it's the card/forex charge
-// that carries the shared debt for the cash.
-export function isCashPaid(entry) {
-  if (!entry || entry.isWithdrawal) return false;
+// label check.
+function isCashInstrumentEntry(entry) {
   if (entry.paymentType) return entry.paymentType === 'cash';
   const base = String(entry.paymentMethod || '').split(' · ')[0].trim().toLowerCase();
   return base === 'cash';
+}
+
+// An ATM withdrawal is the card/forex charge that carries the shared debt for
+// the cash, so it is never itself paid in cash. The old Edit Entry form let
+// "Cash withdrawal" be ticked on any entry, and on ordinary cash purchases
+// that made the app count them as cash coming IN (and double charge them to
+// the trip) - so a cash-paid entry is never a withdrawal, whatever its flag says.
+export function isWithdrawalEntry(entry) {
+  return Boolean(entry?.isWithdrawal) && !isCashInstrumentEntry(entry);
+}
+
+// A withdrawal is never "cash spend": it's the card/forex charge that carries
+// the shared debt for the cash.
+export function isCashPaid(entry) {
+  if (!entry || isWithdrawalEntry(entry)) return false;
+  return isCashInstrumentEntry(entry);
 }
 
 // Same basis as computeMemberTotals, not Category Breakdown - card
@@ -724,7 +738,7 @@ export function computeTripCashStats(entries, cashMovements, tripId, legacyTripN
   const tripMovements = (cashMovements || []).filter(matchesTrip);
   const sumLocal = (list, field) => list.reduce((sum, x) => sum + toPaise(x[field]), 0) / 100;
   const opening = sumLocal(tripMovements.filter((m) => m.type === 'opening'), 'amount');
-  const withdrawalEntries = tripEntries.filter((e) => e.isWithdrawal);
+  const withdrawalEntries = tripEntries.filter(isWithdrawalEntry);
   const withdrawn = withdrawalEntries.length
     ? sumLocal(withdrawalEntries, 'localAmount')
     : sumLocal(tripMovements.filter((m) => m.type === 'withdrawal'), 'amount');
@@ -1333,7 +1347,7 @@ export function isCountableSpend(entry, monthKey, targetLedger) {
   if (entry.splitType === 'settlement') return false;
   // A cash withdrawal isn't a spend category of its own - the money it
   // represents already shows up for real via the purchases it funded.
-  if (entry.isWithdrawal) return false;
+  if (isWithdrawalEntry(entry)) return false;
   // A trip-rollup entry is a debt transfer into the household ledger, not
   // a real household expense - it shouldn't inflate a spend category.
   if (entry.isTripRollup) return false;
@@ -2825,7 +2839,7 @@ export function getRecentCombinations(entries, limit = 5, windowSize = 40) {
   for (const e of recent) {
     // Settlements, trip rollups and withdrawals aren't something you'd add
     // again - they used to show up as "Settlement · Yash" chips.
-    if (!e.category || !e.payer || e.splitType === 'settlement' || e.isTripRollup || e.isWithdrawal) continue;
+    if (!e.category || !e.payer || e.splitType === 'settlement' || e.isTripRollup || isWithdrawalEntry(e)) continue;
     const key = `${e.category}|${e.payer}|${e.paymentMethod || ''}`;
     const existing = combos.get(key);
     if (existing) {
@@ -2851,7 +2865,7 @@ export function findPossibleDuplicateEntry(entries, candidate) {
       (e) =>
         e.splitType !== 'settlement' &&
         !e.isTripRollup &&
-        !e.isWithdrawal &&
+        !isWithdrawalEntry(e) &&
         e.date === candidate.date &&
         e.category === candidate.category &&
         e.payer === candidate.payer &&
@@ -3490,7 +3504,7 @@ export function buildFullBackupJson(data) {
 export function countUsage(entries, keyOf) {
   const counts = new Map();
   for (const e of entries) {
-    if (!e || e.splitType === 'settlement' || e.isTripRollup || e.isWithdrawal) continue;
+    if (!e || e.splitType === 'settlement' || e.isTripRollup || isWithdrawalEntry(e)) continue;
     const key = keyOf(e);
     if (key) counts.set(key, (counts.get(key) || 0) + 1);
   }

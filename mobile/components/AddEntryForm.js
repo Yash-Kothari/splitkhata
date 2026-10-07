@@ -36,6 +36,7 @@ import {
   parseAmountInput,
   isValidISODate,
   isCashPaid,
+  isWithdrawalEntry,
   findPossibleDuplicateEntry,
   parseTagsInput,
 } from '../lib/utils';
@@ -130,7 +131,7 @@ export default function AddEntryForm({
   const [categorySuggestError, setCategorySuggestError] = useState('');
   const [receiptStatus, setReceiptStatus] = useState({ state: 'idle', error: '' });
 
-  const tripWithdrawals = useMemo(() => tripEntries.filter((e) => e.isWithdrawal), [tripEntries]);
+  const tripWithdrawals = useMemo(() => tripEntries.filter(isWithdrawalEntry), [tripEntries]);
   const otherCashEntries = useMemo(
     () => tripEntries.filter(isCashPaid),
     [tripEntries],
