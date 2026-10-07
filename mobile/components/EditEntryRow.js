@@ -61,6 +61,10 @@ export default function EditEntryRow({
 }) {
   const isTravel = ledger === 'travel';
   const isSettlement = entry.splitType === 'settlement';
+  // Points live on travel entries, and on a trip line in Payments (Add to Main
+  // Ledger carries the points owed). Saving must keep them, so the field shows
+  // for any entry that already has some.
+  const hasPoints = isTravel || entry.rewardPoints != null;
   const instruments = useMemo(
     () => (instrumentsProp && instrumentsProp.length ? instrumentsProp : buildPaymentInstruments([{ name: 'Cash' }], creditCards)),
     [instrumentsProp, creditCards],
@@ -226,8 +230,8 @@ export default function EditEntryRow({
       notify('Check the local amount', 'Enter an amount like 1200 or 1200.50, or leave it empty.');
       return;
     }
-    const parsedPoints = isTravel && rewardPoints ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
-    if (isTravel && rewardPoints && parsedPoints == null) {
+    const parsedPoints = hasPoints && rewardPoints ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
+    if (hasPoints && rewardPoints && parsedPoints == null) {
       notify('Check the reward points', 'Enter points like 1500 or -250, or leave it empty.');
       return;
     }
@@ -235,7 +239,14 @@ export default function EditEntryRow({
     const slowTimer = setTimeout(() => setSlowSave(true), 2500);
     try {
       if (isSettlement) {
-        await updateExpense(entry.id, { amount: parsed, note: note.trim(), date });
+        await updateExpense(entry.id, {
+          amount: parsed,
+          note: note.trim(),
+          date,
+          paymentMethod: paymentMethod || null,
+          paymentInstrumentId: selectedInstrument?.id || null,
+          paymentType: selectedInstrument?.type || null,
+        });
       } else {
         const effectiveSplitAmong =
           splitType === 'shared' && splitAmong.length > 0 && splitAmong.length < members.length ? splitAmong : null;
@@ -306,6 +317,15 @@ export default function EditEntryRow({
           </View>
 
           <View className="w-full sm:w-[calc(33.333%-8px)]">
+            <PickerField
+              label="Payment Method"
+              value={paymentMethod}
+              options={[{ value: '', label: 'None' }, ...paymentMethodOptions]}
+              onChange={setPaymentMethod}
+            />
+          </View>
+
+          <View className="w-full sm:w-[calc(33.333%-8px)]">
             <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
             <TextInput
               value={note}
@@ -359,33 +379,33 @@ export default function EditEntryRow({
         </View>
 
         {isTravel && (
-          <>
-            <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-                Local Amount ({currentCurrency})
-              </Text>
-              <TextInput
-                value={localAmount}
-                onChangeText={setLocalAmount}
-                keyboardType="decimal-pad"
-                placeholder="Optional"
-                className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-              />
-            </View>
+          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
+              Local Amount ({currentCurrency})
+            </Text>
+            <TextInput
+              value={localAmount}
+              onChangeText={setLocalAmount}
+              keyboardType="decimal-pad"
+              placeholder="Optional"
+              className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+            />
+          </View>
+        )}
 
-            <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-                Reward Points (+ spent / − earned)
-              </Text>
-              <TextInput
-                value={rewardPoints}
-                onChangeText={setRewardPoints}
-                keyboardType="numbers-and-punctuation"
-                placeholder="Optional"
-                className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-              />
-            </View>
-          </>
+        {hasPoints && (
+          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
+              Reward Points (+ spent / − earned)
+            </Text>
+            <TextInput
+              value={rewardPoints}
+              onChangeText={setRewardPoints}
+              keyboardType="numbers-and-punctuation"
+              placeholder="Optional"
+              className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
+            />
+          </View>
         )}
 
         <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
