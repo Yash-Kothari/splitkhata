@@ -183,7 +183,6 @@ export default function Travel() {
         <View className="px-4">
           <TripPicker
             trips={trips}
-            members={members}
             cashMovements={cashMovements}
             entries={allTravelEntries || []}
             dbCurrencies={currencies}

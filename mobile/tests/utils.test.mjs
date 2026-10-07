@@ -113,7 +113,6 @@ import {
   toCsv,
   buildFullBackupJson,
   pickDefaultTrip,
-  validateTripBundle,
   sortTripsRecentFirst,
   isWithdrawalEntry,
   getActiveTrip,
@@ -3538,28 +3537,4 @@ test('sortTripsRecentFirst - newest start date first, undated trips by creation,
   assert.deepEqual(sortTripsRecentFirst(trips).map((t) => t.id), ['b', 'c', 'e', 'd', 'a']);
   assert.deepEqual(trips.map((t) => t.id), ['a', 'b', 'c', 'd', 'e'], 'input is not mutated');
   assert.deepEqual(sortTripsRecentFirst(null), []);
-});
-
-test('validateTripBundle - accepts a good bundle and names every problem in a bad one', () => {
-  const members = ['Yash', 'Kruti'];
-  const good = {
-    trip: { id: 't1', name: 'Trip', currency: 'USD' },
-    entries: [
-      { id: 'a', ledger: 'travel', date: '2025-10-17', amount: 100, payer: 'Yash', category: 'Food', splitType: 'shared' },
-      { id: 'b', ledger: 'travel', date: '2025-10-18', amount: 0, payer: 'Kruti', category: 'Flight', splitType: 'personal', rewardPoints: 5 },
-      { id: 'c', ledger: 'travel', date: '2025-10-18', amount: 100, payer: 'Kruti', category: 'Food', splitType: 'owed', owedBy: 'Yash' },
-      { id: 'd', ledger: 'travel', date: '2025-10-18', amount: 100, payer: 'Kruti', category: 'Food', splitType: 'custom', splitShares: { Yash: 60, Kruti: 40 } },
-    ],
-  };
-  assert.deepEqual(validateTripBundle(good, members, ['Other trip']), []);
-  assert.match(validateTripBundle(good, members, ['trip'])[0], /already exists/);
-  const bad = JSON.parse(JSON.stringify(good));
-  bad.entries[0].payer = 'Someone';
-  bad.entries[1].date = '2025-13-40';
-  bad.entries[2].owedBy = 'Kruti';
-  bad.entries[3].splitShares = { Yash: 10, Kruti: 10 };
-  bad.entries[3].id = 'a';
-  const errors = validateTripBundle(bad, members, []);
-  assert.equal(errors.length, 5);
-  assert.ok(validateTripBundle({ trip: good.trip, entries: [] }, members, [])[0].includes('no entries'));
 });
