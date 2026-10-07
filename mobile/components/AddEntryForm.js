@@ -1,16 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator, Keyboard, ScrollView } from 'react-native';
+import { useMemo, useState } from 'react';
+import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView } from 'react-native';
 import { notify, confirmAsync } from '../lib/dialogs';
 import * as ImagePicker from 'expo-image-picker';
-import PickerField from './PickerField';
-import DateField from './DateField';
 import Card from './Card';
-import CustomSplitEditor from './CustomSplitEditor';
+import EntryFormFields from './EntryFormFields';
+import { useEntryForm } from '../lib/useEntryForm';
 import { addExpense, addExpensesBatch, addCardTransactionAndLink, generateStructured, extractReceiptFromImage } from '../lib/firebase';
 import { reportError } from '../lib/errorReporting';
 import {
-  buildPaymentInstruments,
-  checkCustomSharesTotal,
   isStatementOnlyCard,
   parseCustomShares,
   DEFAULT_PERSONS as PERSONS,
@@ -20,8 +17,6 @@ import {
   addMonthsToDateISO,
   splitAmountEvenly,
   generateGroupId,
-  computeFifoCashAmount,
-  formatFifoBreakdownSummary,
   buildQuickAddPrompt,
   buildQuickAddSchema,
   buildCategorySuggestionPrompt,
@@ -30,47 +25,20 @@ import {
   buildReceiptExtractionSchema,
   rankCardsForEntry,
   getRecentCombinations,
-  getLastEntryDefaults,
   suggestFromNote,
   inferCardRewardFields,
   resolveStrategyParamsForDate,
   formatCurrency,
   parseAmountInput,
-  isValidISODate,
-  isCashPaid,
-  isWithdrawalEntry,
   findPossibleDuplicateEntry,
   parseTagsInput,
 } from '../lib/utils';
 
-// Field widths for the entry grid. On a phone short fields pair up two to a
-// row (47% + the 14px gap fits even a 320px screen) and text fields take the
-// full row, so the form is about half as tall as one field per row.
-const FIELD_HALF = 'w-[47%] sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]';
-const FIELD_FULL = 'w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]';
-const FIELD_TEXT = 'w-full lg:w-[calc(33.333%-9.333px)]';
-
-const SPLIT_TYPE_OPTIONS = [
-  { value: 'shared', label: 'Split' },
-  { value: 'owed', label: 'Owed' },
-  { value: 'personal', label: 'Personal' },
-  { value: 'custom', label: 'Custom amounts' },
-];
-
-function Chip({ label, selected, onPress }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      className={`min-h-10 px-3.5 items-center justify-center rounded-lg border mr-2 mb-2 ${
-        selected ? 'bg-ledger-green border-ledger-green' : 'bg-paper border-ink/15'
-      }`}
-    >
-      <Text className={`font-body-semibold text-sm ${selected ? 'text-white' : 'text-ink'}`}>{label}</Text>
-    </Pressable>
-  );
-}
-
-// RN port of web's AddEntryForm.jsx - shared by Household and Travel.
+// Add Entry. The fields themselves, their defaults and their validation are the
+// same ones Edit Entry uses (useEntryForm + EntryFormFields); what lives here is
+// only what belongs to creating an entry: Recent chips, Quick Add / receipt
+// scan, the "as before" suggestion, the card and cash hints, installments, and
+// the save (which also creates the linked card transaction).
 export default function AddEntryForm({
   deviceName,
   onSaveError,
@@ -91,111 +59,49 @@ export default function AddEntryForm({
   const categories =
     dbCategories && dbCategories.length > 0 ? dbCategories : isTravel ? DEFAULT_TRAVEL_CATEGORIES : DEFAULT_CATEGORIES;
   const membersList = dbMembers && dbMembers.length > 0 ? dbMembers : PERSONS;
-  // Cash, UPI, bank accounts and tracked cards as one list (see
-  // buildPaymentInstruments) - picking a card here also links the entry to a
-  // card transaction (see handleSubmit).
-  const instruments = useMemo(
-    () => (instrumentsProp && instrumentsProp.length ? instrumentsProp : buildPaymentInstruments([{ name: 'Cash' }], creditCards)),
-    [instrumentsProp, creditCards],
-  );
-  const paymentMethodOptions = instruments.map((i) => i.label);
 
-  const [amount, setAmount] = useState('');
-  const [localAmount, setLocalAmount] = useState('');
-  const [rewardPoints, setRewardPoints] = useState('');
-  // Who paid and how: whatever the user picked, else what the last entry on this
-  // ledger used (a stretch of entries on one card / by one person), else the
-  // device's person and the first method. Derived, so entries arriving late
-  // update the default but never override a pick.
-  const lastEntry = useMemo(() => getLastEntryDefaults(recentEntries), [recentEntries]);
-  const [payerChoice, setPayer] = useState(null);
-  const payer = [payerChoice, lastEntry?.payer, deviceName].find((p) => p && membersList.includes(p)) || membersList[0];
-  const [category, setCategory] = useState(categories[0] || 'Groceries');
-  const [splitType, setSplitType] = useState('shared');
-  const [owedBy, setOwedBy] = useState('');
-  const [splitAmong, setSplitAmong] = useState(membersList);
-  const [customShares, setCustomShares] = useState({});
-  const customSharesCheck = checkCustomSharesTotal(customShares, parseAmountInput(amount) || 0);
-  const customSplitInvalid = splitType === 'custom' && !customSharesCheck.ok;
-  const [paymentChoice, setPaymentMethod] = useState(null);
-  const paymentMethod =
-    [paymentChoice, lastEntry?.paymentMethod].find((m) => m && paymentMethodOptions.includes(m)) || paymentMethodOptions[0] || 'Cash';
-  const selectedInstrument = instruments.find((i) => i.label === paymentMethod) || null;
-  const [date, setDate] = useState(todayISO());
-  const [note, setNote] = useState('');
-  const [tagsText, setTagsText] = useState('');
-  const [travelMultiplier, setTravelMultiplier] = useState('');
+  const [splitAcrossMonths, setSplitAcrossMonths] = useState(false);
+  const [monthsCount, setMonthsCount] = useState('6');
+  const f = useEntryForm({
+    ledger,
+    categories,
+    members: membersList,
+    instruments: instrumentsProp,
+    creditCards,
+    cardTransactions,
+    currentCurrency,
+    tripEntries,
+    recentEntries,
+    deviceName,
+    extraMoreOpen: splitAcrossMonths,
+  });
+  const { payer, category, splitType, owedBy, splitAmong, customShares, date, note, paymentMethod, selectedInstrument } = f;
+
   const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [aiToolsOpen, setAiToolsOpen] = useState(false);
-  // Rarely-used fields (tags, reward points, multi-month) sit behind one
-  // toggle; they open by themselves when something fills them in (Quick Add,
-  // a recent combination) so a value is never hidden.
-  const [moreToggle, setMoreToggle] = useState(null);
-  const [splitAcrossMonths, setSplitAcrossMonths] = useState(false);
-  const [monthsCount, setMonthsCount] = useState('6');
-  const moreOpen = moreToggle ?? Boolean(tagsText.trim() || rewardPoints.trim() || splitAcrossMonths);
   const [quickAddText, setQuickAddText] = useState('');
   const [quickAddStatus, setQuickAddStatus] = useState({ state: 'idle', error: '' });
   const [suggestingCategory, setSuggestingCategory] = useState(false);
   const [categorySuggestError, setCategorySuggestError] = useState('');
   const [receiptStatus, setReceiptStatus] = useState({ state: 'idle', error: '' });
 
-  const tripWithdrawals = useMemo(() => tripEntries.filter(isWithdrawalEntry), [tripEntries]);
-  const otherCashEntries = useMemo(
-    () => tripEntries.filter(isCashPaid),
-    [tripEntries],
-  );
-  const fifoResult = useMemo(() => {
-    const parsedLocal = parseAmountInput(localAmount);
-    if (!parsedLocal || parsedLocal <= 0) return null;
-    return computeFifoCashAmount(tripWithdrawals, otherCashEntries, { id: null, date, createdAt: null, localAmount: parsedLocal });
-  }, [tripWithdrawals, otherCashEntries, date, localAmount]);
-  const fifoBreakdownText = useMemo(
-    () => (fifoResult ? formatFifoBreakdownSummary(fifoResult.breakdown, currentCurrency) : ''),
-    [fifoResult, currentCurrency],
-  );
-  const amountLocked = isTravel && selectedInstrument?.type === 'cash' && fifoResult != null;
-
   // Which tracked card would earn the most on this specific entry, right
   // where the amount/category are being typed - the reward engine already
   // models every card's real terms, this just surfaces it at the moment
   // it's actually useful instead of only in the Cards tab after the fact.
-  // On a household entry paid with an HSBC Premier or Diners card, a portal
-  // booking (Travel with Points / SmartBuy) earns accelerated points at a
-  // multiplier that varies per booking (Premier's runs 2X-12X) - so it's typed
-  // here, and typing one is what marks the entry as a booking, whatever its
-  // category is called. Blank = a normal purchase (a category literally named
-  // "Travel with Points" / "SmartBuy" also counts as a booking, at base points
-  // until a multiplier is entered). Travel-ledger entries never do this: their
-  // points are their own manual Reward Points field, separate from the card's,
-  // and a travel booking's accelerated points are entered on the Cards tab.
-  const selectedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
-  const bookingKind =
-    !isTravel && selectedCard && !isStatementOnlyCard(selectedCard)
-      ? { hsbc_premier_flat_capped: 'travel_with_points', hdfc_diners_slab_milestone: 'smartbuy' }[selectedCard.rewardStrategy] || null
-      : null;
-  const showTravelMultiplier = bookingKind != null;
-  const effectiveTravelMultiplier = showTravelMultiplier ? travelMultiplier : '';
-  const selectedCardId = selectedCard?.id;
-  // A card whose statement is already closed (backdated entries): keep the
-  // entry but don't add a transaction to that card, so its cycle totals and
-  // rewards stay as they were. Only offered for a tracked card.
-  const [skipCardTracking, setSkipCardTracking] = useState(false);
-  const canSkipCard = Boolean(selectedCard) && !isStatementOnlyCard(selectedCard);
-  const cardSkipped = canSkipCard && skipCardTracking;
   const rankedCards = useMemo(
     () =>
       rankCardsForEntry(
         creditCards,
         cardTransactions,
-        parseAmountInput(amount) || 0,
+        parseAmountInput(f.amount) || 0,
         category,
         date,
-        effectiveTravelMultiplier ? { cardId: selectedCardId, multiplier: effectiveTravelMultiplier } : null,
+        f.effectiveTravelMultiplier ? { cardId: f.selectedCardId, multiplier: f.effectiveTravelMultiplier } : null,
         { bookings: !isTravel },
       ),
-    [creditCards, cardTransactions, amount, category, date, effectiveTravelMultiplier, selectedCardId, isTravel],
+    [creditCards, cardTransactions, f.amount, category, date, f.effectiveTravelMultiplier, f.selectedCardId, isTravel],
   );
 
   // Real household spending repeats far more than a blank form assumes -
@@ -207,42 +113,13 @@ export default function AddEntryForm({
   const noteSuggestion = useMemo(() => {
     const suggestion = suggestFromNote(recentEntries, note);
     if (!suggestion || !categories.includes(suggestion.category)) return null;
-    const method = suggestion.paymentMethod && paymentMethodOptions.includes(suggestion.paymentMethod) ? suggestion.paymentMethod : null;
+    const method = suggestion.paymentMethod && f.paymentMethodOptions.includes(suggestion.paymentMethod) ? suggestion.paymentMethod : null;
     return suggestion.category === category && (!method || method === paymentMethod) ? null : { ...suggestion, paymentMethod: method };
-  }, [recentEntries, note, category, paymentMethod, categories, paymentMethodOptions]);
+  }, [recentEntries, note, category, paymentMethod, categories, f.paymentMethodOptions]);
   function applyRecentCombination(combo) {
-    setCategory(combo.category);
-    setPayer(combo.payer);
-    if (combo.paymentMethod) setPaymentMethod(combo.paymentMethod);
-  }
-
-  useEffect(() => {
-    if (categories.length && !categories.includes(category)) setCategory(categories[0]);
-  }, [ledger, categories.join('|')]);
-
-  useEffect(() => {
-    if (!owedBy || owedBy === payer || !membersList.includes(owedBy)) {
-      setOwedBy(membersList.find((p) => p !== payer) || '');
-    }
-  }, [membersList.join('|'), owedBy, payer]);
-
-  useEffect(() => {
-    setSplitAmong(membersList);
-  }, [membersList.join('|')]);
-
-  useEffect(() => {
-    if (!isTravel || selectedInstrument?.type !== 'cash' || fifoResult == null) return;
-    setAmount(fifoResult.amount.toString());
-  }, [fifoResult, paymentMethod, isTravel]);
-
-  function toggleSplitAmong(name) {
-    setSplitAmong((prev) => {
-      if (prev.includes(name)) {
-        const next = prev.filter((p) => p !== name);
-        return next.length > 0 ? next : prev;
-      }
-      return [...prev, name];
-    });
+    f.setCategory(combo.category);
+    f.setPayer(combo.payer);
+    if (combo.paymentMethod) f.setPaymentMethod(combo.paymentMethod);
   }
 
   // Pre-fills the form from a casual sentence - never submits on its own.
@@ -258,30 +135,30 @@ export default function AddEntryForm({
       const schema = buildQuickAddSchema({
         categories,
         members: membersList,
-        paymentMethods: paymentMethodOptions,
+        paymentMethods: f.paymentMethodOptions,
         isTravel,
       });
       const prompt = buildQuickAddPrompt(text, { members: membersList, today: todayISO() });
       const parsed = await generateStructured(prompt, schema);
 
-      setAmount(String(parsed.amount ?? ''));
-      if (parsed.category && categories.includes(parsed.category)) setCategory(parsed.category);
-      if (parsed.payer && membersList.includes(parsed.payer)) setPayer(parsed.payer);
-      if (parsed.splitType) setSplitType(parsed.splitType);
+      f.setAmount(String(parsed.amount ?? ''));
+      if (parsed.category && categories.includes(parsed.category)) f.setCategory(parsed.category);
+      if (parsed.payer && membersList.includes(parsed.payer)) f.setPayer(parsed.payer);
+      if (parsed.splitType) f.setSplitType(parsed.splitType);
       if (parsed.splitType === 'custom' && Array.isArray(parsed.splitShares)) {
-        setCustomShares(
+        f.setCustomShares(
           Object.fromEntries(
             parsed.splitShares.filter((s) => membersList.includes(s.person) && Number(s.amount) > 0).map((s) => [s.person, String(s.amount)]),
           ),
         );
       }
       if (parsed.splitType === 'owed' && parsed.owedBy && membersList.includes(parsed.owedBy)) {
-        setOwedBy(parsed.owedBy);
+        f.setOwedBy(parsed.owedBy);
       }
-      if (parsed.note) setNote(parsed.note);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(parsed.date || '')) setDate(parsed.date);
-      if (isTravel && parsed.paymentMethod && paymentMethodOptions.includes(parsed.paymentMethod)) {
-        setPaymentMethod(parsed.paymentMethod);
+      if (parsed.note) f.setNote(parsed.note);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(parsed.date || '')) f.setDate(parsed.date);
+      if (isTravel && parsed.paymentMethod && f.paymentMethodOptions.includes(parsed.paymentMethod)) {
+        f.setPaymentMethod(parsed.paymentMethod);
       }
 
       setQuickAddStatus({ state: 'done', error: '' });
@@ -317,10 +194,10 @@ export default function AddEntryForm({
         buildReceiptExtractionSchema(categories),
       );
 
-      if (parsed.amount) setAmount(String(parsed.amount));
-      if (parsed.category && categories.includes(parsed.category)) setCategory(parsed.category);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(parsed.date || '')) setDate(parsed.date);
-      if (parsed.note) setNote(parsed.note);
+      if (parsed.amount) f.setAmount(String(parsed.amount));
+      if (parsed.category && categories.includes(parsed.category)) f.setCategory(parsed.category);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(parsed.date || '')) f.setDate(parsed.date);
+      if (parsed.note) f.setNote(parsed.note);
 
       setReceiptStatus({ state: 'done', error: '' });
     } catch (err) {
@@ -337,7 +214,7 @@ export default function AddEntryForm({
         buildCategorySuggestionPrompt(note.trim(), categories),
         buildCategorySuggestionSchema(categories),
       );
-      if (result.category && categories.includes(result.category)) setCategory(result.category);
+      if (result.category && categories.includes(result.category)) f.setCategory(result.category);
     } catch (err) {
       setCategorySuggestError(err?.message || 'Could not suggest a category.');
     } finally {
@@ -345,27 +222,9 @@ export default function AddEntryForm({
     }
   }
 
-  // An owned card/account says who paid most of the time - fill it in, but
-  // leave Who Paid editable (e.g. paying with the other person's card).
-  function handlePaymentMethodChange(label) {
-    setPaymentMethod(label);
-    const owner = instruments.find((i) => i.label === label)?.owner;
-    if (owner && membersList.includes(owner)) setPayer(owner);
-  }
-
-  // Shown under each field and block Add - bad input used to either save
-  // wrong ("1,200" as ₹1, a typed date that no month view could find) or
-  // make Add silently do nothing.
-  // 0 is a valid amount: a stay paid entirely with reward points still gets logged (with its points).
-  const amountInvalid = amount !== '' && parseAmountInput(amount) == null;
-  const localAmountInvalid = isTravel && localAmount !== '' && !(parseAmountInput(localAmount) > 0);
-  const pointsInvalid = isTravel && rewardPoints !== '' && parseAmountInput(rewardPoints, { allowNegative: true }) == null;
-  const dateInvalid = !isValidISODate(date);
-  const inputInvalid = amountInvalid || localAmountInvalid || pointsInvalid || dateInvalid;
-
   async function handleSubmit() {
-    const parsed = parseAmountInput(amount);
-    if (parsed == null || inputInvalid) return;
+    const parsed = parseAmountInput(f.amount);
+    if (parsed == null || f.inputInvalid) return;
     if (splitType === 'owed' && (!owedBy || owedBy === payer)) {
       notify('Pick who owes', 'The person who owes must be different from who paid.');
       return;
@@ -385,18 +244,18 @@ export default function AddEntryForm({
     setSaving(true);
 
     const resetForm = () => {
-      setAmount('');
-      setLocalAmount('');
-      setRewardPoints('');
-      setNote('');
-      setTagsText('');
-      setTravelMultiplier('');
-      setDate(todayISO());
+      f.setAmount('');
+      f.setLocalAmount('');
+      f.setRewardPoints('');
+      f.setNote('');
+      f.setTagsText('');
+      f.setTravelMultiplier('');
+      f.setDate(todayISO());
       setSplitAcrossMonths(false);
-      setMoreToggle(null);
-      setCustomShares({});
+      f.setMoreToggle(null);
+      f.setCustomShares({});
       setMonthsCount('6');
-      setSplitAmong(membersList);
+      f.setSplitAmong(membersList);
     };
 
     const savePromise = doSave();
@@ -430,14 +289,15 @@ export default function AddEntryForm({
   }
 
   async function doSave() {
-    const parsed = parseAmountInput(amount);
+    const parsed = parseAmountInput(f.amount);
     const trimmedNote = note.trim();
-    const tags = parseTagsInput(tagsText);
+    const tags = parseTagsInput(f.tagsText);
     const months = !isTravel && splitAcrossMonths ? Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2)) : 1;
-    const parsedLocal = isTravel && localAmount ? parseAmountInput(localAmount) : null;
-    const parsedPoints = isTravel && rewardPoints ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
+    const parsedLocal = isTravel && f.localAmount ? parseAmountInput(f.localAmount) : null;
+    const parsedPoints = isTravel && f.rewardPoints ? parseAmountInput(f.rewardPoints, { allowNegative: true }) : null;
     const effectiveSplitAmong =
       splitType === 'shared' && splitAmong.length > 0 && splitAmong.length < membersList.length ? splitAmong : null;
+    const { cardSkipped, effectiveTravelMultiplier } = f;
 
     if (months > 1) {
       const installmentAmounts = splitAmountEvenly(parsed, months);
@@ -542,6 +402,93 @@ export default function AddEntryForm({
       }
     }
   }
+
+  const cashHint =
+    isTravel && cashBalance != null && selectedInstrument?.type === 'cash'
+      ? (() => {
+          const afterThis = cashBalance - (parseAmountInput(f.localAmount) || 0);
+          return (
+            <Text className={`font-mono-bold text-xs mt-2 ${afterThis < 0 ? 'text-stamp-red' : 'text-ledger-green'}`}>
+              💵 Cash left: {currentCurrency} {cashBalance.toFixed(2)}
+              {parseAmountInput(f.localAmount) > 0 ? ` → ${afterThis.toFixed(2)} after this` : ''}
+            </Text>
+          );
+        })()
+      : null;
+
+  const cardHint =
+    rankedCards.length > 0
+      ? (() => {
+          // Caps are shown for the card actually being paid with (the top-ranked
+          // one only when paying with cash/UPI), each labelled, and as they'd
+          // stand after this entry is logged.
+          const capCard = rankedCards.find((r) => r.card.id === f.selectedCardId) || rankedCards[0];
+          const periodWord = { day: 'today', cycle: 'this cycle', month: 'this month' };
+          const capText = (c) =>
+            `${c.label} ${c.unit === 'points' ? `${Math.round(c.remaining).toLocaleString('en-IN')} pts` : formatCurrency(c.remaining)} left ${periodWord[c.capPeriod] || 'this month'}`;
+          return (
+            <Text className="font-body text-2xs text-muted-text mt-2">
+              💳{' '}
+              {rankedCards
+                .map((r) => `${r.card.name || r.card.id} → ${r.unit === 'points' ? `${Math.round(r.earned).toLocaleString('en-IN')} pts` : formatCurrency(r.earned)}`)
+                .join('. ')}
+              {capCard.capStatus.length > 0
+                ? `. ${capCard.card.name || capCard.card.id} after this entry: ${capCard.capStatus.map(capText).join(', ')}.`
+                : ''}
+            </Text>
+          );
+        })()
+      : null;
+
+  const noteChip = noteSuggestion ? (
+    <Pressable
+      onPress={() => {
+        f.setCategory(noteSuggestion.category);
+        if (noteSuggestion.paymentMethod) f.handlePaymentMethodChange(noteSuggestion.paymentMethod);
+      }}
+      className="self-start mt-1.5 min-h-8 px-3 rounded-full border border-ledger-green/40 bg-ledger-green/10 items-center justify-center"
+    >
+      <Text className="font-body-semibold text-xs text-ledger-green">
+        💡 {noteSuggestion.category}
+        {noteSuggestion.paymentMethod ? ` · ${noteSuggestion.paymentMethod}` : ''} (as before)
+      </Text>
+    </Pressable>
+  ) : null;
+
+  const splitAcrossMonthsBox = !isTravel ? (
+    <View className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3 mt-3">
+      <Pressable onPress={() => setSplitAcrossMonths((v) => !v)} className="flex-row items-center gap-2.5">
+        <View
+          className={`w-4 h-4 rounded border items-center justify-center ${
+            splitAcrossMonths ? 'bg-ledger-green border-ledger-green' : 'border-ink/30 bg-paper'
+          }`}
+        >
+          {splitAcrossMonths && <Text className="text-white text-xs">✓</Text>}
+        </View>
+        <Text className="font-body-semibold text-sm text-ink flex-1">Split across multiple months</Text>
+      </Pressable>
+      <Text className="font-body text-2xs text-muted-text mt-1 ml-7">
+        For lump-sum payments that cover several months - spreads the amount evenly across one entry per month.
+      </Text>
+
+      {splitAcrossMonths && (
+        <View className="mt-3 ml-7 max-w-[8rem]">
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Number of Months</Text>
+          <TextInput
+            value={monthsCount}
+            onChangeText={setMonthsCount}
+            keyboardType="number-pad"
+            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2 bg-paper shadow-2xs"
+          />
+          {parseAmountInput(f.amount) > 0 && (
+            <Text className="font-body text-2xs text-muted-text mt-1">
+              ~{(parseAmountInput(f.amount) / Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2))).toFixed(2)} / month
+            </Text>
+          )}
+        </View>
+      )}
+    </View>
+  ) : null;
 
   return (
     <Card className="p-4 mb-4">
@@ -653,294 +600,35 @@ export default function AddEntryForm({
             </>
           )}
 
-          <View className="flex-row flex-wrap" style={{ gap: 14 }}>
-            <View className={FIELD_HALF}>
-              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-                Amount (₹){isTravel ? ' - real cost' : ''}
-              </Text>
-              <TextInput
-                value={amount}
-                onChangeText={setAmount}
-                keyboardType="decimal-pad"
-                editable={!amountLocked}
-                placeholder="0.00"
-                className={`font-mono-bold text-sm border border-ink/15 rounded-xl px-3 py-2.5 ${
-                  amountLocked ? 'bg-paper/60 text-muted-text' : 'bg-paper text-ink'
-                }`}
-              />
-              {amountLocked && fifoBreakdownText ? (
-                <Text className="font-body text-2xs text-muted-text mt-1">{fifoBreakdownText}</Text>
-              ) : null}
-              {amountInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter an amount like 1200 or 1200.50</Text> : null}
-            </View>
-
-            {isTravel ? (
-              <View className={FIELD_HALF}>
-                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-                  Local Amount ({currentCurrency})
-                </Text>
-                <TextInput
-                  value={localAmount}
-                  onChangeText={setLocalAmount}
-                  keyboardType="decimal-pad"
-                  placeholder="Optional"
-                  className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-                />
-                {localAmountInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter an amount like 1200 or 1200.50</Text> : null}
-              </View>
-            ) : (
-              <View className={FIELD_HALF}>
-                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
-                <DateField
-                  value={date}
-                  onChange={setDate}
-                  className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-                />
-                {dateInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Use the format YYYY-MM-DD</Text> : null}
-              </View>
-            )}
-            <View className={FIELD_FULL}>
-              <PickerField
-                label="Category"
-                value={category}
-                options={categories}
-                onChange={setCategory}
-                labelExtra={
-                  note.trim() ? (
-                    <Pressable onPress={handleSuggestCategory} disabled={suggestingCategory} hitSlop={6}>
-                      <Text className="font-body-semibold text-2xs text-ledger-green">
-                        {suggestingCategory ? 'Suggesting...' : '✨ Suggest'}
-                      </Text>
-                    </Pressable>
-                  ) : null
-                }
-              />
-              {categorySuggestError ? (
-                <Text className="font-body text-2xs text-stamp-red mt-1">{categorySuggestError}</Text>
-              ) : null}
-            </View>
-
-            <View className={FIELD_HALF}>
-              <PickerField label="Who Paid" value={payer} options={membersList} onChange={setPayer} />
-            </View>
-
-            <View className={FIELD_HALF}>
-              <PickerField label="Split Type" value={splitType} options={SPLIT_TYPE_OPTIONS} onChange={setSplitType} />
-            </View>
-
-            {splitType === 'owed' && (
-              <View className={FIELD_FULL}>
-                <PickerField
-                  label="Who Owes the Full Amount"
-                  value={owedBy}
-                  options={membersList.filter((p) => p !== payer)}
-                  onChange={setOwedBy}
-                />
-              </View>
-            )}
-
-            <View className={isTravel || showTravelMultiplier ? FIELD_HALF : FIELD_FULL}>
-              <PickerField label="Payment Method" value={paymentMethod} options={paymentMethodOptions} onChange={handlePaymentMethodChange} />
-            </View>
-
-            {showTravelMultiplier && (
-              <View className={FIELD_HALF}>
-                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-                  {bookingKind === 'smartbuy' ? 'SmartBuy multiplier (optional)' : 'Travel with Points multiplier (optional)'}
-                </Text>
-                <TextInput
-                  value={travelMultiplier}
-                  onChangeText={setTravelMultiplier}
-                  keyboardType="decimal-pad"
-                  placeholder={bookingKind === 'smartbuy' ? '10 (default)' : 'e.g. 12'}
-                  className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-                />
-              </View>
-            )}
-
-            {isTravel && (
-              <View className={FIELD_HALF}>
-                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
-                <DateField
-                  value={date}
-                  onChange={setDate}
-                  className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-                />
-                {dateInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Use the format YYYY-MM-DD</Text> : null}
-              </View>
-            )}
-            <View className={FIELD_TEXT}>
-              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
-              <TextInput
-                value={note}
-                onChangeText={setNote}
-                placeholder="What was this for?"
-                returnKeyType="done"
-                onSubmitEditing={() => Keyboard.dismiss()}
-                className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-              />
-              {noteSuggestion ? (
-                <Pressable
-                  onPress={() => {
-                    setCategory(noteSuggestion.category);
-                    if (noteSuggestion.paymentMethod) handlePaymentMethodChange(noteSuggestion.paymentMethod);
-                  }}
-                  className="self-start mt-1.5 min-h-8 px-3 rounded-full border border-ledger-green/40 bg-ledger-green/10 items-center justify-center"
-                >
-                  <Text className="font-body-semibold text-xs text-ledger-green">
-                    💡 {noteSuggestion.category}
-                    {noteSuggestion.paymentMethod ? ` · ${noteSuggestion.paymentMethod}` : ''} (as before)
+          <EntryFormFields
+            f={f}
+            categories={categories}
+            members={membersList}
+            currentCurrency={currentCurrency}
+            categoryLabelExtra={
+              note.trim() ? (
+                <Pressable onPress={handleSuggestCategory} disabled={suggestingCategory} hitSlop={6}>
+                  <Text className="font-body-semibold text-2xs text-ledger-green">
+                    {suggestingCategory ? 'Suggesting...' : '✨ Suggest'}
                   </Text>
                 </Pressable>
-              ) : null}
-            </View>
-
-          </View>
-
-          {isTravel && cashBalance != null && selectedInstrument?.type === 'cash' && (() => {
-            const afterThis = cashBalance - (parseAmountInput(localAmount) || 0);
-            return (
-              <Text className={`font-mono-bold text-xs mt-2 ${afterThis < 0 ? 'text-stamp-red' : 'text-ledger-green'}`}>
-                💵 Cash left: {currentCurrency} {cashBalance.toFixed(2)}
-                {parseAmountInput(localAmount) > 0 ? ` → ${afterThis.toFixed(2)} after this` : ''}
-              </Text>
-            );
-          })()}
-
-          {canSkipCard && (
-            <Pressable onPress={() => setSkipCardTracking((v) => !v)} className="mt-3 flex-row items-center gap-2.5">
-              <View
-                className={`w-4 h-4 rounded border items-center justify-center ${
-                  skipCardTracking ? 'bg-ledger-green border-ledger-green' : 'border-ink/30 bg-paper'
-                }`}
-              >
-                {skipCardTracking && <Text className="text-white text-xs">✓</Text>}
-              </View>
-              <Text className="font-body text-xs text-muted-text flex-1">
-                Don't add to {selectedCard.name || 'the card'} (statement already closed)
-              </Text>
-            </Pressable>
-          )}
-
-          {rankedCards.length > 0 && (() => {
-            // Caps are shown for the card actually being paid with (the top-ranked
-            // one only when paying with cash/UPI), each labelled, and as they'd
-            // stand after this entry is logged.
-            const capCard = rankedCards.find((r) => r.card.id === selectedCardId) || rankedCards[0];
-            const periodWord = { day: 'today', cycle: 'this cycle', month: 'this month' };
-            const capText = (c) =>
-              `${c.label} ${c.unit === 'points' ? `${Math.round(c.remaining).toLocaleString('en-IN')} pts` : formatCurrency(c.remaining)} left ${periodWord[c.capPeriod] || 'this month'}`;
-            return (
-              <Text className="font-body text-2xs text-muted-text mt-2">
-                💳{' '}
-                {rankedCards
-                  .map((r) => `${r.card.name || r.card.id} → ${r.unit === 'points' ? `${Math.round(r.earned).toLocaleString('en-IN')} pts` : formatCurrency(r.earned)}`)
-                  .join('. ')}
-                {capCard.capStatus.length > 0
-                  ? `. ${capCard.card.name || capCard.card.id} after this entry: ${capCard.capStatus.map(capText).join(', ')}.`
-                  : ''}
-              </Text>
-            );
-          })()}
-
-          {splitType === 'custom' && (
-            <CustomSplitEditor members={membersList} total={parseAmountInput(amount) || 0} shares={customShares} onChange={setCustomShares} />
-          )}
-
-          {splitType === 'shared' && membersList.length > 2 && (
-            <View className="mt-3">
-              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Split Among</Text>
-              <View className="flex-row flex-wrap">
-                {membersList.map((m) => (
-                  <Chip key={m} label={m} selected={splitAmong.includes(m)} onPress={() => toggleSplitAmong(m)} />
-                ))}
-              </View>
-              {splitAmong.length < membersList.length && (
-                <Text className="font-body text-2xs text-muted-text mt-1">
-                  Only split between {splitAmong.join(' and ')} - not everyone.
-                </Text>
-              )}
-            </View>
-          )}
-
-          <Pressable onPress={() => setMoreToggle(!moreOpen)} className="mt-3 flex-row items-center">
-            <Text className="font-body-semibold text-xs text-muted-text">
-              {moreOpen ? '▾' : '▸'} More details{' '}
-              <Text className="font-body text-2xs">{isTravel ? '(tags, reward points)' : '(tags, split across months)'}</Text>
-            </Text>
-          </Pressable>
-
-          {moreOpen && (
-            <>
-              <View className="flex-row flex-wrap mt-3" style={{ gap: 14 }}>
-                <View className={isTravel ? FIELD_HALF : FIELD_FULL}>
-                  <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Tags (optional)</Text>
-                  <TextInput
-                    value={tagsText}
-                    onChangeText={setTagsText}
-                    placeholder="Vacation, Reimbursable"
-                    returnKeyType="done"
-                    onSubmitEditing={() => Keyboard.dismiss()}
-                    className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-                  />
-                </View>
-                {isTravel && (
-                  <View className={FIELD_HALF}>
-                    <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-                      Reward Points (+ spent / − earned)
-                    </Text>
-                    <TextInput
-                      value={rewardPoints}
-                      onChangeText={setRewardPoints}
-                      keyboardType="numbers-and-punctuation"
-                      placeholder="Optional"
-                      className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-                    />
-                    {pointsInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter whole or decimal points, e.g. 1500 or -250</Text> : null}
-                  </View>
-                )}
-              </View>
-              {!isTravel && (
-                <View className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3 mt-3">
-                  <Pressable onPress={() => setSplitAcrossMonths((v) => !v)} className="flex-row items-center gap-2.5">
-                    <View
-                      className={`w-4 h-4 rounded border items-center justify-center ${
-                        splitAcrossMonths ? 'bg-ledger-green border-ledger-green' : 'border-ink/30 bg-paper'
-                      }`}
-                    >
-                      {splitAcrossMonths && <Text className="text-white text-xs">✓</Text>}
-                    </View>
-                    <Text className="font-body-semibold text-sm text-ink flex-1">Split across multiple months</Text>
-                  </Pressable>
-                  <Text className="font-body text-2xs text-muted-text mt-1 ml-7">
-                    For lump-sum payments that cover several months - spreads the amount evenly across one entry per month.
-                  </Text>
-
-                  {splitAcrossMonths && (
-                    <View className="mt-3 ml-7 max-w-[8rem]">
-                      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Number of Months</Text>
-                      <TextInput
-                        value={monthsCount}
-                        onChangeText={setMonthsCount}
-                        keyboardType="number-pad"
-                        className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2 bg-paper shadow-2xs"
-                      />
-                      {parseAmountInput(amount) > 0 && (
-                        <Text className="font-body text-2xs text-muted-text mt-1">
-                          ~{(parseAmountInput(amount) / Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2))).toFixed(2)} / month
-                        </Text>
-                      )}
-                    </View>
-                  )}
-                </View>
-              )}
-            </>
-          )}
+              ) : null
+            }
+            categoryError={categorySuggestError}
+            noteExtra={noteChip}
+            afterFields={
+              <>
+                {cashHint}
+                {cardHint}
+              </>
+            }
+            moreExtra={splitAcrossMonthsBox}
+          />
 
           <Pressable
             onPress={handleSubmit}
-            disabled={saving || !amount || customSplitInvalid || inputInvalid}
-            className={`mt-3 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && (!amount || customSplitInvalid || inputInvalid) ? 'opacity-40' : ''}`}
+            disabled={saving || !f.amount || f.customSplitInvalid || f.inputInvalid}
+            className={`mt-3 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && (!f.amount || f.customSplitInvalid || f.inputInvalid) ? 'opacity-40' : ''}`}
             style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 }}
           >
             {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-sm text-white">Add to Ledger</Text>}

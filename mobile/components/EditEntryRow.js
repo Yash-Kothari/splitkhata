@@ -1,50 +1,29 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useState } from 'react';
 import { View, Text, TextInput, Pressable, Keyboard } from 'react-native';
 import { notify } from '../lib/dialogs';
 import PickerField from './PickerField';
 import DateField from './DateField';
-import CustomSplitEditor from './CustomSplitEditor';
+import EntryFormFields from './EntryFormFields';
 import { cardShadow } from './Card';
+import { useEntryForm } from '../lib/useEntryForm';
 import { updateExpense, updateCardTransaction, replaceCardTransaction } from '../lib/firebase';
 import { reportError } from '../lib/errorReporting';
 import {
-  buildPaymentInstruments,
-  checkCustomSharesTotal,
   parseCustomShares,
-  computeFifoCashAmount,
-  formatFifoBreakdownSummary,
   inferCardRewardFields,
   isStatementOnlyCard,
   resolveInstrument,
   resolveStrategyParamsForDate,
   parseAmountInput,
   isValidISODate,
-  isCashPaid,
   isWithdrawalEntry,
   parseTagsInput,
 } from '../lib/utils';
 
-const SPLIT_TYPE_OPTIONS = [
-  { value: 'shared', label: 'Split' },
-  { value: 'owed', label: 'Owed' },
-  { value: 'personal', label: 'Personal' },
-  { value: 'custom', label: 'Custom amounts' },
-];
-
-function Chip({ label, selected, onPress }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      className={`px-3 py-2 rounded-xl border mr-2 mb-2 ${
-        selected ? 'bg-ledger-green border-ledger-green' : 'bg-paper border-ink/15'
-      }`}
-    >
-      <Text className={`font-body-semibold text-xs ${selected ? 'text-white' : 'text-ink'}`}>{label}</Text>
-    </Pressable>
-  );
-}
-
-// RN port of web's EditEntryRow.jsx - shared by Household and Travel.
+// Edit Entry. The fields, defaults and validation are the same ones Add Entry
+// uses (useEntryForm + EntryFormFields); what lives here is only what belongs to
+// changing an existing entry: keeping its card transaction in step, the save,
+// and the small settlement form.
 export default function EditEntryRow({
   entry,
   categories,
@@ -61,114 +40,34 @@ export default function EditEntryRow({
 }) {
   const isTravel = ledger === 'travel';
   const isSettlement = entry.splitType === 'settlement';
-  // Points live on travel entries, and on a trip line in Payments (Add to Main
-  // Ledger carries the points owed). Saving must keep them, so the field shows
-  // for any entry that already has some.
-  const hasPoints = isTravel || entry.rewardPoints != null;
-  const instruments = useMemo(
-    () => (instrumentsProp && instrumentsProp.length ? instrumentsProp : buildPaymentInstruments([{ name: 'Cash' }], creditCards)),
-    [instrumentsProp, creditCards],
-  );
-  const paymentMethodOptions = instruments.map((i) => i.label);
-
-  const [amount, setAmount] = useState(String(entry.amount ?? ''));
-  const [localAmount, setLocalAmount] = useState(entry.localAmount != null ? String(entry.localAmount) : '');
-  const [rewardPoints, setRewardPoints] = useState(entry.rewardPoints != null ? String(entry.rewardPoints) : '');
-  const [payer, setPayer] = useState(entry.payer);
-  const [category, setCategory] = useState(entry.category);
-  const [splitType, setSplitType] = useState(entry.splitType || (entry.split ? 'shared' : 'personal'));
-  const [owedBy, setOwedBy] = useState(entry.owedBy || members.find((m) => m !== payer) || '');
-  // Picking a card whose owner is the person who owes switches the payer to
-  // them - move "owes" to the other person so the entry can't end up owed by
-  // its own payer (which used to create a phantom debt).
-  useEffect(() => {
-    if (splitType === 'owed' && owedBy === payer) setOwedBy(members.find((m) => m !== payer) || '');
-  }, [payer, splitType]);
-  const [splitAmong, setSplitAmong] = useState(entry.splitAmong || members);
-  const [customShares, setCustomShares] = useState(() =>
-    Object.fromEntries(Object.entries(entry.splitShares || {}).map(([k, v]) => [k, String(v)])),
-  );
-  const customSharesCheck = checkCustomSharesTotal(customShares, parseAmountInput(amount) || 0);
-  const customSplitInvalid = splitType === 'custom' && !customSharesCheck.ok;
-  // Legacy household entries may have no payment method at all - keep that
-  // as-is unless it's changed, rather than silently stamping "Cash" on save.
-  const [paymentMethod, setPaymentMethod] = useState(resolveInstrument(instruments, entry)?.label || entry.paymentMethod || '');
-  const selectedInstrument = instruments.find((i) => i.label === paymentMethod) || null;
-  const [date, setDate] = useState(entry.date);
-  const [note, setNote] = useState(entry.note || '');
-  const [tagsText, setTagsText] = useState((entry.tags || []).join(', '));
-  // The card transaction this entry created. If it's been marked a Travel with
-  // Points / SmartBuy booking (here, or by hand in the Cards tab), the box
-  // starts on its multiplier, so saving never silently drops the booking.
-  const linkedCardTxn = entry.cardTransactionId ? cardTransactions.find((t) => t.id === entry.cardTransactionId) : null;
-  const wasBooking = linkedCardTxn?.category === 'travel_bonus' || linkedCardTxn?.category === 'smartbuy_hotel';
-  const [initialTravelMultiplier] = useState(() => (wasBooking && linkedCardTxn.travelMultiplier ? String(linkedCardTxn.travelMultiplier) : ''));
-  const [travelMultiplier, setTravelMultiplier] = useState(initialTravelMultiplier);
-  // Same as Add Entry: on a household entry paid with a Premier / Diners card,
-  // typing a multiplier marks the entry as a Travel with Points / SmartBuy
-  // booking. Travel-ledger entries have no multiplier box and never create a
-  // booking - their points are the manual Reward Points field, kept separate
-  // from the card's. A tag already on the card transaction is left alone.
-  const selectedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
-  const bookingKind =
-    !isTravel && selectedCard && !isStatementOnlyCard(selectedCard)
-      ? { hsbc_premier_flat_capped: 'travel_with_points', hdfc_diners_slab_milestone: 'smartbuy' }[selectedCard.rewardStrategy] || null
-      : null;
-  const showTravelMultiplier = bookingKind != null;
-  const effectiveTravelMultiplier = showTravelMultiplier ? travelMultiplier.trim() : '';
+  const f = useEntryForm({
+    entry,
+    ledger,
+    categories,
+    members,
+    instruments: instrumentsProp,
+    creditCards,
+    cardTransactions,
+    currentCurrency,
+    tripEntries,
+  });
+  const { amount, payer, category, splitType, owedBy, splitAmong, customShares, date, note, paymentMethod, selectedInstrument } = f;
   const [saving, setSaving] = useState(false);
   const [slowSave, setSlowSave] = useState(false);
-
-  const tripWithdrawals = useMemo(() => tripEntries.filter(isWithdrawalEntry), [tripEntries]);
-  const otherCashEntries = useMemo(
-    () => tripEntries.filter(isCashPaid),
-    [tripEntries],
-  );
-  const fifoResult = useMemo(() => {
-    const parsedLocal = parseAmountInput(localAmount);
-    if (!parsedLocal || parsedLocal <= 0) return null;
-    return computeFifoCashAmount(tripWithdrawals, otherCashEntries, {
-      id: entry.id,
-      date,
-      createdAt: entry.createdAt,
-      localAmount: parsedLocal,
-    });
-  }, [tripWithdrawals, otherCashEntries, date, localAmount, entry.id, entry.createdAt]);
-  const amountLocked = isTravel && selectedInstrument?.type === 'cash' && fifoResult != null;
-  const fifoBreakdownText = useMemo(
-    () => (fifoResult ? formatFifoBreakdownSummary(fifoResult.breakdown, currentCurrency) : ''),
-    [fifoResult, currentCurrency],
-  );
-
-  useEffect(() => {
-    if (!isTravel || selectedInstrument?.type !== 'cash' || fifoResult == null) return;
-    setAmount(fifoResult.amount.toString());
-  }, [fifoResult, paymentMethod, isTravel]);
-
-  function toggleSplitAmong(name) {
-    setSplitAmong((prev) => {
-      if (prev.includes(name)) {
-        const next = prev.filter((p) => p !== name);
-        return next.length > 0 ? next : prev;
-      }
-      return [...prev, name];
-    });
-  }
 
   // Keeps the card transaction an entry created in step with the entry:
   // unchanged card -> update its amount/date/note; different or no card ->
   // drop the old one and, if the new instrument is a card, create its own.
-  // Best-effort like AddEntryForm's link - a failure keeps the previous
-  // link instead of blocking the entry save.
+  // "Don't add to the card" (a closed statement) means no card transaction at
+  // all, so ticking it here removes the existing one. Best-effort like Add
+  // Entry's link - a failure keeps the previous link instead of blocking the
+  // entry save.
   async function syncCardLink(parsedAmount) {
     const oldTxnId = entry.cardTransactionId || null;
-    // Entered with "Don't add to the card" (a closed statement): keep it off the
-    // card when edited too, instead of adding a transaction now.
-    if (entry.skipCardTracking && !oldTxnId) return null;
     const trackedCardId = (id) => (id && !isStatementOnlyCard(creditCards.find((c) => c.id === id)) ? id : null);
-    const oldCardId = trackedCardId(resolveInstrument(instruments, entry)?.cardId || null);
+    const oldCardId = trackedCardId(resolveInstrument(f.instruments, entry)?.cardId || null);
     // A ₹0 entry has no spend to earn on, so it carries no card transaction.
-    const newCardId = parsedAmount === 0 ? null : trackedCardId(selectedInstrument?.cardId || null);
+    const newCardId = parsedAmount === 0 || f.cardSkipped ? null : trackedCardId(selectedInstrument?.cardId || null);
     try {
       if (oldTxnId && newCardId && oldCardId === newCardId) {
         const updates = { amount: parsedAmount, date, description: note.trim() || category };
@@ -178,14 +77,18 @@ export default function EditEntryRow({
         // wasn't a booking. An existing booking survives a category change
         // unless its multiplier is cleared - otherwise re-inferring with the
         // box's value would wipe a booking set here or in the Cards tab.
-        const multiplierChanged = showTravelMultiplier && effectiveTravelMultiplier !== initialTravelMultiplier;
-        if (multiplierChanged || (category !== entry.category && !wasBooking)) {
+        const multiplierChanged = f.showTravelMultiplier && f.effectiveTravelMultiplier !== f.initialTravelMultiplier;
+        if (multiplierChanged || (category !== entry.category && !f.wasBooking)) {
           const card = creditCards.find((c) => c.id === newCardId);
-          Object.assign(updates, inferCardRewardFields(card, category, resolveStrategyParamsForDate(card?.strategyParamsHistory, date), effectiveTravelMultiplier, { bookings: !isTravel }));
+          Object.assign(
+            updates,
+            inferCardRewardFields(card, category, resolveStrategyParamsForDate(card?.strategyParamsHistory, date), f.effectiveTravelMultiplier, { bookings: !isTravel }),
+          );
         }
         await updateCardTransaction(oldTxnId, updates);
         return oldTxnId;
       }
+      if (!oldTxnId && !newCardId) return null;
       let newData = null;
       if (newCardId) {
         const newCard = creditCards.find((c) => c.id === newCardId);
@@ -195,7 +98,7 @@ export default function EditEntryRow({
           date,
           description: note.trim() || category,
           linkedEntryId: entry.id,
-          ...inferCardRewardFields(newCard, category, resolveStrategyParamsForDate(newCard?.strategyParamsHistory, date), effectiveTravelMultiplier, { bookings: !isTravel }),
+          ...inferCardRewardFields(newCard, category, resolveStrategyParamsForDate(newCard?.strategyParamsHistory, date), f.effectiveTravelMultiplier, { bookings: !isTravel }),
         };
       }
       return await replaceCardTransaction(oldTxnId, newData);
@@ -203,12 +106,6 @@ export default function EditEntryRow({
       reportError(err, 'Saved the entry, but could not update its linked card transaction');
       return oldTxnId;
     }
-  }
-
-  function handlePaymentMethodChange(label) {
-    setPaymentMethod(label);
-    const owner = instruments.find((i) => i.label === label)?.owner;
-    if (owner && members.includes(owner)) setPayer(owner);
   }
 
   async function handleSave() {
@@ -228,13 +125,13 @@ export default function EditEntryRow({
       notify('Pick who owes', 'The person who owes must be different from who paid.');
       return;
     }
-    const parsedLocal = isTravel && localAmount ? parseAmountInput(localAmount) : null;
-    if (isTravel && localAmount && !(parsedLocal > 0)) {
+    const parsedLocal = isTravel && f.localAmount ? parseAmountInput(f.localAmount) : null;
+    if (isTravel && f.localAmount && !(parsedLocal > 0)) {
       notify('Check the local amount', 'Enter an amount like 1200 or 1200.50, or leave it empty.');
       return;
     }
-    const parsedPoints = hasPoints && rewardPoints ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
-    if (hasPoints && rewardPoints && parsedPoints == null) {
+    const parsedPoints = f.hasPoints && f.rewardPoints ? parseAmountInput(f.rewardPoints, { allowNegative: true }) : null;
+    if (f.hasPoints && f.rewardPoints && parsedPoints == null) {
       notify('Check the reward points', 'Enter points like 1500 or -250, or leave it empty.');
       return;
     }
@@ -264,12 +161,13 @@ export default function EditEntryRow({
           splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
           splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
           note: note.trim(),
-          tags: parseTagsInput(tagsText),
+          tags: parseTagsInput(f.tagsText),
           date,
           paymentMethod: paymentMethod || null,
           paymentInstrumentId: selectedInstrument?.id || null,
           paymentType: selectedInstrument?.type || null,
           cardTransactionId,
+          skipCardTracking: f.cardSkipped || null,
           localAmount: parsedLocal,
           rewardPoints: parsedPoints,
           // Withdrawals are only created from Trip Settings; editing one keeps
@@ -288,6 +186,24 @@ export default function EditEntryRow({
     }
   }
 
+  const saveDisabled = saving || !amount || f.customSplitInvalid || (!isSettlement && f.inputInvalid);
+  const buttons = (
+    <View className="flex-row gap-2 mt-3">
+      <Pressable onPress={onCancel} className="flex-1 min-h-11 rounded-xl border border-ink/15 items-center justify-center">
+        <Text className="font-body-semibold text-sm text-ink">Cancel</Text>
+      </Pressable>
+      <Pressable
+        onPress={handleSave}
+        disabled={saveDisabled}
+        className={`flex-1 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && saveDisabled ? 'opacity-40' : ''}`}
+      >
+        <Text className="font-body-semibold text-sm text-white">{saving ? (slowSave ? 'Still saving…' : 'Saving...') : 'Save'}</Text>
+      </Pressable>
+    </View>
+  );
+
+  // A settlement is just a payment between the two of you: amount, date, how it
+  // was paid and a note - no category, split or card.
   if (isSettlement) {
     return (
       <View style={cardShadow} className="mx-4 mb-4 p-4 rounded-2xl bg-paper-card border border-ledger-green/40">
@@ -297,42 +213,42 @@ export default function EditEntryRow({
           <Text className="font-body-semibold text-ledger-green">{entry.owedBy}</Text>
         </Text>
 
-        <View className="flex-row flex-wrap" style={{ gap: 12 }}>
-          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+        <View className="flex-row flex-wrap" style={{ gap: 14 }}>
+          <View className="w-[47%] sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
             <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
               Amount ({isTravel ? currentCurrency : '₹'})
             </Text>
             <TextInput
               value={amount}
-              onChangeText={setAmount}
+              onChangeText={f.setAmount}
               keyboardType="decimal-pad"
               className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
             />
           </View>
 
-          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
+          <View className="w-[47%] sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
             <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
             <DateField
               value={date}
-              onChange={setDate}
+              onChange={f.setDate}
               className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
             />
           </View>
 
-          <View className="w-full sm:w-[calc(33.333%-8px)]">
+          <View className="w-full sm:w-[calc(50%-7px)] lg:w-[calc(33.333%-9.333px)]">
             <PickerField
               label="Payment Method"
               value={paymentMethod}
-              options={[{ value: '', label: 'None' }, ...paymentMethodOptions]}
-              onChange={setPaymentMethod}
+              options={[{ value: '', label: 'None' }, ...f.paymentMethodOptions]}
+              onChange={f.setPaymentMethod}
             />
           </View>
 
-          <View className="w-full sm:w-[calc(33.333%-8px)]">
+          <View className="w-full lg:w-[calc(33.333%-9.333px)]">
             <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
             <TextInput
               value={note}
-              onChangeText={setNote}
+              onChangeText={f.setNote}
               returnKeyType="done"
               onSubmitEditing={() => Keyboard.dismiss()}
               className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
@@ -340,186 +256,15 @@ export default function EditEntryRow({
           </View>
         </View>
 
-        <View className="flex-row gap-2 mt-3">
-          <Pressable onPress={onCancel} className="flex-1 min-h-11 rounded-xl border border-ink/15 items-center justify-center">
-            <Text className="font-body-semibold text-sm text-ink">Cancel</Text>
-          </Pressable>
-          <Pressable
-            onPress={handleSave}
-            disabled={saving || !amount || customSplitInvalid}
-            className={`flex-1 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && (!amount || customSplitInvalid) ? 'opacity-40' : ''}`}
-          >
-            {saving ? (
-              <Text className="font-body-semibold text-sm text-white">{slowSave ? 'Still saving…' : 'Saving...'}</Text>
-            ) : (
-              <Text className="font-body-semibold text-sm text-white">Save</Text>
-            )}
-          </Pressable>
-        </View>
+        {buttons}
       </View>
     );
   }
 
   return (
     <View style={cardShadow} className="mx-4 mb-4 p-4 rounded-2xl bg-paper-card border border-ledger-green/40">
-      <View className="flex-row flex-wrap" style={{ gap: 12 }}>
-        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-            Amount (₹){isTravel ? ' - real cost' : ''}
-          </Text>
-          <TextInput
-            value={amount}
-            onChangeText={setAmount}
-            keyboardType="decimal-pad"
-            editable={!amountLocked}
-            className={`font-mono-bold text-sm border border-ink/15 rounded-xl px-3 py-2.5 ${
-              amountLocked ? 'bg-paper/60 text-muted-text' : 'bg-paper text-ink'
-            }`}
-          />
-          {amountLocked && fifoBreakdownText ? (
-            <Text className="font-body text-2xs text-muted-text mt-1">{fifoBreakdownText}</Text>
-          ) : null}
-        </View>
-
-        {isTravel && (
-          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-              Local Amount ({currentCurrency})
-            </Text>
-            <TextInput
-              value={localAmount}
-              onChangeText={setLocalAmount}
-              keyboardType="decimal-pad"
-              placeholder="Optional"
-              className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-            />
-          </View>
-        )}
-
-        {hasPoints && (
-          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-              Reward Points (+ spent / − earned)
-            </Text>
-            <TextInput
-              value={rewardPoints}
-              onChangeText={setRewardPoints}
-              keyboardType="numbers-and-punctuation"
-              placeholder="Optional"
-              className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-            />
-          </View>
-        )}
-
-        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-          <PickerField label="Split Type" value={splitType} options={SPLIT_TYPE_OPTIONS} onChange={setSplitType} />
-        </View>
-
-        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-          <PickerField label="Who Paid" value={payer} options={members} onChange={setPayer} />
-        </View>
-
-        {splitType === 'owed' && (
-          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-            <PickerField
-              label="Who Owes the Full Amount"
-              value={owedBy}
-              options={members.filter((m) => m !== payer)}
-              onChange={setOwedBy}
-            />
-          </View>
-        )}
-
-        {splitType === 'custom' && (
-          <View className="w-full">
-            <CustomSplitEditor members={members} total={parseAmountInput(amount) || 0} shares={customShares} onChange={setCustomShares} />
-          </View>
-        )}
-
-        {splitType === 'shared' && members.length > 2 && (
-          <View className="w-full">
-            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Split Among</Text>
-            <View className="flex-row flex-wrap">
-              {members.map((m) => (
-                <Chip key={m} label={m} selected={splitAmong.includes(m)} onPress={() => toggleSplitAmong(m)} />
-              ))}
-            </View>
-          </View>
-        )}
-
-        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] order-last lg:order-none">
-          <PickerField label="Category" value={category} options={categories} onChange={setCategory} />
-        </View>
-
-        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-          <PickerField label="Payment Method" value={paymentMethod || 'Not set'} options={paymentMethodOptions} onChange={handlePaymentMethodChange} />
-        </View>
-
-        {showTravelMultiplier && (
-          <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-            <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-              {bookingKind === 'smartbuy' ? 'SmartBuy multiplier (optional)' : 'Travel with Points multiplier (optional)'}
-            </Text>
-            <TextInput
-              value={travelMultiplier}
-              onChangeText={setTravelMultiplier}
-              keyboardType="decimal-pad"
-              placeholder={bookingKind === 'smartbuy' ? '10 (default)' : 'e.g. 12'}
-              className="font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-            />
-          </View>
-        )}
-
-        <View className="w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)]">
-          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Date</Text>
-          <DateField
-            value={date}
-            onChange={setDate}
-            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-          />
-        </View>
-
-        <View className="w-full">
-          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Note (optional)</Text>
-          <TextInput
-            value={note}
-            onChangeText={setNote}
-            placeholder="What was this for?"
-            returnKeyType="done"
-            onSubmitEditing={() => Keyboard.dismiss()}
-            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-          />
-        </View>
-
-        <View className="w-full">
-          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Tags (optional)</Text>
-          <TextInput
-            value={tagsText}
-            onChangeText={setTagsText}
-            placeholder="Vacation, Reimbursable"
-            returnKeyType="done"
-            onSubmitEditing={() => Keyboard.dismiss()}
-            className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs"
-          />
-        </View>
-      </View>
-
-      <View className="flex-row gap-2 mt-3">
-        <Pressable onPress={onCancel} className="flex-1 min-h-11 rounded-xl border border-ink/15 items-center justify-center">
-          <Text className="font-body-semibold text-sm text-ink">Cancel</Text>
-        </Pressable>
-        <Pressable
-          onPress={handleSave}
-          disabled={saving || !amount || customSplitInvalid}
-          className={`flex-1 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && (!amount || customSplitInvalid) ? 'opacity-40' : ''}`}
-        >
-          {saving ? (
-            <Text className="font-body-semibold text-sm text-white">{slowSave ? 'Still saving…' : 'Saving...'}</Text>
-          ) : (
-            <Text className="font-body-semibold text-sm text-white">Save</Text>
-          )}
-        </Pressable>
-      </View>
+      <EntryFormFields f={f} categories={categories} members={members} currentCurrency={currentCurrency} />
+      {buttons}
     </View>
   );
 }
