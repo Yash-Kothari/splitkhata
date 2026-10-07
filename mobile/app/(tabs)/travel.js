@@ -122,10 +122,10 @@ export default function Travel() {
     [allTravelEntries, selectedTripId, selectedTripObj],
   );
 
-  // Cash left on the trip (local currency): shown on the trip bar and, when
+  // Cash on the trip (local currency): shown in Trip Summary and, when
   // paying with cash, in Add Entry as what it will be after this entry.
-  const cashBalance = useMemo(
-    () => (selectedTripObj ? computeTripCashStats(allTravelEntries || [], cashMovements, selectedTripObj.id, selectedTripObj.name).balance : 0),
+  const cashStats = useMemo(
+    () => (selectedTripObj ? computeTripCashStats(allTravelEntries || [], cashMovements, selectedTripObj.id, selectedTripObj.name) : null),
     [allTravelEntries, cashMovements, selectedTripObj],
   );
 
@@ -210,6 +210,8 @@ export default function Travel() {
               tripName={selectedTripObj.name}
               tripId={selectedTripObj.id}
               tripRollup={tripRollup}
+              cashStats={cashStats}
+              cashCurrency={selectedTripObj.currency}
               instruments={instruments}
             />
           )}
@@ -231,7 +233,7 @@ export default function Travel() {
                   currentCurrency={selectedTripObj.currency}
                   instruments={instruments}
                   tripEntries={tripEntries}
-                  cashBalance={cashBalance}
+                  cashBalance={cashStats?.balance ?? null}
                   creditCards={creditCards}
                   cardTransactions={cardTransactions}
                   recentEntries={tripEntries}

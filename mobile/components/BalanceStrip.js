@@ -34,6 +34,8 @@ export default function BalanceStrip({
   tripName = '',
   tripId = '',
   tripRollup = null,
+  cashStats = null,
+  cashCurrency = '',
   onSaveError,
   instruments: instrumentsProp,
 }) {
@@ -295,6 +297,18 @@ export default function BalanceStrip({
           Total trip expense: <Text className="font-mono text-ink">{formatCurrency(totalSpend, displayCurrency)}</Text>
         </Text>
       )}
+
+      {isTravel && cashStats && (cashStats.opening || cashStats.withdrawn || cashStats.spent) ? (
+        <Text className="font-body text-sm text-muted-text mt-1">
+          💵 Cash left:{' '}
+          <Text className={`font-mono-bold ${cashStats.balance < 0 ? 'text-stamp-red' : 'text-ink'}`}>
+            {cashCurrency} {cashStats.balance.toFixed(2)}
+          </Text>
+          <Text className="font-mono text-2xs">
+            {'  '}({(cashStats.opening + cashStats.withdrawn).toFixed(2)} in, {cashStats.spent.toFixed(2)} spent)
+          </Text>
+        </Text>
+      ) : null}
 
       {isTravel && totalPointsSpent !== 0 && (
         <Text className="font-body text-sm text-muted-text mt-1">
