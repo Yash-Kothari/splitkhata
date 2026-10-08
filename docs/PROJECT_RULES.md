@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.1.5**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.1.7**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -185,8 +185,12 @@ npm run typecheck           # tsc over lib/**/*.js
 - **Add a test with every engine change**, pure-function style. The suite has 330+
   tests in `tests/utils.test.mjs`. A test that encodes a bug must be rewritten, not
   deleted (for example a stale-flag withdrawal now counts as cash spend).
-- CI runs `npm test` and the web export on every push to `main`. **Lint and typecheck
-  are not in CI**, so they are on you locally.
+- Two workflows run in CI:
+  - `.github/workflows/ci.yml` runs lint, typecheck, `npm test` and the Firestore rules tests on
+    every **pull request and every branch except `main`**.
+  - `.github/workflows/deploy.yml` runs on **push to `main`**: `npm test`, the web export, then
+    deploy. It does **not** run lint or typecheck. Since we push straight to `main`, run
+    lint and typecheck locally before committing.
 - Security rules: `npm run test:rules` at the repo root.
 
 **UI verification (the "UI testing" we actually do):**
@@ -247,6 +251,13 @@ local testing predicted.
   `expo export --platform web`, copy `index.html` to `404.html` for the SPA fallback,
   publish to Pages). Check the run is green (`gh run list`), then reload the site twice
   and confirm the version under the title.
+- **Dependabot** (`.github/dependabot.yml`) opens weekly, grouped PRs on Mondays: Expo SDK
+  patch releases (one PR), our own libraries (firebase, Sentry, NativeWind, react-native-web,
+  fonts: minor and patch), the root Firebase tooling, and GitHub Actions. It deliberately
+  **ignores** `react`, `react-native` and every native package Expo pins, plus the majors of
+  `tailwindcss`, `typescript`, `eslint` and `firebase`. Those move only with an Expo SDK
+  upgrade (`npx expo install --fix`), by hand. Each PR is checked by `ci.yml`; merge only
+  when it is green. Merging to `main` deploys the site, so reload twice afterwards.
 - **One-off tools are removed afterwards.** A temporary import button shipped as
   v3.0.16 and was deleted in v3.0.17 once its job was done. Don't leave dead code behind.
 

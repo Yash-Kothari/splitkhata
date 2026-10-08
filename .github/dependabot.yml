@@ -1,0 +1,104 @@
+# Dependabot version updates. Weekly, grouped so there are a handful of PRs, not
+# dozens. Every PR runs .github/workflows/ci.yml (lint, typecheck, tests, rules
+# tests); merging one to main then deploys the site as usual.
+#
+# This is an Expo app, so most of the stack is versioned *together* by the Expo
+# SDK. Those packages are only allowed SDK patch releases here; anything bigger
+# is an SDK upgrade, done by hand (`npx expo install --fix`), never one package
+# at a time. See docs/PROJECT_RULES.md section 2.
+version: 2
+
+updates:
+  # ---- The app (Expo / React Native / web) ----
+  - package-ecosystem: npm
+    directory: /mobile
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    labels: [dependencies]
+    commit-message:
+      prefix: "deps"
+    groups:
+      # Expo SDK patch releases (expo, expo-*, @expo/*): one PR.
+      expo-sdk-patches:
+        patterns: ["expo", "expo-*", "@expo/*", "babel-preset-expo", "eslint-config-expo"]
+        update-types: [patch]
+      # Libraries we choose ourselves; minor and patch only.
+      app-libraries:
+        patterns: ["firebase", "@sentry/*", "nativewind", "react-native-web", "@expo-google-fonts/*"]
+        update-types: [minor, patch]
+    ignore:
+      # Versioned by the Expo SDK: only patch bumps, via the group above.
+      - dependency-name: "expo"
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: "expo-*"
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: "@expo/*"
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: "babel-preset-expo"
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      - dependency-name: "eslint-config-expo"
+        update-types: [version-update:semver-minor, version-update:semver-major]
+      # React Native and everything native that Expo pins to its own SDK:
+      # upgrade with the SDK, never on its own.
+      - dependency-name: "react"
+      - dependency-name: "react-dom"
+      - dependency-name: "react-native"
+      - dependency-name: "react-native-reanimated"
+      - dependency-name: "react-native-worklets"
+      - dependency-name: "react-native-screens"
+      - dependency-name: "react-native-safe-area-context"
+      - dependency-name: "react-native-svg"
+      - dependency-name: "@react-native-async-storage/async-storage"
+      - dependency-name: "@react-native-community/datetimepicker"
+      - dependency-name: "@react-native-community/netinfo"
+      # Majors that need real work, not a version bump.
+      - dependency-name: "tailwindcss"          # v4 changes the config model; the app is on v3 with NativeWind 4
+        update-types: [version-update:semver-major]
+      - dependency-name: "typescript"
+        update-types: [version-update:semver-major]
+      - dependency-name: "eslint"
+        update-types: [version-update:semver-major]
+      - dependency-name: "firebase"
+        update-types: [version-update:semver-major]
+
+  # ---- Firebase tooling at the repo root (rules tests, emulators) ----
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 3
+    labels: [dependencies]
+    commit-message:
+      prefix: "deps"
+    groups:
+      firebase-tooling:
+        patterns: ["firebase", "firebase-tools", "@firebase/*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "firebase"
+        update-types: [version-update:semver-major]
+      - dependency-name: "@firebase/rules-unit-testing"
+        update-types: [version-update:semver-major]
+
+  # ---- GitHub Actions used by the workflows ----
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 3
+    labels: [dependencies]
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns: ["*"]
