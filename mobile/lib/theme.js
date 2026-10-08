@@ -54,3 +54,12 @@ export function themeColor(name, isDark) {
 export function themeRgba(name, isDark, alpha) {
   return `rgba(${themeRgb(name, isDark)},${alpha})`;
 }
+
+// "#RRGGBB" (or "#RGB") plus an opacity -> "rgba(r,g,b,a)". Pure, so the web
+// box-shadow built from a hex shadow colour can be unit-tested.
+export function hexToRgba(hex, alpha) {
+  let h = String(hex).replace('#', '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const n = parseInt(h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
+}

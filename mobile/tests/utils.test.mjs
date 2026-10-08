@@ -120,6 +120,7 @@ import {
   isWithdrawalEntry,
   getActiveTrip,
 } from '../lib/utils.js';
+import { hexToRgba } from '../lib/theme.js';
 
 test('uses Yash and Kruti as default pair names', () => {
   assert.deepEqual(PERSONS, ['Yash', 'Kruti']);
@@ -3640,4 +3641,10 @@ test('computeCardDueReminders - a statement-only card reminds per unpaid stateme
   assert.equal(r[0].daysUntilDue, 3);
   const late = computeCardDueReminders([stmtCard], txns, [], '2026-10-15');
   assert.equal(late[0].overdue, true);
+});
+
+test('hexToRgba - builds the rgba() string used for the web box-shadow', () => {
+  assert.equal(hexToRgba('#000000', 0.2), 'rgba(0,0,0,0.2)');
+  assert.equal(hexToRgba('#24304A', 0.16), 'rgba(36,48,74,0.16)');
+  assert.equal(hexToRgba('#fff', 1), 'rgba(255,255,255,1)');
 });

@@ -55,6 +55,11 @@ async function upsertDoc(path, data) {
 async function main() {
   const now = new Date();
 
+  // The app seeds its own default members/categories/currencies the first time
+  // it runs, unless this flag says it already has. Without the flag every name
+  // existed twice here and React logged "two children with the same key".
+  await upsertDoc('settings/seed_state', { members: true, categories: true, currencies: true, paymentMethods: true });
+
   // Members, categories, currencies - the reference lists every screen
   // expects, one doc each (matches subscribeToMembers/Categories/Currencies).
   await Promise.all(DEFAULT_PERSONS.map((name, i) => upsertDoc(`members/seed_member_${i}`, { name, createdAt: now })));

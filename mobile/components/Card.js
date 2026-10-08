@@ -1,5 +1,6 @@
 import { View } from 'react-native';
 import { themeColor } from '../lib/theme';
+import { shadowStyle } from '../lib/shadow';
 
 // Matches web's .panel-card (src/styles.css): border-ink/10, rounded-2xl
 // (1rem), bg-paper-card, plus a soft floating shadow - web's actual value is
@@ -8,13 +9,7 @@ import { themeColor } from '../lib/theme';
 // contained halo rather than a strongly offset drop shadow). RN has no
 // spread-radius equivalent, so this is tuned by eye to the same soft,
 // close-in look rather than translated value-for-value.
-export const cardShadow = {
-  shadowColor: themeColor('ink', false),
-  shadowOffset: { width: 0, height: 8 },
-  shadowOpacity: 0.16,
-  shadowRadius: 20,
-  elevation: 4,
-};
+export const cardShadow = shadowStyle({ color: themeColor('ink', false), x: 0, y: 8, blur: 20, opacity: 0.16, elevation: 4 });
 
 export default function Card({ children, className = '', style, noShadow = false, ...props }) {
   return (

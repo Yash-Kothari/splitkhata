@@ -90,6 +90,7 @@ import {
 import { reportError } from '../lib/errorReporting';
 import { hashPin, verifyPin } from '../lib/pinAuth';
 import { themeColor } from '../lib/theme';
+import { shadowStyle } from '../lib/shadow';
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const MONTH_OPTIONS = MONTH_NAMES.map((name, i) => ({ value: String(i + 1), label: name }));
@@ -1163,7 +1164,7 @@ export default function SettingsModal({ visible, onClose }) {
       <View className="flex-1 bg-black/40 items-center justify-center px-2.5">
         <View
           className="w-full rounded-2xl bg-paper-card border border-ink/15 overflow-hidden"
-          style={{ maxWidth: 576, height: Math.round(windowHeight * 0.92), shadowColor: '#000', shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.25, shadowRadius: 30, elevation: 10 }}
+          style={{ maxWidth: 576, height: Math.round(windowHeight * 0.92), ...shadowStyle({ color: '#000000', x: 0, y: 20, blur: 30, opacity: 0.25, elevation: 10 }) }}
         >
         <View className="flex-row items-center justify-between px-4 py-3.5 border-b border-ink/10 bg-paper/60">
           <View className="flex-row items-center gap-2 flex-1">

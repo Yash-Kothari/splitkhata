@@ -10,6 +10,7 @@ import { reportError } from '../lib/errorReporting';
 import GlobalSearch from './GlobalSearch';
 import TopNavBar from './TopNavBar';
 import { VERSION_LABEL, BUILD_SHA } from '../lib/version';
+import { shadowStyle } from '../lib/shadow';
 
 // Matches web's <header> in App.jsx: "Splitkhata" + a ledger badge pill
 // (bg-ledger-green/10, border-ledger-green/30, text-ledger-green), plus the
@@ -113,11 +114,7 @@ export default function AppHeader({ badge }) {
                 top: accountMenuAnchor.y + accountMenuAnchor.height + 6,
                 left: Math.max(8, accountMenuAnchor.x + accountMenuAnchor.width - 176),
                 width: 176,
-                shadowColor: '#000',
-                shadowOffset: { width: 0, height: 8 },
-                shadowOpacity: 0.2,
-                shadowRadius: 16,
-                elevation: 8,
+                ...shadowStyle({ color: '#000000', x: 0, y: 8, blur: 16, opacity: 0.2, elevation: 8 }),
               }}
             >
               {user?.email ? (

@@ -6,6 +6,7 @@ import { setAskPanelOpen } from '../lib/askPanelState';
 import { subscribeToExpenses, subscribeToCategories, subscribeToMembers, subscribeToTrips, generateStructured, generateDigest } from '../lib/firebase';
 import { buildAskQuestionSchema, buildAskQuestionPrompt, buildAskAnswerNarrationPrompt, resolveAskQuery, todayISO } from '../lib/utils';
 import { reportError } from '../lib/errorReporting';
+import { shadowStyle } from '../lib/shadow';
 
 const DEFAULT_EXAMPLES = ['Top 3 Biggest Expense of the month', 'How is Grocery expense compared to last month'];
 
@@ -106,7 +107,7 @@ export default function AskQuestion() {
       <Pressable
         onPress={() => setOpen((v) => !v)}
         className="absolute bottom-24 right-4 w-14 h-14 rounded-full bg-ledger-green items-center justify-center"
-        style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4, elevation: 6 }}
+        style={shadowStyle({ color: '#000000', x: 0, y: 2, blur: 4, opacity: 0.2, elevation: 6 })}
       >
         <Text style={{ fontSize: 22 }}>{open ? '✕' : '✨'}</Text>
       </Pressable>
@@ -115,7 +116,7 @@ export default function AskQuestion() {
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           className="absolute bottom-40 left-4 right-4 md:left-auto md:w-96 rounded-2xl bg-paper-card border border-ink/15 overflow-hidden"
-          style={{ maxHeight: '60%', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.15, shadowRadius: 12, elevation: 8 }}
+          style={{ maxHeight: '60%', ...shadowStyle({ color: '#000000', x: 0, y: 4, blur: 12, opacity: 0.15, elevation: 8 }) }}
         >
           <View className="px-4 py-3 border-b border-ink/10 flex-row items-center justify-between bg-paper/60">
             <View className="flex-1">

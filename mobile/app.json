@@ -3,7 +3,7 @@
     "name": "Splitkhata",
     "slug": "splitkhata",
     "scheme": "splitkhata",
-    "version": "3.1.8",
+    "version": "3.1.9",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -15,7 +15,7 @@
       "config": {
         "usesNonExemptEncryption": false
       },
-      "buildNumber": "31"
+      "buildNumber": "32"
     },
     "android": {
       "package": "com.splitkhata.mobile",
@@ -23,7 +23,7 @@
         "backgroundColor": "#3D7068",
         "foregroundImage": "./assets/android-icon-foreground.png"
       },
-      "versionCode": 31
+      "versionCode": 32
     },
     "web": {
       "favicon": "./assets/favicon.png",

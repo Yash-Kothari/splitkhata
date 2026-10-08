@@ -4,17 +4,12 @@ import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
 import { signInWithGoogleIdToken, signInWithGooglePopup, signInDevTestUser, IS_DEV_EMULATOR } from '../lib/firebase';
 import { themeColor } from '../lib/theme';
+import { shadowStyle } from '../lib/shadow';
 
 // Matches web's shadow-xl on this specific card (GoogleSignIn in App.jsx) -
 // a taller, softer shadow than .panel-card's own box-shadow, which is what
 // Card.js's cardShadow is tuned for instead.
-const signInCardShadow = {
-  shadowColor: '#000000',
-  shadowOffset: { width: 0, height: 20 },
-  shadowOpacity: 0.1,
-  shadowRadius: 25,
-  elevation: 12,
-};
+const signInCardShadow = shadowStyle({ color: '#000000', x: 0, y: 20, blur: 25, opacity: 0.1, elevation: 12 });
 
 WebBrowser.maybeCompleteAuthSession();
 

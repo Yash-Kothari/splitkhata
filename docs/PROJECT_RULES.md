@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.1.8**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.1.9**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -125,6 +125,17 @@ and kill them if stuck. Never leave one running unattended.
     `notify()` and `confirmAsync()`.
   - No `crypto.randomUUID` (missing on Hermes). Use `expo-crypto`.
   - The service worker must stay same-origin, GET-only and navigation-aware.
+- **No presses on SVG shapes.** react-native-svg can't take `onPress` on a shape on the website:
+  it logs "Unknown event handler" and the tap never fires. Put an invisible `Pressable` over the
+  shape (the bar chart does this) or use a legend row.
+- **Shadows go through `shadowStyle()`** (`lib/shadow.js`), never raw `shadowColor`/`shadowOffset`/
+  `shadowOpacity`/`shadowRadius`. react-native-web deprecated those and warns; the helper emits
+  `boxShadow` on the web and the native props on the phone. Use `style.pointerEvents`, not the
+  `pointerEvents` prop.
+- **The console should be clean.** After UI work, walk all four tabs on a fresh page load and
+  read the console; a new error or warning is a bug to fix, not noise to ignore. The seed
+  script sets the app's `seed_state` flags, otherwise the members exist twice in the emulator
+  and React logs duplicate-key errors that don't exist in production.
 - Class names that only work on web (`calc(...)` widths, `order-*`, `sm:` / `lg:`
   breakpoints) are fine for layout, but behaviour must not depend on them.
 - Derive state instead of syncing it with effects where you can. The lint baseline
@@ -291,6 +302,8 @@ local testing predicted.
 - An old "Cash withdrawal" checkbox once let ordinary cash purchases be flagged as
   withdrawals (they were counted as cash coming in and double-charged to the trip).
   The checkbox is gone; the flag is ignored on cash-paid entries.
+- The browser's NetInfo probe (`HEAD /`) 404s on GitHub Pages, so it is switched off on the web
+  (`ConnectionBanner`); the app only uses the browser's online signal.
 - Pins sort within the currently shown list (for Household, the selected month).
 - GitHub's "AI Scan for PRs" is explicitly **disabled** on all repos
   (`gh api repos/Yash-Kothari/<repo>/code-scanning/ai-scan`).

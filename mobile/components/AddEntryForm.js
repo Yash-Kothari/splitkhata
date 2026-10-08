@@ -33,6 +33,7 @@ import {
   findPossibleDuplicateEntry,
   parseTagsInput,
 } from '../lib/utils';
+import { shadowStyle } from '../lib/shadow';
 
 // Add Entry. The fields themselves, their defaults and their validation are the
 // same ones Edit Entry uses (useEntryForm + EntryFormFields); what lives here is
@@ -629,7 +630,7 @@ export default function AddEntryForm({
             onPress={handleSubmit}
             disabled={saving || !f.amount || f.customSplitInvalid || f.inputInvalid}
             className={`mt-3 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && (!f.amount || f.customSplitInvalid || f.inputInvalid) ? 'opacity-40' : ''}`}
-            style={{ shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1 }}
+            style={shadowStyle({ color: '#000000', x: 0, y: 1, blur: 2, opacity: 0.05, elevation: 1 })}
           >
             {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-sm text-white">Add to Ledger</Text>}
           </Pressable>

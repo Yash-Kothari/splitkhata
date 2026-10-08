@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { View, Text, Pressable, Modal, ScrollView, useWindowDimensions } from 'react-native';
+import { View, Text, Pressable, Modal, ScrollView, Platform, useWindowDimensions } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import Card from './Card';
 import PickerField from './PickerField';
@@ -175,6 +175,11 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
     return status || null;
   }, [selectedCategory, budgets, data]);
 
+  // Tapping a donut slice opens the drill-down on the phone. On the website
+  // react-native-svg can't take a press on an SVG shape (it logs "Unknown event
+  // handler" and ignores it), so there the legend rows below are the way in.
+  const sliceProps = (category) => (Platform.OS === 'web' ? {} : { onPress: () => setSelectedCategory(category) });
+
   let cursor = 0;
   const slices = data.map((entry) => {
     const rawAngle = total > 0 ? (entry.amount / total) * 360 : 0;
@@ -239,12 +244,12 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
                     key={entry.category}
                     d={donutSlicePath(center, center, innerR, outerR, startAngle, endAngle)}
                     fill={color}
-                    onPress={() => setSelectedCategory(entry.category)}
+                    {...sliceProps(entry.category)}
                   />
                 );
               })}
             </Svg>
-            <View className="absolute inset-0 items-center justify-center" pointerEvents="none">
+            <View className="absolute inset-0 items-center justify-center" style={{ pointerEvents: 'none' }}>
               <View className="items-center px-2" style={{ maxWidth: donutSize * 0.38 }}>
                 <Text
                   className={`font-mono-bold text-ink text-center ${totalLabel.length > 12 ? 'text-xs' : totalLabel.length > 9 ? 'text-sm' : 'text-lg'}`}

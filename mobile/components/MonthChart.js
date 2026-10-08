@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useColorScheme } from 'nativewind';
-import { View, Text } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
 import Svg, { Path, Line, Text as SvgText } from 'react-native-svg';
 import Card from './Card';
 import { getLast6MonthsData, formatCurrency } from '../lib/utils';
@@ -77,6 +77,12 @@ export default function MonthChart({ entries, ledger }) {
   const plotWidth = Math.max(width - AXIS_LEFT, 0);
   const plotHeight = CHART_HEIGHT - AXIS_BOTTOM;
   const barSlot = data.length ? plotWidth / data.length : 0;
+
+  // Taps go on invisible columns laid over the bars, not on the SVG shapes:
+  // react-native-svg can't take a press on a shape on the website (it logs
+  // "Unknown event handler" and the tap never fires). The column is also a
+  // wider, easier target than the bar itself.
+  const toggleBar = (i) => setSelected((cur) => (cur === i ? null : i));
   const barWidth = Math.min(barSlot * 0.9, 40);
 
   const selectedDatum = selected != null ? data[selected] : null;
@@ -145,7 +151,6 @@ export default function MonthChart({ entries, ledger }) {
                       d={roundedTopBarPath(x, y, barWidth, Math.max(barH, d.total > 0 ? 1 : 0), BAR_RADIUS)}
                       fill={barColor}
                       fillOpacity={isLatest ? 1 : BAR_COLOR_DIM_OPACITY}
-                      onPress={() => setSelected(selected === i ? null : i)}
                     />
                   );
                 })}
@@ -159,6 +164,16 @@ export default function MonthChart({ entries, ledger }) {
                 })}
               </Svg>
             )}
+            {width > 0 &&
+              data.map((d, i) => (
+                <Pressable
+                  key={`tap-${d.month}`}
+                  onPress={() => toggleBar(i)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${d.label}: ${formatCurrency(d.total)}`}
+                  style={{ position: 'absolute', left: AXIS_LEFT + i * barSlot, top: 0, width: barSlot, height: plotHeight, cursor: 'pointer' }}
+                />
+              ))}
           </View>
 
           {selectedDatum && (

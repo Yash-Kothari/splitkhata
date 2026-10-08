@@ -4,6 +4,12 @@ import NetInfo from '@react-native-community/netinfo';
 import { subscribeToReportedErrors, clearReportedError } from '../lib/errorReporting';
 import { subscribeToPendingWrites } from '../lib/firebase';
 
+// NetInfo's web probe sends `HEAD /` to the site root every few seconds. On
+// GitHub Pages that root is not this app (it 404s), so the console filled with
+// "Failed to load resource" errors - and nothing reads the probe's result
+// (the banner uses isConnected alone, see below). Switched off on the web.
+if (Platform.OS === 'web') NetInfo.configure({ reachabilityShouldRun: () => false });
+
 // RN port of web's ConnectionState (src/components/ConnectionState.jsx).
 // Originally scoped to just the "offline" case - Firestore's
 // persistentLocalCache (lib/firebase.js) already serves cached reads and
