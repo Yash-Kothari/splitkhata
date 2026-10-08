@@ -100,44 +100,44 @@ const MONTH_OPTIONS = MONTH_NAMES.map((name, i) => ({ value: String(i + 1), labe
 // against each bank's real terms.
 const CARD_PARAM_FIELDS = {
   hdfc_diners_slab_milestone: [
-    { key: 'pointsPerUnit', label: 'Points per unit' },
-    { key: 'unitAmount', label: 'Unit amount (₹)' },
-    { key: 'cycleCap', label: 'Max points earned per cycle' },
-    { key: 'quarterlyMilestoneTarget', label: 'Quarterly milestone spend (₹)' },
-    { key: 'quarterlyMilestoneBonus', label: 'Quarterly milestone bonus points' },
-    { key: 'annualMilestoneTarget', label: 'Annual milestone spend (₹)' },
-    { key: 'annualMilestoneLabel', label: 'Annual milestone reward', isText: true },
+    { key: 'pointsPerUnit', label: 'Points per Unit' },
+    { key: 'unitAmount', label: 'Unit Amount (₹)' },
+    { key: 'cycleCap', label: 'Max Points Earned per Cycle' },
+    { key: 'quarterlyMilestoneTarget', label: 'Quarterly Milestone Spend (₹)' },
+    { key: 'quarterlyMilestoneBonus', label: 'Quarterly Milestone Bonus Points' },
+    { key: 'annualMilestoneTarget', label: 'Annual Milestone Spend (₹)' },
+    { key: 'annualMilestoneLabel', label: 'Annual Milestone Reward', isText: true },
   ],
   sbi_two_channel_cashback: [
-    { key: 'onlineRate', label: 'Online rate (%)' },
-    { key: 'offlineRate', label: 'Offline rate (%)' },
-    { key: 'onlineCycleCap', label: 'Max online cashback per cycle (₹)' },
-    { key: 'offlineCycleCap', label: 'Max offline cashback per cycle (₹)' },
-    { key: 'minTransaction', label: 'Minimum transaction to earn (₹)' },
-    { key: 'annualMilestoneTarget', label: 'Annual fee-waiver spend (₹)' },
-    { key: 'annualMilestoneLabel', label: 'Annual milestone reward', isText: true },
+    { key: 'onlineRate', label: 'Online Rate (%)' },
+    { key: 'offlineRate', label: 'Offline Rate (%)' },
+    { key: 'onlineCycleCap', label: 'Max Online Cashback per Cycle (₹)' },
+    { key: 'offlineCycleCap', label: 'Max Offline Cashback per Cycle (₹)' },
+    { key: 'minTransaction', label: 'Minimum Transaction to Earn (₹)' },
+    { key: 'annualMilestoneTarget', label: 'Annual Fee-Waiver Spend (₹)' },
+    { key: 'annualMilestoneLabel', label: 'Annual Milestone Reward', isText: true },
   ],
   hsbc_tiered_cashback_aggregate: [
-    { key: 'bonusRate', label: 'Bonus category rate (%)' },
-    { key: 'bonusMonthlyCap', label: 'Max bonus cashback per statement (₹)' },
-    { key: 'baseRate', label: 'Base rate (%)' },
-    { key: 'annualMilestoneTarget', label: 'Annual fee-waiver spend (₹)' },
-    { key: 'annualMilestoneLabel', label: 'Annual milestone reward', isText: true },
+    { key: 'bonusRate', label: 'Bonus Category Rate (%)' },
+    { key: 'bonusMonthlyCap', label: 'Max Bonus Cashback per Statement (₹)' },
+    { key: 'baseRate', label: 'Base Rate (%)' },
+    { key: 'annualMilestoneTarget', label: 'Annual Fee-Waiver Spend (₹)' },
+    { key: 'annualMilestoneLabel', label: 'Annual Milestone Reward', isText: true },
   ],
   axis_supermoney_dual_pool: [
-    { key: 'baseRate', label: 'Base rate (%)' },
-    { key: 'bonusRate', label: 'Super.money rate (%)' },
-    { key: 'minTransaction', label: 'Minimum transaction to earn (₹)' },
-    { key: 'bonusFloor', label: 'Minimum bonus cashback, even if capped (₹)' },
+    { key: 'baseRate', label: 'Base Rate (%)' },
+    { key: 'bonusRate', label: 'Super.money Rate (%)' },
+    { key: 'minTransaction', label: 'Minimum Transaction to Earn (₹)' },
+    { key: 'bonusFloor', label: 'Minimum Bonus Cashback, Even If Capped (₹)' },
   ],
   annual_milestone_only: [
-    { key: 'annualMilestoneTarget', label: 'Annual milestone spend (₹)' },
-    { key: 'annualMilestoneLabel', label: 'Annual milestone reward', isText: true },
+    { key: 'annualMilestoneTarget', label: 'Annual Milestone Spend (₹)' },
+    { key: 'annualMilestoneLabel', label: 'Annual Milestone Reward', isText: true },
   ],
   hsbc_premier_flat_capped: [
-    { key: 'baseRate', label: 'Base rate (%)' },
-    { key: 'categoryMonthlyCap', label: 'Max capped-category spend per month (₹)' },
-    { key: 'travelBonusMonthlyCap', label: 'Max Travel with Points bonus per month (pts)' },
+    { key: 'baseRate', label: 'Base Rate (%)' },
+    { key: 'categoryMonthlyCap', label: 'Max Capped-Category Spend per Month (₹)' },
+    { key: 'travelBonusMonthlyCap', label: 'Max Travel with Points Bonus per Month (pts)' },
   ],
 };
 
@@ -153,20 +153,20 @@ function coerceStrategyParams(strategyKey, rawParams) {
 
 const RULE_SPLIT_TYPE_OPTIONS = [
   { value: 'shared', label: 'Split' },
-  { value: 'owed', label: 'Owed in full' },
+  { value: 'owed', label: 'Owed in Full' },
   { value: 'personal', label: 'Personal' },
-  { value: 'custom', label: 'Custom amounts' },
+  { value: 'custom', label: 'Custom Amounts' },
 ];
 const RULE_FREQUENCY_OPTIONS = [
-  { value: 'monthly', label: 'Every month' },
-  { value: 'quarterly', label: 'Every quarter' },
-  { value: 'yearly', label: 'Every year' },
+  { value: 'monthly', label: 'Every Month' },
+  { value: 'quarterly', label: 'Every Quarter' },
+  { value: 'yearly', label: 'Every Year' },
 ];
 const RULE_FREQUENCY_LABELS = { monthly: 'month', quarterly: 'quarter', yearly: 'year' };
 const CAP_PERIOD_OPTIONS = [
-  { value: '', label: 'No cap' },
-  { value: 'day', label: 'Per day' },
-  { value: 'month', label: 'Per month' },
+  { value: '', label: 'No Cap' },
+  { value: 'day', label: 'Per Day' },
+  { value: 'month', label: 'Per Month' },
 ];
 
 const SHARED_OWNER_LABEL = 'Shared / anyone';
@@ -190,11 +190,11 @@ const TABS = [
 // instead. Purely navigational: each group just names which of the TABS
 // above it contains, none of those tabs' own content/logic changes.
 const TAB_GROUPS = [
-  { key: 'ledger', label: 'Ledger', icon: '📒', description: 'Categories, budgets, recurring bills, reminders', tabs: ['categories', 'budgets', 'recurring', 'reminders'] },
-  { key: 'payments', label: 'Payments & Cards', icon: '💳', description: 'Currencies, payment methods, credit cards', tabs: ['currencies', 'paymentMethods'] },
-  { key: 'people', label: 'People', icon: '👥', description: 'Household members', tabs: ['members'] },
-  { key: 'data', label: 'Data & Backup', icon: '☁️', description: 'Sync status, export', tabs: ['database', 'export'] },
-  { key: 'general', label: 'General', icon: '⚙️', description: 'Appearance, security PIN', tabs: ['appearance', 'security'] },
+  { key: 'ledger', label: 'Ledger', icon: '📒', description: 'Categories, Budgets, Recurring Bills, Reminders', tabs: ['categories', 'budgets', 'recurring', 'reminders'] },
+  { key: 'payments', label: 'Payments & Cards', icon: '💳', description: 'Currencies, Payment Methods, Credit Cards', tabs: ['currencies', 'paymentMethods'] },
+  { key: 'people', label: 'People', icon: '👥', description: 'Household Members', tabs: ['members'] },
+  { key: 'data', label: 'Data & Backup', icon: '☁️', description: 'Sync Status & Export', tabs: ['database', 'export'] },
+  { key: 'general', label: 'General', icon: '⚙️', description: 'Appearance & Security PIN', tabs: ['appearance', 'security'] },
 ];
 const HOME_TAB = '__home__';
 const TAB_TO_GROUP = Object.fromEntries(TAB_GROUPS.flatMap((g) => g.tabs.map((t) => [t, g])));
@@ -302,7 +302,7 @@ export default function SettingsModal({ visible, onClose }) {
   // (Platform.OS === 'web' checks in firebase.js).
   function downloadTextFile(filename, content, mimeType) {
     if (Platform.OS !== 'web') {
-      notify('Export from the website', 'Exporting isn’t available in the iPhone app. Open Splitkhata in a browser (the same website - your data is already there) and export from Settings there instead.');
+      notify('Export from the Website', 'Exporting isn’t available in the iPhone app. Open Splitkhata in a browser (the same website - your data is already there) and export from Settings there instead.');
       return;
     }
     const blob = new Blob([content], { type: mimeType });
@@ -472,7 +472,7 @@ export default function SettingsModal({ visible, onClose }) {
     const amount = parseAmountInput(newBudgetAmount);
     if (!newBudgetCategory) return;
     if (!(amount > 0)) {
-      notify('Check the amount', 'Enter a budget like 15000 or 15,000.');
+      notify('Check the Amount', 'Enter a budget like 15000 or 15,000.');
       return;
     }
     setSavingBudgetCat(newBudgetCategory);
@@ -548,12 +548,12 @@ export default function SettingsModal({ visible, onClose }) {
     const amount = parseAmountInput(newRuleAmount);
     if (!newRuleCategory) return;
     if (!(amount > 0)) {
-      notify('Check the amount', 'Enter an amount like 25000 or 25,000.');
+      notify('Check the Amount', 'Enter an amount like 25000 or 25,000.');
       return;
     }
     if (newRuleInvalid) {
       notify(
-        'Check the rule',
+        'Check the Rule',
         'Day of month must be 1-31, an "Owed" rule needs someone other than the payer, and the end date (if set) must be YYYY-MM-DD.',
       );
       return;
@@ -616,15 +616,15 @@ export default function SettingsModal({ visible, onClose }) {
     const dayNumber = Number(editingRule.dayOfMonth);
     const endDateInvalid = Boolean(editingRule.endDate) && !isValidISODate(editingRule.endDate);
     if (!editingRule.category || !(amount > 0)) {
-      notify('Check the rule', 'Category and amount are required.');
+      notify('Check the Rule', 'Category and amount are required.');
       return;
     }
     if (!(dayNumber >= 1 && dayNumber <= 31 && Number.isInteger(dayNumber)) || endDateInvalid || editingRuleSharesInvalid) {
-      notify('Check the rule', 'Day of month must be 1-31, and the end date (if set) must be YYYY-MM-DD.');
+      notify('Check the Rule', 'Day of month must be 1-31, and the end date (if set) must be YYYY-MM-DD.');
       return;
     }
     if (editingRule.splitType === 'owed' && (!editingRule.owedBy || editingRule.owedBy === editingRule.payer)) {
-      notify('Check the rule', 'An "Owed" rule needs someone other than the payer.');
+      notify('Check the Rule', 'An "Owed" rule needs someone other than the payer.');
       return;
     }
     setSavingRuleEdit(true);
@@ -775,7 +775,7 @@ export default function SettingsModal({ visible, onClose }) {
   }
   async function handleDeletePaymentMethod(id, name) {
     if (creditCards.some((c) => c.paymentMethodId === id)) {
-      notify('Linked to a card', `"${name}" is linked to a tracked card - delete the card first.`);
+      notify('Linked to a Card', `"${name}" is linked to a tracked card - delete the card first.`);
       return;
     }
     const ok = await confirmAsync({
@@ -832,7 +832,7 @@ export default function SettingsModal({ visible, onClose }) {
     if (!orderPreview || orderPreview.collection !== collection) return null;
     return (
       <View className="rounded-xl border border-ink/15 bg-paper-card p-3 mb-3">
-        <Text className="font-body-semibold text-sm text-ink mb-2">Most used first - {orderPreview.title}</Text>
+        <Text className="font-body-semibold text-sm text-ink mb-2">Most Used First - {orderPreview.title}</Text>
         {orderPreview.rows.map((r, i) => (
           <View key={r.id} className="flex-row items-center justify-between py-0.5">
             <Text className="font-body text-xs text-ink">{i + 1}. {r.name}</Text>
@@ -847,7 +847,7 @@ export default function SettingsModal({ visible, onClose }) {
             <Text className="font-body-semibold text-sm text-ink">Cancel</Text>
           </Pressable>
           <Pressable onPress={applyOrder} disabled={applyingOrder} className={`flex-1 h-11 rounded-xl bg-ledger-green items-center justify-center ${applyingOrder ? 'opacity-40' : ''}`}>
-            <Text className="font-body-semibold text-sm text-white">{applyingOrder ? 'Saving...' : 'Use this order'}</Text>
+            <Text className="font-body-semibold text-sm text-white">{applyingOrder ? 'Saving...' : 'Use This Order'}</Text>
           </Pressable>
         </View>
       </View>
@@ -1173,7 +1173,7 @@ export default function SettingsModal({ visible, onClose }) {
             </Text>
             <View className={`px-2 py-0.5 rounded-full ${hasFirebase ? 'bg-ledger-green/15' : 'bg-mustard/20'}`}>
               <Text className={`font-body-semibold text-[10px] ${hasFirebase ? 'text-ledger-green' : 'text-mustard'}`}>
-                {hasFirebase ? 'Synced' : 'Not synced'}
+                {hasFirebase ? 'Synced' : 'Not Synced'}
               </Text>
             </View>
           </View>
@@ -1192,7 +1192,7 @@ export default function SettingsModal({ visible, onClose }) {
             keyboardShouldPersistTaps="handled"
           >
             <Pressable onPress={() => setActiveTab(HOME_TAB)} className="px-2 py-3 mr-1">
-              <Text className="font-body-semibold text-xs text-muted-text">← All settings</Text>
+              <Text className="font-body-semibold text-xs text-muted-text">← All Settings</Text>
             </Pressable>
             {(TAB_TO_GROUP[activeTab]?.tabs || [activeTab]).map((key) => {
               const t = TABS.find((tab) => tab.key === key);
@@ -1262,7 +1262,7 @@ export default function SettingsModal({ visible, onClose }) {
               {renderOrderPreview('categories')}
               {orderPreview?.collection !== 'categories' && (
                 <Pressable onPress={previewCategoryOrder} className="self-start mb-3">
-                  <Text className="font-body-semibold text-xs text-ledger-green">↕ Sort by most used (one-time)</Text>
+                  <Text className="font-body-semibold text-xs text-ledger-green">↕ Sort by Most Used (one-time)</Text>
                 </Pressable>
               )}
               <Text className={activeListCaption}>Active Database Categories ({categoriesList.length})</Text>
@@ -1340,7 +1340,7 @@ export default function SettingsModal({ visible, onClose }) {
               {unbudgetedCategories.length > 0 && (
                 <>
                   <View className="mb-3">
-                    <PickerField label="Category" value={newBudgetCategory || 'Select a category...'} options={unbudgetedCategories} onChange={setNewBudgetCategory} />
+                    <PickerField label="Category" value={newBudgetCategory || 'Select a Category...'} options={unbudgetedCategories} onChange={setNewBudgetCategory} />
                   </View>
                   <View className="flex-row gap-2 mb-3">
                     <TextInput
@@ -1425,10 +1425,10 @@ export default function SettingsModal({ visible, onClose }) {
               <View className="rounded-xl border border-ink/10 bg-paper/60 p-3.5 mb-3">
                 <View className="flex-row flex-wrap" style={{ gap: 12 }}>
                   <View className="w-full sm:w-[calc(50%-6px)]">
-                    <PickerField label="Category" value={newRuleCategory || 'Select a category...'} options={categories.household} onChange={setNewRuleCategory} />
+                    <PickerField label="Category" value={newRuleCategory || 'Select a Category...'} options={categories.household} onChange={setNewRuleCategory} />
                   </View>
                   <View className="w-full sm:w-[calc(50%-6px)]">
-                    <PickerField label="Who pays" value={newRulePayer} options={dbMembers} onChange={setNewRulePayer} />
+                    <PickerField label="Who Pays" value={newRulePayer} options={dbMembers} onChange={setNewRulePayer} />
                   </View>
                 </View>
                 <View className="flex-row flex-wrap mt-3" style={{ gap: 12 }}>
@@ -1437,12 +1437,12 @@ export default function SettingsModal({ visible, onClose }) {
                     <TextInput value={newRuleAmount} onChangeText={setNewRuleAmount} keyboardType="decimal-pad" placeholder="0.00" className={input} />
                   </View>
                   <View className="w-full sm:w-[calc(50%-6px)]">
-                    <Text className={label}>Day of month</Text>
+                    <Text className={label}>Day of Month</Text>
                     <TextInput value={newRuleDay} onChangeText={setNewRuleDay} keyboardType="number-pad" className={input} />
                   </View>
                 </View>
                 <View className="mt-3">
-                  <PickerField label="Split type" value={newRuleSplitType} options={RULE_SPLIT_TYPE_OPTIONS} onChange={setNewRuleSplitType} />
+                  <PickerField label="Split Type" value={newRuleSplitType} options={RULE_SPLIT_TYPE_OPTIONS} onChange={setNewRuleSplitType} />
                 </View>
                 {newRuleSplitType === 'owed' && (
                   <View className="mt-3">
@@ -1454,7 +1454,7 @@ export default function SettingsModal({ visible, onClose }) {
                 )}
                 <View className="flex-row flex-wrap mt-3" style={{ gap: 12 }}>
                   <View className="w-full sm:w-[calc(50%-6px)]">
-                    <PickerField label="Payment method" value={newRulePaymentMethod || 'None'} options={rulePaymentMethodOptions} onChange={setNewRulePaymentMethod} />
+                    <PickerField label="Payment Method" value={newRulePaymentMethod || 'None'} options={rulePaymentMethodOptions} onChange={setNewRulePaymentMethod} />
                   </View>
                   <View className="w-full sm:w-[calc(50%-6px)]">
                     <PickerField label="Repeats" value={newRuleFrequency} options={RULE_FREQUENCY_OPTIONS} onChange={setNewRuleFrequency} />
@@ -1491,7 +1491,7 @@ export default function SettingsModal({ visible, onClose }) {
                           <PickerField label="Category" value={editingRule.category} options={categories.household} onChange={(v) => setEditingRule((p) => ({ ...p, category: v }))} />
                         </View>
                         <View className="w-full sm:w-[calc(50%-6px)]">
-                          <PickerField label="Who pays" value={editingRule.payer} options={dbMembers} onChange={(v) => setEditingRule((p) => ({ ...p, payer: v }))} />
+                          <PickerField label="Who Pays" value={editingRule.payer} options={dbMembers} onChange={(v) => setEditingRule((p) => ({ ...p, payer: v }))} />
                         </View>
                       </View>
                       <View className="flex-row flex-wrap" style={{ gap: 12 }}>
@@ -1505,7 +1505,7 @@ export default function SettingsModal({ visible, onClose }) {
                           />
                         </View>
                         <View className="w-full sm:w-[calc(50%-6px)]">
-                          <Text className={label}>Day of month</Text>
+                          <Text className={label}>Day of Month</Text>
                           <TextInput
                             value={editingRule.dayOfMonth}
                             onChangeText={(v) => setEditingRule((p) => ({ ...p, dayOfMonth: v }))}
@@ -1514,7 +1514,7 @@ export default function SettingsModal({ visible, onClose }) {
                           />
                         </View>
                       </View>
-                      <PickerField label="Split type" value={editingRule.splitType} options={RULE_SPLIT_TYPE_OPTIONS} onChange={(v) => setEditingRule((p) => ({ ...p, splitType: v }))} />
+                      <PickerField label="Split Type" value={editingRule.splitType} options={RULE_SPLIT_TYPE_OPTIONS} onChange={(v) => setEditingRule((p) => ({ ...p, splitType: v }))} />
                       {editingRule.splitType === 'owed' && (
                         <PickerField
                           label="Owed by"
@@ -1534,7 +1534,7 @@ export default function SettingsModal({ visible, onClose }) {
                       <View className="flex-row flex-wrap" style={{ gap: 12 }}>
                         <View className="w-full sm:w-[calc(50%-6px)]">
                           <PickerField
-                            label="Payment method"
+                            label="Payment Method"
                             value={editingRule.paymentMethod || 'None'}
                             options={rulePaymentMethodOptions}
                             onChange={(v) => setEditingRule((p) => ({ ...p, paymentMethod: v }))}
@@ -1625,7 +1625,7 @@ export default function SettingsModal({ visible, onClose }) {
               </Pressable>
 
               <View className="flex-row items-center gap-2.5">
-                <Text className="font-body text-sm text-ink">Remind when balance exceeds</Text>
+                <Text className="font-body text-sm text-ink">Remind When Balance Exceeds</Text>
                 <TextInput
                   value={String(reminderDraft.amountThreshold)}
                   onChangeText={(v) => setReminderDraft((prev) => ({ ...prev, amountThreshold: v }))}
@@ -1667,12 +1667,12 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'paymentMethods' && (
             <View>
-              <Text className="font-body-semibold text-sm text-ink mb-0.5">Cash, UPI & accounts</Text>
+              <Text className="font-body-semibold text-sm text-ink mb-0.5">Cash, UPI & Accounts</Text>
               <Text className="font-body text-xs text-muted-text mb-3">
                 Everything an expense can be paid with, shared across Household and every trip - so it only needs adding once. Credit cards are added below and appear in the same picker.
               </Text>
               <Pressable onPress={() => setShowAddMethodForm((v) => !v)} className="self-start mb-3">
-                <Text className="font-body-semibold text-xs text-ledger-green">{showAddMethodForm ? 'Hide' : '+ Add another method (UPI, forex account...)'}</Text>
+                <Text className="font-body-semibold text-xs text-ledger-green">{showAddMethodForm ? 'Hide' : '+ Add Another Method (UPI, forex account...)'}</Text>
               </Pressable>
               {showAddMethodForm && (
                 <View>
@@ -1695,7 +1695,7 @@ export default function SettingsModal({ visible, onClose }) {
                 <View className="w-full sm:w-[calc(50%-4px)]">
                   <PickerField
                     label="Type"
-                    value={INSTRUMENT_TYPES.find((t) => t.key === newPaymentMethodType)?.label || 'Select type'}
+                    value={INSTRUMENT_TYPES.find((t) => t.key === newPaymentMethodType)?.label || 'Select Type'}
                     options={INSTRUMENT_TYPES.map((t) => t.label)}
                     onChange={(label) => setNewPaymentMethodType(INSTRUMENT_TYPES.find((t) => t.label === label)?.key || '')}
                   />
@@ -1709,7 +1709,7 @@ export default function SettingsModal({ visible, onClose }) {
               {renderOrderPreview('paymentMethods')}
               {orderPreview?.collection !== 'paymentMethods' && (
                 <Pressable onPress={previewMethodOrder} className="self-start mb-3">
-                  <Text className="font-body-semibold text-xs text-ledger-green">↕ Sort by most used (one-time)</Text>
+                  <Text className="font-body-semibold text-xs text-ledger-green">↕ Sort by Most Used (one-time)</Text>
                 </Pressable>
               )}
               <Text className={activeListCaption}>Active Payment Methods ({paymentMethodsData.rawDocs.length || dbPaymentMethods.length})</Text>
@@ -1736,7 +1736,7 @@ export default function SettingsModal({ visible, onClose }) {
                             ) : (
                               <PickerField
                                 label="Type"
-                                value={INSTRUMENT_TYPES.find((t) => t.key === editingMethod.type)?.label || 'Select type'}
+                                value={INSTRUMENT_TYPES.find((t) => t.key === editingMethod.type)?.label || 'Select Type'}
                                 options={INSTRUMENT_TYPES.map((t) => t.label)}
                                 onChange={(label) => setEditingMethod((p) => ({ ...p, type: INSTRUMENT_TYPES.find((t) => t.label === label)?.key || '' }))}
                               />
@@ -1803,28 +1803,28 @@ export default function SettingsModal({ visible, onClose }) {
                     disabled={linkingCards}
                     className="self-start min-h-10 px-3.5 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
                   >
-                    <Text className="font-body-semibold text-xs text-white">{linkingCards ? 'Linking...' : 'Link now'}</Text>
+                    <Text className="font-body-semibold text-xs text-white">{linkingCards ? 'Linking...' : 'Link Now'}</Text>
                   </Pressable>
                 </View>
               )}
 
               <View className="rounded-xl border border-ink/10 bg-paper-card mb-3 overflow-hidden">
                 <Pressable onPress={() => setShowAddCardForm((v) => !v)} className="flex-row items-center justify-between px-3.5 py-3">
-                  <Text className="font-body-semibold text-sm text-ink">💳 Add a card</Text>
+                  <Text className="font-body-semibold text-sm text-ink">💳 Add a Card</Text>
                   <Text className="font-body-semibold text-xs text-ledger-green">{showAddCardForm ? 'Collapse' : 'Expand'}</Text>
                 </Pressable>
 
                 {showAddCardForm && (
                   <View className="px-3.5 pb-4 pt-1 border-t border-ink/10">
-                    <Text className={sectionLabel}>Card details</Text>
+                    <Text className={sectionLabel}>Card Details</Text>
                     {linkableMethods.length === 0 ? (
                       <Text className="font-body text-xs text-stamp-red mb-3">
                         A card is linked to a payment method - first add one above with type Credit (its name becomes the card's name), then come back here.
                       </Text>
                     ) : (
                       <PickerField
-                        label="Payment method (Credit)"
-                        value={newCardMethodName || 'Select a payment method...'}
+                        label="Payment Method (Credit)"
+                        value={newCardMethodName || 'Select a Payment Method...'}
                         options={linkableMethods.map((d) => d.name)}
                         onChange={setNewCardMethodName}
                       />
@@ -1837,7 +1837,7 @@ export default function SettingsModal({ visible, onClose }) {
                       )}
                       <View className="w-full sm:w-[calc(50%-6px)]">
                         <PickerField
-                          label="Reward strategy"
+                          label="Reward Strategy"
                           value={newCardStrategy}
                           options={CARD_REWARD_STRATEGIES.map((s) => ({ value: s.key, label: s.label }))}
                           onChange={handleNewCardStrategyChange}
@@ -1845,19 +1845,19 @@ export default function SettingsModal({ visible, onClose }) {
                       </View>
                     </View>
 
-                    <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Billing cycle</Text>
+                    <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Billing Cycle</Text>
                     <View className="flex-row flex-wrap mt-2" style={{ gap: 12 }}>
                       <View className="w-full sm:w-[calc(50%-6px)]">
-                        <Text className={label}>Billing cycle day</Text>
+                        <Text className={label}>Billing Cycle Day</Text>
                         <TextInput value={newCardBillingDay} onChangeText={setNewCardBillingDay} keyboardType="number-pad" className={input} />
                       </View>
                       <View className="w-full sm:w-[calc(50%-6px)]">
-                        <Text className={label}>Due date offset (days)</Text>
+                        <Text className={label}>Due Date Offset (days)</Text>
                         <TextInput value={newCardDueOffset} onChangeText={setNewCardDueOffset} keyboardType="number-pad" className={input} />
                       </View>
                     </View>
 
-                    <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Annual fee (optional)</Text>
+                    <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Annual Fee (optional)</Text>
                     <Text className="font-body text-2xs text-muted-text mb-2">
                       Leave blank if this card has no fee, or you don't want to track it - powers the fee-vs-rewards view and
                       renewal reminders.
@@ -1868,12 +1868,12 @@ export default function SettingsModal({ visible, onClose }) {
                         <TextInput value={newCardAnnualFee} onChangeText={setNewCardAnnualFee} keyboardType="decimal-pad" placeholder="e.g. 12500" className={input} />
                       </View>
                       <View className="w-full sm:w-[calc(50%-6px)]">
-                        <Text className={label}>Renewal date</Text>
+                        <Text className={label}>Renewal Date</Text>
                         <DateField value={newCardRenewalDate} onChange={setNewCardRenewalDate} className={input} />
                       </View>
                     </View>
 
-                    <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Milestone tracking</Text>
+                    <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Milestone Tracking</Text>
                     <Text className="font-body text-2xs text-muted-text mb-2">
                       The annual milestone (fee waiver / bonus) runs on the card's own 12-month cycle from the month below, not
                       the calendar year. Adding this card partway through that period? Use the spend/points fields to carry over
@@ -1881,27 +1881,27 @@ export default function SettingsModal({ visible, onClose }) {
                     </Text>
                     <View className="flex-row flex-wrap" style={{ gap: 12 }}>
                       <View className="w-full sm:w-[calc(50%-6px)]">
-                        <PickerField label="Annual milestone starts from" value={newCardAnnualAnchorMonth} options={MONTH_OPTIONS} onChange={setNewCardAnnualAnchorMonth} />
+                        <PickerField label="Annual Milestone Starts from" value={newCardAnnualAnchorMonth} options={MONTH_OPTIONS} onChange={setNewCardAnnualAnchorMonth} />
                       </View>
                       <View className="w-full sm:w-[calc(50%-6px)]">
-                        <Text className={label}>Spend already counted this period (₹)</Text>
+                        <Text className={label}>Spend Already Counted This Period (₹)</Text>
                         <TextInput value={newCardAnnualStartingSpend} onChangeText={setNewCardAnnualStartingSpend} keyboardType="decimal-pad" placeholder="0" className={input} />
                       </View>
                       {CARD_STRATEGY_DEFAULTS[newCardStrategy]?.quarterlyMilestoneTarget ? (
                         <View className="w-full sm:w-[calc(50%-6px)]">
-                          <Text className={label}>Spend already counted this quarter (₹)</Text>
+                          <Text className={label}>Spend Already Counted This Quarter (₹)</Text>
                           <TextInput value={newCardQuarterlyStartingSpend} onChangeText={setNewCardQuarterlyStartingSpend} keyboardType="decimal-pad" placeholder="0" className={input} />
                         </View>
                       ) : null}
                       {CARD_REWARD_STRATEGIES.find((s) => s.key === newCardStrategy)?.unit === 'points' && (
                         <View className="w-full sm:w-[calc(50%-6px)]">
-                          <Text className={label}>Starting reward points balance</Text>
+                          <Text className={label}>Starting Reward Points Balance</Text>
                           <TextInput value={newCardStartingPoints} onChangeText={setNewCardStartingPoints} keyboardType="decimal-pad" placeholder="0" className={input} />
                         </View>
                       )}
                     </View>
 
-                    <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Reward rules</Text>
+                    <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Reward Rules</Text>
                     <View className="flex-row flex-wrap mt-2" style={{ gap: 12 }}>
                       {(CARD_PARAM_FIELDS[newCardStrategy] || []).map((field) => (
                         <View key={field.key} className="w-full sm:w-[calc(50%-6px)]">
@@ -1952,41 +1952,41 @@ export default function SettingsModal({ visible, onClose }) {
                           </Text>
                           <View className="flex-row flex-wrap" style={{ gap: 8 }}>
                             <View className="w-full sm:w-[calc(33.333%-5.333px)]">
-                              <Text className={label}>Billing day</Text>
+                              <Text className={label}>Billing Day</Text>
                               <TextInput value={editCardDrafts.billingCycleDay} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, billingCycleDay: v }))} keyboardType="number-pad" className={input} />
                             </View>
                             <View className="w-full sm:w-[calc(33.333%-5.333px)]">
-                              <Text className={label}>Due offset (days)</Text>
+                              <Text className={label}>Due Offset (days)</Text>
                               <TextInput value={editCardDrafts.dueDateOffsetDays} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, dueDateOffsetDays: v }))} keyboardType="number-pad" className={input} />
                             </View>
                           </View>
                           <View className="flex-row flex-wrap mt-3" style={{ gap: 8 }}>
                             <View className="w-full sm:w-[calc(50%-4px)]">
-                              <Text className={label}>Annual fee (₹, optional)</Text>
+                              <Text className={label}>Annual Fee (₹, optional)</Text>
                               <TextInput value={editCardDrafts.annualFee} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, annualFee: v }))} keyboardType="decimal-pad" placeholder="e.g. 12500" className={input} />
                             </View>
                             <View className="w-full sm:w-[calc(50%-4px)]">
-                              <Text className={label}>Renewal date (optional)</Text>
+                              <Text className={label}>Renewal Date (optional)</Text>
                               <DateField value={editCardDrafts.renewalDate} onChange={(v) => setEditCardDrafts((p) => ({ ...p, renewalDate: v }))} className={input} />
                             </View>
                           </View>
                           <View className="flex-row flex-wrap mt-3" style={{ gap: 8 }}>
                             <View className="w-full sm:w-[calc(33.333%-5.333px)]">
-                              <PickerField label="Annual milestone from" value={editCardDrafts.annualMilestoneAnchorMonth} options={MONTH_OPTIONS} onChange={(v) => setEditCardDrafts((p) => ({ ...p, annualMilestoneAnchorMonth: v }))} />
+                              <PickerField label="Annual Milestone from" value={editCardDrafts.annualMilestoneAnchorMonth} options={MONTH_OPTIONS} onChange={(v) => setEditCardDrafts((p) => ({ ...p, annualMilestoneAnchorMonth: v }))} />
                             </View>
                             <View className="w-full sm:w-[calc(33.333%-5.333px)]">
-                              <Text className={label}>Spend counted so far (₹)</Text>
+                              <Text className={label}>Spend Counted So Far (₹)</Text>
                               <TextInput value={editCardDrafts.annualMilestoneStartingSpend} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, annualMilestoneStartingSpend: v }))} keyboardType="decimal-pad" className={input} />
                             </View>
                             {CARD_STRATEGY_DEFAULTS[card.rewardStrategy]?.quarterlyMilestoneTarget ? (
                               <View className="w-full sm:w-[calc(33.333%-5.333px)]">
-                                <Text className={label}>Quarter spend counted so far (₹)</Text>
+                                <Text className={label}>Quarter Spend Counted So Far (₹)</Text>
                                 <TextInput value={editCardDrafts.quarterlyMilestoneStartingSpend} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, quarterlyMilestoneStartingSpend: v }))} keyboardType="decimal-pad" className={input} />
                               </View>
                             ) : null}
                             {strategyMeta?.unit === 'points' && (
                               <View className="w-full sm:w-[calc(33.333%-5.333px)]">
-                                <Text className={label}>Starting points balance</Text>
+                                <Text className={label}>Starting Points Balance</Text>
                                 <TextInput value={editCardDrafts.startingRewardPoints} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, startingRewardPoints: v }))} keyboardType="decimal-pad" className={input} />
                               </View>
                             )}
@@ -2007,7 +2007,7 @@ export default function SettingsModal({ visible, onClose }) {
                             <View className="flex-row flex-wrap gap-1.5 mt-1">
                               <View className="rounded-md border border-ink/10 bg-paper px-2 py-0.5"><Text className="font-body-medium text-2xs text-muted-text">{card.owner}</Text></View>
                               <View className="rounded-md border border-ink/10 bg-paper px-2 py-0.5"><Text className="font-body-medium text-2xs text-muted-text">{strategyLabel}</Text></View>
-                              <View className="rounded-md border border-ink/10 bg-paper px-2 py-0.5"><Text className="font-body-medium text-2xs text-muted-text">Billing day {card.billingCycleDay}</Text></View>
+                              <View className="rounded-md border border-ink/10 bg-paper px-2 py-0.5"><Text className="font-body-medium text-2xs text-muted-text">Billing Day {card.billingCycleDay}</Text></View>
                               {card.annualFee ? (
                                 <View className="rounded-md border border-ink/10 bg-paper px-2 py-0.5">
                                   <Text className="font-body-medium text-2xs text-muted-text">
@@ -2036,7 +2036,7 @@ export default function SettingsModal({ visible, onClose }) {
 
                       {editingRulesCardId === card.id && (
                         <View className="rounded-lg border border-ink/10 bg-paper px-3 py-3 mt-2.5">
-                          <Text className={sectionLabel}>Rule history (oldest to newest)</Text>
+                          <Text className={sectionLabel}>Rule History (oldest to newest)</Text>
                           {[...(card.strategyParamsHistory || [])].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom)).map((version) => (
                             <View key={version.effectiveFrom} className="rounded-lg border border-ink/10 bg-paper-card px-2.5 py-2 mb-1.5">
                               <Text className="font-body-semibold text-xs text-ink mb-0.5">{version.effectiveFrom}</Text>
@@ -2048,7 +2048,7 @@ export default function SettingsModal({ visible, onClose }) {
                             </View>
                           ))}
 
-                          <Text className={`${sectionLabel} mt-2`}>Add a new rule version</Text>
+                          <Text className={`${sectionLabel} mt-2`}>Add a New Rule Version</Text>
                           <Text className={label}>Effective from</Text>
                           <DateField value={newVersionEffectiveFrom} onChange={setNewVersionEffectiveFrom} className={input} />
                           <View className="flex-row flex-wrap" style={{ gap: 8 }}>
@@ -2096,7 +2096,7 @@ export default function SettingsModal({ visible, onClose }) {
                                       />
                                     </View>
                                     <View className="w-[calc(33.333%-5.333px)]">
-                                      <Text className={label}>Cap amount</Text>
+                                      <Text className={label}>Cap Amount</Text>
                                       <TextInput
                                         value={cat.capAmount == null ? '' : String(cat.capAmount)}
                                         onChangeText={(v) => updateCategoryField(i, 'capAmount', v === '' ? null : Number(v))}
@@ -2106,13 +2106,13 @@ export default function SettingsModal({ visible, onClose }) {
                                       />
                                     </View>
                                     <View className="w-[calc(33.333%-5.333px)]">
-                                      <PickerField label="Cap period" value={cat.capPeriod ?? ''} options={CAP_PERIOD_OPTIONS} onChange={(v) => updateCategoryField(i, 'capPeriod', v === '' ? null : v)} />
+                                      <PickerField label="Cap Period" value={cat.capPeriod ?? ''} options={CAP_PERIOD_OPTIONS} onChange={(v) => updateCategoryField(i, 'capPeriod', v === '' ? null : v)} />
                                     </View>
                                   </View>
                                 </View>
                               ))}
                               <Pressable onPress={addCategoryRow} className="min-h-9 rounded-lg border border-dashed border-ink/20 items-center justify-center">
-                                <Text className="font-body-semibold text-xs text-muted-text">+ Add category</Text>
+                                <Text className="font-body-semibold text-xs text-muted-text">+ Add Category</Text>
                               </Pressable>
                             </View>
                           )}
@@ -2122,7 +2122,7 @@ export default function SettingsModal({ visible, onClose }) {
                           </Text>
                           <View className="flex-row gap-2">
                             <Pressable onPress={() => saveNewRuleVersion(card)} disabled={savingRuleVersion || !newVersionEffectiveFrom} className="px-3 py-2 rounded-lg bg-ledger-green disabled:opacity-50">
-                              <Text className="font-body-semibold text-xs text-white">{savingRuleVersion ? 'Saving...' : 'Save new version'}</Text>
+                              <Text className="font-body-semibold text-xs text-white">{savingRuleVersion ? 'Saving...' : 'Save New Version'}</Text>
                             </Pressable>
                             <Pressable onPress={() => setEditingRulesCardId(null)} className="px-3 py-2 rounded-lg border border-ink/15">
                               <Text className="font-body-semibold text-xs text-muted-text">Cancel</Text>
@@ -2194,7 +2194,7 @@ export default function SettingsModal({ visible, onClose }) {
                   <Text className="font-body-semibold text-sm text-ink">Sync Status</Text>
                   <View className={`px-2.5 py-0.5 rounded-full border ${hasFirebase ? 'bg-ledger-green/15 border-ledger-green/30' : 'bg-mustard/20 border-mustard/40'}`}>
                     <Text className={`font-body-semibold text-xs ${hasFirebase ? 'text-ledger-green' : 'text-mustard'}`}>
-                      {hasFirebase ? 'Synced' : 'Not synced'}
+                      {hasFirebase ? 'Synced' : 'Not Synced'}
                     </Text>
                   </View>
                 </View>

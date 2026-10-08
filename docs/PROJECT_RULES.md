@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.1.9**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.1.10**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---

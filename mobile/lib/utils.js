@@ -1916,7 +1916,7 @@ export const CARD_REWARD_STRATEGIES = [
   { key: 'axis_supermoney_dual_pool', label: 'Axis Supermoney', unit: 'inr' },
   { key: 'hsbc_premier_flat_capped', label: 'HSBC Premier', unit: 'points' },
   // No reward maths at all - just the statement amount each cycle, counted toward the annual milestone.
-  { key: 'annual_milestone_only', label: 'Annual milestone only (enter statement amounts)', unit: 'inr' },
+  { key: 'annual_milestone_only', label: 'Annual Milestone Only (enter statement amounts)', unit: 'inr' },
 ];
 
 export function isStatementOnlyCard(card) {
