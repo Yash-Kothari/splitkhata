@@ -370,9 +370,12 @@ export default function EntryList({
                       <Pressable
                         onPress={() => handleTogglePin(item)}
                         hitSlop={8}
-                        className="min-w-8 min-h-8 items-center justify-center rounded-lg"
+                        accessibilityLabel={item.pinned ? 'Unpin this entry' : 'Pin this entry to the top'}
+                        className={`min-w-8 min-h-8 items-center justify-center rounded-lg ${item.pinned ? 'bg-mustard/25 border border-mustard/50' : ''}`}
                       >
-                        <Text className={`font-body-semibold text-xs ${item.pinned ? 'text-mustard' : 'text-muted-text/50'}`}>📌</Text>
+                        {/* An emoji ignores text colour, so the state is shown with
+                            opacity and a tinted chip instead: dim = not pinned. */}
+                        <Text className="font-body-semibold text-xs" style={{ opacity: item.pinned ? 1 : 0.3 }}>📌</Text>
                       </Pressable>
                     )}
                     <Pressable
