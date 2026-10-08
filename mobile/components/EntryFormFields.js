@@ -227,7 +227,7 @@ export default function EntryFormFields({
             </View>
             {f.hasPoints && (
               <View className={FIELD_HALF}>
-                <Text className={labelClass}>Reward Points (+ spent / − earned)</Text>
+                <Text className={labelClass}>Reward Points</Text>
                 <TextInput
                   value={f.rewardPoints}
                   onChangeText={f.setRewardPoints}
@@ -237,7 +237,9 @@ export default function EntryFormFields({
                 />
                 {f.pointsInvalid ? (
                   <Text className="font-body text-2xs text-stamp-red mt-1">Enter whole or decimal points, e.g. 1500 or -250</Text>
-                ) : null}
+                ) : (
+                  <Text className="font-body text-2xs text-muted-text mt-1">+ spent, − earned</Text>
+                )}
               </View>
             )}
           </View>
