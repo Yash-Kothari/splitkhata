@@ -18,6 +18,7 @@ import {
   computeMemberTotals,
   computeMemberTotalsForPeriod,
   getAvailableYears,
+  getDefaultYear,
   computeSettlements,
   excludeCashSpend,
   computeTripTotalSpend,
@@ -3647,4 +3648,13 @@ test('hexToRgba - builds the rgba() string used for the web box-shadow', () => {
   assert.equal(hexToRgba('#000000', 0.2), 'rgba(0,0,0,0.2)');
   assert.equal(hexToRgba('#24304A', 0.16), 'rgba(36,48,74,0.16)');
   assert.equal(hexToRgba('#fff', 1), 'rgba(255,255,255,1)');
+});
+
+test('getDefaultYear opens on this year even when later years have entries (instalments dated into next year)', () => {
+  const entries = [{ date: '2026-10-01' }, { date: '2027-01-15' }, { date: '2025-03-02' }];
+  const years = getAvailableYears(entries);
+  assert.equal(years[0] > '2026', true, 'the list itself is still newest-first');
+  assert.equal(getDefaultYear(['2027', '2026', '2025'], '2026-10-08'), '2026');
+  assert.equal(getDefaultYear(['2027', '2026'], '2027-01-02'), '2027');
+  assert.equal(getDefaultYear(['2025'], '2026-10-08'), '2025', 'falls back to the newest listed year');
 });

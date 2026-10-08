@@ -666,6 +666,15 @@ export function getAvailableYears(entries = []) {
   return sorted;
 }
 
+// Which year a "yearly" view opens on: this year, not the newest year that has
+// an entry (a recurring bill's later instalments are dated into next year, which
+// made 2027 the default). Falls back to the newest listed year if today's year
+// somehow isn't in the list.
+export function getDefaultYear(availableYears, today = todayISO()) {
+  const current = today.slice(0, 4);
+  return availableYears.includes(current) ? current : availableYears[0];
+}
+
 // A shared ATM withdrawal and the itemized Cash-tagged purchases it funds
 // both carry a real INR `amount`, but they're the same money once, not
 // twice - the withdrawal already creates the shared debt for that cash

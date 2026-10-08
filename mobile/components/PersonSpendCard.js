@@ -3,7 +3,7 @@ import { View, Text } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import Card from './Card';
 import PickerField from './PickerField';
-import { computeMemberTotalsForPeriod, getAvailableYears, formatCurrency, getMonthKey, todayISO, PERSON_COLORS } from '../lib/utils';
+import { computeMemberTotalsForPeriod, getAvailableYears, getDefaultYear, formatCurrency, getMonthKey, todayISO, PERSON_COLORS } from '../lib/utils';
 import { themeColor } from '../lib/theme';
 
 // P1-16: "how much have I actually spent" and "how does this year break down
@@ -26,7 +26,7 @@ export default function PersonSpendCard({ entries, members, deviceMemberName }) 
 
   const availableYears = useMemo(() => getAvailableYears(entries), [entries]);
   const [yearChoice, setYearChoice] = useState(null);
-  const selectedYear = yearChoice && availableYears.includes(yearChoice) ? yearChoice : availableYears[0];
+  const selectedYear = yearChoice && availableYears.includes(yearChoice) ? yearChoice : getDefaultYear(availableYears);
   const yearTotals = useMemo(
     () => computeMemberTotalsForPeriod(entries, members, { year: selectedYear, ledger: 'household' }),
     [entries, members, selectedYear],
