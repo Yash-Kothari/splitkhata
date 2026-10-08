@@ -2115,6 +2115,27 @@ export function getCardDueCycle(card, today = todayISO()) {
 export function computeCardDueReminders(cards, cardTransactions, cardBillingCycles, today = todayISO(), daysAhead = 5) {
   const reminders = [];
   for (const card of cards || []) {
+    // A statement-only card has no cycle to look at: each statement you typed
+    // in is a bill, due its statement date + the due-date offset, until marked paid.
+    if (isStatementOnlyCard(card)) {
+      const offset = Number(card.dueDateOffsetDays);
+      for (const t of cardTransactions || []) {
+        if (t.cardId !== card.id || t.paidAt || !(Number(t.amount) > 0)) continue;
+        const dueDate = addDaysToDateISO(t.date, Number.isFinite(offset) ? offset : 20);
+        const daysUntilDue = daysBetweenISO(today, dueDate);
+        if (daysUntilDue > daysAhead) continue;
+        reminders.push({
+          cardId: card.id,
+          cardName: card.name,
+          txnId: t.id,
+          dueDate,
+          amountDue: Number(t.amount),
+          daysUntilDue,
+          overdue: daysUntilDue < 0,
+        });
+      }
+      continue;
+    }
     const dueCycle = getCardDueCycle(card, today);
     if (!dueCycle) continue;
     const daysUntilDue = daysBetweenISO(today, dueCycle.dueDate);
@@ -2141,54 +2162,88 @@ export function computeCardDueReminders(cards, cardTransactions, cardBillingCycl
   return reminders.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 }
 
-// What each person owes the card companies right now, across all their cards:
+// What each person owes the card companies right now, across all their cards.
+// For a card that tracks every purchase:
 //  - `next`: the estimate for the statement still building up (this cycle's
 //    transactions so far), with the date it closes;
 //  - `billed`: the last statement that has already closed and isn't marked paid
 //    (see CardBillingHistory), with its due date.
+// A statement-only card (you type in each statement's amount) has no statement
+// "building up" - every amount you entered IS a bill already received. So it
+// gets no `next`; each of its statements is unpaid until marked paid
+// (`paidAt` on that card transaction), listed individually with a due date of
+// statement date + the card's due-date offset.
 // Grouped by the card's owner ("Shared" when it has none). Uses the same
 // per-cycle statement figure as the billing history (so a bank that rounds
 // statements to the rupee shows that rounded figure). Pure.
 export function computeCardBillSummary(cards, cardTransactions, cardBillingCycles, today = todayISO()) {
   const people = new Map();
+  const round2 = (n) => Math.round(n * 100) / 100;
   for (const card of cards || []) {
     const cardTxns = (cardTransactions || []).filter((t) => t.cardId === card.id);
-    const ledger = computeCardRewardLedger(card, cardTxns, today);
-    const billingDay = card.billingCycleDay ?? 1;
-    const open = getCardCycleForDate(today, billingDay);
-    const nextAmount = ledger.cycleBills[open.cycleStart]?.statement ?? 0;
+    let entry = null;
 
-    let billed = null;
-    const dueCycle = getCardDueCycle(card, today);
-    if (dueCycle) {
-      const amount = ledger.cycleBills[dueCycle.cycleStart]?.statement ?? 0;
-      const record = (cardBillingCycles || []).find(
-        (c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card.id, dueCycle.cycleStart),
-      );
-      if (amount > 0 && !record?.paidAt) {
-        const daysUntilDue = daysBetweenISO(today, dueCycle.dueDate);
-        billed = { amount, dueDate: dueCycle.dueDate, daysUntilDue, overdue: daysUntilDue < 0 };
+    if (isStatementOnlyCard(card)) {
+      const offset = Number(card.dueDateOffsetDays);
+      const statements = cardTxns
+        .filter((t) => !t.paidAt && Number(t.amount) > 0)
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map((t) => {
+          const dueDate = addDaysToDateISO(t.date, Number.isFinite(offset) ? offset : 20);
+          const daysUntilDue = daysBetweenISO(today, dueDate);
+          return { txnId: t.id, date: t.date, amount: Number(t.amount), dueDate, daysUntilDue, overdue: daysUntilDue < 0 };
+        });
+      if (statements.length === 0) continue;
+      const first = statements[0];
+      entry = {
+        cardId: card.id,
+        name: card.name,
+        statementOnly: true,
+        next: null,
+        statements,
+        billed: {
+          amount: round2(statements.reduce((t, st) => t + st.amount, 0)),
+          dueDate: first.dueDate,
+          daysUntilDue: first.daysUntilDue,
+          overdue: statements.some((st) => st.overdue),
+        },
+      };
+    } else {
+      const ledger = computeCardRewardLedger(card, cardTxns, today);
+      const open = getCardCycleForDate(today, card.billingCycleDay ?? 1);
+      const nextAmount = ledger.cycleBills[open.cycleStart]?.statement ?? 0;
+
+      let billed = null;
+      const dueCycle = getCardDueCycle(card, today);
+      if (dueCycle) {
+        const amount = ledger.cycleBills[dueCycle.cycleStart]?.statement ?? 0;
+        const record = (cardBillingCycles || []).find(
+          (c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card.id, dueCycle.cycleStart),
+        );
+        if (amount > 0 && !record?.paidAt) {
+          const daysUntilDue = daysBetweenISO(today, dueCycle.dueDate);
+          billed = { amount, dueDate: dueCycle.dueDate, daysUntilDue, overdue: daysUntilDue < 0 };
+        }
       }
+      if (!(nextAmount > 0) && !billed) continue;
+      entry = { cardId: card.id, name: card.name, statementOnly: false, next: { amount: nextAmount, closesOn: open.cycleEnd }, statements: null, billed };
     }
-    if (!(nextAmount > 0) && !billed) continue;
 
     const owner = (card.owner || '').trim() || 'Shared';
-    if (!people.has(owner)) people.set(owner, { owner, nextTotal: 0, billedTotal: 0, cards: [] });
+    if (!people.has(owner)) people.set(owner, { owner, nextTotal: 0, billedTotal: 0, hasNext: false, cards: [] });
     const person = people.get(owner);
-    person.nextTotal = Math.round((person.nextTotal + nextAmount) * 100) / 100;
-    person.billedTotal = Math.round((person.billedTotal + (billed?.amount || 0)) * 100) / 100;
-    person.cards.push({
-      cardId: card.id,
-      name: card.name,
-      next: { amount: nextAmount, closesOn: open.cycleEnd },
-      billed,
-    });
+    if (entry.next) {
+      person.nextTotal = round2(person.nextTotal + entry.next.amount);
+      person.hasNext = true;
+    }
+    person.billedTotal = round2(person.billedTotal + (entry.billed?.amount || 0));
+    person.cards.push(entry);
   }
   const list = [...people.values()].sort((a, b) => a.owner.localeCompare(b.owner));
   return {
     people: list,
-    nextTotal: Math.round(list.reduce((t, p) => t + p.nextTotal, 0) * 100) / 100,
-    billedTotal: Math.round(list.reduce((t, p) => t + p.billedTotal, 0) * 100) / 100,
+    nextTotal: round2(list.reduce((t, p) => t + p.nextTotal, 0)),
+    billedTotal: round2(list.reduce((t, p) => t + p.billedTotal, 0)),
   };
 }
 

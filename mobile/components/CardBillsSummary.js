@@ -21,7 +21,8 @@ const labelClass = 'font-body-semibold text-2xs text-muted-text uppercase tracki
 // person for the card-by-card split. Styled like the other Cards-tab cards
 // (p-4 card, display-font title, small-caps labels, mono numbers, inset
 // tiles). `summary` comes from computeCardBillSummary.
-export default function CardBillsSummary({ summary }) {
+export default function CardBillsSummary({ summary, onMarkPaid }) {
+  const [busy, setBusy] = useState(null);
   const [open, setOpen] = useState({});
   if (!summary || summary.people.length === 0) return null;
 
@@ -29,7 +30,7 @@ export default function CardBillsSummary({ summary }) {
     <Card className="p-4 mb-4">
       <Text className="font-display text-lg text-ink">Estimated Card Bills</Text>
       <Text className="font-body text-2xs text-muted-text mb-3">
-        Next statement is this cycle so far. Billed is the last statement not yet marked paid.
+        Next statement is this cycle so far. Billed is a statement already received and not yet marked paid.
       </Text>
 
       {summary.people.map((p) => {
@@ -39,15 +40,19 @@ export default function CardBillsSummary({ summary }) {
             <Pressable onPress={() => setOpen((o) => ({ ...o, [p.owner]: !o[p.owner] }))}>
               <View className="flex-row items-center justify-between mb-1.5">
                 <Text className="font-body-semibold text-sm text-ink">{p.owner}</Text>
-                <View className="px-2.5 py-1 rounded-md bg-paper border border-ink/10">
-                  <Text className="font-body-semibold text-xs text-muted-text">{isOpen ? 'Hide cards' : 'Show cards'}</Text>
-                </View>
+                {p.hasNext ? (
+                  <View className="px-2.5 py-1 rounded-md bg-paper border border-ink/10">
+                    <Text className="font-body-semibold text-xs text-muted-text">{isOpen ? 'Hide cards' : 'Show cards'}</Text>
+                  </View>
+                ) : null}
               </View>
               <View className="flex-row gap-3">
-                <View className="flex-1">
-                  <Text className={labelClass}>Next statement</Text>
-                  <Text className="font-mono-bold text-ink text-lg">{formatCurrency(p.nextTotal)}</Text>
-                </View>
+                {p.hasNext && (
+                  <View className="flex-1">
+                    <Text className={labelClass}>Next statement</Text>
+                    <Text className="font-mono-bold text-ink text-lg">{formatCurrency(p.nextTotal)}</Text>
+                  </View>
+                )}
                 {p.billedTotal > 0 && (
                   <View className="flex-1">
                     <Text className={labelClass}>Billed, unpaid</Text>
@@ -57,9 +62,46 @@ export default function CardBillsSummary({ summary }) {
               </View>
             </Pressable>
 
+            {p.cards.some((c) => c.statementOnly) && (
+              <View className="mt-2.5 pt-2.5 border-t border-ink/10">
+                {p.cards
+                  .filter((c) => c.statementOnly)
+                  .flatMap((c) => c.statements.map((st) => ({ ...st, cardName: c.name })))
+                  .map((st) => (
+                    <View key={st.txnId} className="flex-row items-center justify-between mb-2" style={{ gap: 8 }}>
+                      <View className="flex-1">
+                        <Text className="font-body-semibold text-xs text-ink" numberOfLines={1}>
+                          {st.cardName}
+                        </Text>
+                        <Text className={`font-body text-2xs ${st.overdue ? 'text-stamp-red' : 'text-muted-text'}`}>
+                          Statement {shortDate(st.date)}, {dueText(st)}
+                        </Text>
+                      </View>
+                      <Text className={`font-mono-bold text-xs ${st.overdue ? 'text-stamp-red' : 'text-ink'}`}>{formatCurrency(st.amount)}</Text>
+                      {onMarkPaid ? (
+                        <Pressable
+                          onPress={async () => {
+                            setBusy(st.txnId);
+                            try {
+                              await onMarkPaid(st.txnId);
+                            } finally {
+                              setBusy(null);
+                            }
+                          }}
+                          disabled={busy === st.txnId}
+                          className="px-2.5 py-1 rounded-md bg-paper border border-ink/10"
+                        >
+                          <Text className="font-body-semibold text-xs text-muted-text">{busy === st.txnId ? '...' : 'Mark paid'}</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  ))}
+              </View>
+            )}
+
             {isOpen && (
               <View className="mt-2.5 pt-2.5 border-t border-ink/10">
-                {p.cards.map((c) => (
+                {p.cards.filter((c) => !c.statementOnly).map((c) => (
                   <View key={c.cardId} className="mb-2">
                     <View className="flex-row items-center justify-between">
                       <Text className="font-body-semibold text-xs text-ink flex-1 pr-2" numberOfLines={1}>

@@ -3598,3 +3598,46 @@ test('computeCardBillSummary - estimated next statement and unpaid last statemen
   assert.equal(kruti.cards[0].billed.dueDate, '2026-10-21');
   assert.equal(kruti.cards[0].billed.overdue, false);
 });
+
+test('computeCardBillSummary - a statement-only card has no "next statement"; each statement is unpaid until marked paid', () => {
+  const stmtCard = { id: 's', name: 'SBI Cashback', owner: 'Kruti', billingCycleDay: 18, dueDateOffsetDays: 20, rewardStrategy: 'annual_milestone_only', strategyParamsHistory: [] };
+  const txns = [
+    { id: 't1', cardId: 's', date: '2026-08-18', amount: 15000, paidAt: '2026-09-02T00:00:00Z' }, // paid
+    { id: 't2', cardId: 's', date: '2026-09-18', amount: 20524 },                                     // unpaid, falls in the open cycle
+    { id: 't3', cardId: 's', date: '2026-09-23', amount: 1000 },
+  ];
+  const r = computeCardBillSummary([stmtCard], txns, [], '2026-10-08');
+  const kruti = r.people[0];
+  assert.equal(kruti.owner, 'Kruti');
+  assert.equal(kruti.hasNext, false);
+  assert.equal(kruti.nextTotal, 0);
+  assert.equal(kruti.billedTotal, 21524, 'the two unpaid statements; the paid one is gone');
+  const c = kruti.cards[0];
+  assert.equal(c.next, null);
+  assert.deepEqual(c.statements.map((s) => s.txnId), ['t2', 't3']);
+  assert.equal(c.statements[0].dueDate, '2026-10-08', 'statement date + 20 days');
+  assert.equal(c.statements[0].daysUntilDue, 0);
+  assert.equal(c.statements[0].overdue, false);
+  assert.equal(c.billed.overdue, false);
+  // once everything is marked paid the card drops out entirely
+  const paidAll = txns.map((t) => ({ ...t, paidAt: '2026-10-01T00:00:00Z' }));
+  assert.deepEqual(computeCardBillSummary([stmtCard], paidAll, [], '2026-10-08').people, []);
+  // later than the due date it reads overdue
+  assert.equal(computeCardBillSummary([stmtCard], txns, [], '2026-10-20').people[0].cards[0].statements[0].overdue, true);
+});
+
+test('computeCardDueReminders - a statement-only card reminds per unpaid statement, not per cycle', () => {
+  const stmtCard = { id: 's', name: 'HDFC Diners', owner: 'Kruti', billingCycleDay: 21, dueDateOffsetDays: 20, rewardStrategy: 'annual_milestone_only', strategyParamsHistory: [] };
+  const txns = [
+    { id: 't1', cardId: 's', date: '2026-09-23', amount: 32959 },                                  // due 13 Oct
+    { id: 't2', cardId: 's', date: '2026-08-23', amount: 5000, paidAt: '2026-09-10T00:00:00Z' },   // paid
+    { id: 't3', cardId: 's', date: '2026-10-01', amount: 700 },                                    // due 21 Oct, outside 5 days
+  ];
+  const r = computeCardDueReminders([stmtCard], txns, [], '2026-10-10');
+  assert.equal(r.length, 1);
+  assert.equal(r[0].txnId, 't1');
+  assert.equal(r[0].amountDue, 32959);
+  assert.equal(r[0].daysUntilDue, 3);
+  const late = computeCardDueReminders([stmtCard], txns, [], '2026-10-15');
+  assert.equal(late[0].overdue, true);
+});

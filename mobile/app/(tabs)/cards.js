@@ -4,6 +4,7 @@ import {
   subscribeToCreditCards,
   subscribeToCardTransactions,
   subscribeToCardBillingCycles,
+  updateCardTransaction,
   deleteCardTransaction,
 } from '../../lib/firebase';
 import {
@@ -188,7 +189,7 @@ export default function Cards() {
               <Text className="font-display text-sm text-ink mb-1.5">⏰ Bill Due</Text>
               <View style={{ gap: 4 }}>
                 {dueReminders.map((r) => (
-                  <Text key={r.cardId} className="font-body text-sm text-ink">
+                  <Text key={`${r.cardId}-${r.dueDate}`} className="font-body text-sm text-ink">
                     <Text className="font-body-semibold">{r.cardName}</Text>: {formatCurrency(r.amountDue)} due{' '}
                     {r.overdue ? (
                       <Text className="font-body-semibold text-stamp-red">{Math.abs(r.daysUntilDue)} day(s) ago</Text>
@@ -202,7 +203,12 @@ export default function Cards() {
               </View>
             </View>
           )}
-          <CardBillsSummary summary={billSummary} />
+          <CardBillsSummary
+            summary={billSummary}
+            onMarkPaid={(txnId) =>
+              updateCardTransaction(txnId, { paidAt: new Date().toISOString() }).catch((err) => reportError(err, 'Could not mark the statement paid'))
+            }
+          />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" className="mb-4" contentContainerStyle={{ gap: 6 }}>
             {creditCards.map((card) => (
               <Pressable

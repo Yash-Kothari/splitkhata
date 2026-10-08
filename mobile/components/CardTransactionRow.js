@@ -83,6 +83,16 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
 
   const hasTravelFields = draft.category === 'smartbuy_hotel' || draft.category === 'travel_bonus';
 
+  // A statement-only card's bill is unpaid until marked paid (see
+  // computeCardBillSummary); tapping again undoes it.
+  async function togglePaid() {
+    try {
+      await updateCardTransaction(txn.id, { paidAt: txn.paidAt ? null : new Date().toISOString() });
+    } catch (err) {
+      reportError(err, 'Could not update the paid status');
+    }
+  }
+
   async function handleSave() {
     const amountValue = parseAmountInput(draftAmount, { allowNegative: true });
     if (!amountValue) {
@@ -230,6 +240,13 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
           {txn.description || txn.note || 'No description'}
           {isGroceryPosting ? ` · posts ${formatShortDate(nextMonthFirst(txn.date))}` : ''}
         </Text>
+        {isStatementOnlyCard(card) && txn.amount > 0 && (
+          <Pressable onPress={togglePaid} hitSlop={6} className="mt-1 self-start">
+            <Text className={`font-body-semibold text-xs ${txn.paidAt ? 'text-ledger-green' : 'text-muted-text underline'}`}>
+              {txn.paidAt ? `✓ Paid ${formatShortDate(txn.paidAt.slice(0, 10))} (tap to undo)` : 'Mark as paid'}
+            </Text>
+          </Pressable>
+        )}
       </View>
       <View className="flex-row items-center gap-1 shrink-0">
         <Pressable onPress={() => setEditing(true)} hitSlop={8} className="min-w-8 min-h-8 items-center justify-center">
