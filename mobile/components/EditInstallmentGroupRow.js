@@ -84,7 +84,7 @@ export default function EditInstallmentGroupRow({ groupId, sampleEntry, categori
   }
 
   return (
-    <View style={cardShadow} className="mx-4 mb-4 p-4 rounded-2xl bg-paper-card border border-ledger-green/40">
+    <View style={cardShadow} className="mx-4 my-3 p-4 rounded-2xl bg-paper-card border border-ledger-green/40">
       <Text className="font-body-semibold text-sm text-ink mb-1">Editing all {count} installments</Text>
       <Text className="font-body text-xs text-muted-text mb-3">
         Changes here apply to every installment in this set. Amount, date, note and a custom split's own share amounts

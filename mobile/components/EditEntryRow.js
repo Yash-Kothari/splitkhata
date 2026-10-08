@@ -206,7 +206,7 @@ export default function EditEntryRow({
   // was paid and a note - no category, split or card.
   if (isSettlement) {
     return (
-      <View style={cardShadow} className="mx-4 mb-4 p-4 rounded-2xl bg-paper-card border border-ledger-green/40">
+      <View style={cardShadow} className="mx-4 my-3 p-4 rounded-2xl bg-paper-card border border-ledger-green/40">
         <Text className="font-body text-sm text-ink mb-3">
           <Text className="font-body-semibold text-stamp-red">{entry.payer}</Text>
           <Text> paid </Text>
@@ -262,7 +262,7 @@ export default function EditEntryRow({
   }
 
   return (
-    <View style={cardShadow} className="mx-4 mb-4 p-4 rounded-2xl bg-paper-card border border-ledger-green/40">
+    <View style={cardShadow} className="mx-4 my-3 p-4 rounded-2xl bg-paper-card border border-ledger-green/40">
       <EntryFormFields f={f} categories={categories} members={members} currentCurrency={currentCurrency} />
       {buttons}
     </View>
