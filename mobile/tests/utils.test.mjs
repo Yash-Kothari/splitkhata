@@ -113,6 +113,7 @@ import {
   toCsv,
   buildFullBackupJson,
   pickDefaultTrip,
+  computeCardBillSummary,
   getLastEntryDefaults,
   suggestFromNote,
   sortTripsRecentFirst,
@@ -3568,4 +3569,32 @@ test('suggestFromNote - the pair earlier entries with that note used, most commo
   assert.equal(suggestFromNote(entries, 'ub'), null, 'too short');
   assert.equal(suggestFromNote(entries, 'Cinema'), null, 'no history');
   assert.equal(suggestFromNote([{ note: 'Uber', category: 'Settlement', payer: 'Yash', splitType: 'settlement' }], 'Uber'), null, 'settlements are never suggested');
+});
+
+test('computeCardBillSummary - estimated next statement and unpaid last statement, per card owner', () => {
+  const card = (id, name, owner, billingCycleDay) => ({ id, name, owner, billingCycleDay, dueDateOffsetDays: 20, rewardStrategy: 'sbi_two_channel_cashback', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }] });
+  const cards = [card('a', 'Axis', 'Yash', 1), card('b', 'HDFC', 'Yash', 1), card('c', 'SBI', 'Kruti', 1), card('d', 'Empty', 'Kruti', 1)];
+  const t = (cardId, date, amount) => ({ cardId, date, amount, channel: 'online' });
+  const txns = [
+    t('a', '2026-10-03', 1000), t('a', '2026-10-05', 500), // open cycle (1 Oct - 1 Nov)
+    t('a', '2026-09-10', 2000),                              // closed 1 Oct, unpaid
+    t('b', '2026-10-02', 300),
+    t('b', '2026-09-12', 700),                               // closed 1 Oct, marked paid below
+    t('c', '2026-09-20', 400),                               // closed, unpaid, nothing in the open cycle
+  ];
+  const paid = [{ cardId: 'b', cycleStart: '2026-09-01', paidAt: '2026-10-05' }];
+  const r = computeCardBillSummary(cards, txns, paid, '2026-10-07');
+  assert.deepEqual(r.people.map((p) => p.owner), ['Kruti', 'Yash']);
+  const yash = r.people.find((p) => p.owner === 'Yash');
+  assert.equal(yash.nextTotal, 1800, 'Axis 1500 + HDFC 300 so far this cycle');
+  assert.equal(yash.billedTotal, 2000, 'only Axis last statement is unpaid; HDFC was marked paid');
+  assert.equal(yash.cards.find((c) => c.name === 'Axis').next.closesOn, '2026-11-01');
+  const kruti = r.people.find((p) => p.owner === 'Kruti');
+  assert.equal(kruti.nextTotal, 0);
+  assert.equal(kruti.billedTotal, 400);
+  assert.equal(kruti.cards.length, 1, 'a card with nothing to show is left out');
+  assert.equal(r.nextTotal, 1800);
+  assert.equal(r.billedTotal, 2400);
+  assert.equal(kruti.cards[0].billed.dueDate, '2026-10-21');
+  assert.equal(kruti.cards[0].billed.overdue, false);
 });

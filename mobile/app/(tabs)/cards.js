@@ -22,6 +22,7 @@ import {
   computeCardCapStatus,
   getQuarterBounds,
   computeCardDueReminders,
+  computeCardBillSummary,
   computeCardAnnualValue,
 } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
@@ -31,6 +32,7 @@ import Card from '../../components/Card';
 import CardTransactionForm from '../../components/CardTransactionForm';
 import CardTransactionRow from '../../components/CardTransactionRow';
 import CardBillingHistory from '../../components/CardBillingHistory';
+import CardBillsSummary from '../../components/CardBillsSummary';
 import AppHeader from '../../components/AppHeader';
 import UndoToast from '../../components/UndoToast';
 
@@ -141,6 +143,10 @@ export default function Cards() {
     () => computeCardDueReminders(creditCards, cardTransactions, cardBillingCycles, today),
     [creditCards, cardTransactions, cardBillingCycles, today],
   );
+  const billSummary = useMemo(
+    () => computeCardBillSummary(creditCards, cardTransactions, cardBillingCycles, today),
+    [creditCards, cardTransactions, cardBillingCycles, today],
+  );
   const annualValue = selectedCard ? computeCardAnnualValue(selectedCard, cardTxns, today) : null;
 
   const filteredTxns = useMemo(() => {
@@ -196,6 +202,7 @@ export default function Cards() {
               </View>
             </View>
           )}
+          <CardBillsSummary summary={billSummary} />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" className="mb-4" contentContainerStyle={{ gap: 6 }}>
             {creditCards.map((card) => (
               <Pressable

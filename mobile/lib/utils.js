@@ -2141,6 +2141,57 @@ export function computeCardDueReminders(cards, cardTransactions, cardBillingCycl
   return reminders.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 }
 
+// What each person owes the card companies right now, across all their cards:
+//  - `next`: the estimate for the statement still building up (this cycle's
+//    transactions so far), with the date it closes;
+//  - `billed`: the last statement that has already closed and isn't marked paid
+//    (see CardBillingHistory), with its due date.
+// Grouped by the card's owner ("Shared" when it has none). Uses the same
+// per-cycle statement figure as the billing history (so a bank that rounds
+// statements to the rupee shows that rounded figure). Pure.
+export function computeCardBillSummary(cards, cardTransactions, cardBillingCycles, today = todayISO()) {
+  const people = new Map();
+  for (const card of cards || []) {
+    const cardTxns = (cardTransactions || []).filter((t) => t.cardId === card.id);
+    const ledger = computeCardRewardLedger(card, cardTxns, today);
+    const billingDay = card.billingCycleDay ?? 1;
+    const open = getCardCycleForDate(today, billingDay);
+    const nextAmount = ledger.cycleBills[open.cycleStart]?.statement ?? 0;
+
+    let billed = null;
+    const dueCycle = getCardDueCycle(card, today);
+    if (dueCycle) {
+      const amount = ledger.cycleBills[dueCycle.cycleStart]?.statement ?? 0;
+      const record = (cardBillingCycles || []).find(
+        (c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card.id, dueCycle.cycleStart),
+      );
+      if (amount > 0 && !record?.paidAt) {
+        const daysUntilDue = daysBetweenISO(today, dueCycle.dueDate);
+        billed = { amount, dueDate: dueCycle.dueDate, daysUntilDue, overdue: daysUntilDue < 0 };
+      }
+    }
+    if (!(nextAmount > 0) && !billed) continue;
+
+    const owner = (card.owner || '').trim() || 'Shared';
+    if (!people.has(owner)) people.set(owner, { owner, nextTotal: 0, billedTotal: 0, cards: [] });
+    const person = people.get(owner);
+    person.nextTotal = Math.round((person.nextTotal + nextAmount) * 100) / 100;
+    person.billedTotal = Math.round((person.billedTotal + (billed?.amount || 0)) * 100) / 100;
+    person.cards.push({
+      cardId: card.id,
+      name: card.name,
+      next: { amount: nextAmount, closesOn: open.cycleEnd },
+      billed,
+    });
+  }
+  const list = [...people.values()].sort((a, b) => a.owner.localeCompare(b.owner));
+  return {
+    people: list,
+    nextTotal: Math.round(list.reduce((t, p) => t + p.nextTotal, 0) * 100) / 100,
+    billedTotal: Math.round(list.reduce((t, p) => t + p.billedTotal, 0) * 100) / 100,
+  };
+}
+
 // "Is this card worth keeping" - reward value earned within the card's own
 // fee year (anchored to renewalDate's month, same shape as
 // getAnnualMilestoneWindow) against the annual fee charged for that year.
