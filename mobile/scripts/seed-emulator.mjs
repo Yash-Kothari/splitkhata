@@ -136,7 +136,13 @@ async function main() {
     createdAt: now,
   });
 
-  console.log('Seeded members, categories, currencies, 2 household entries, 1 trip + travel entry, 1 card + transaction.');
+  // Older spend so earlier statements have already credited their cashback
+  // (feeds the Cards tab's "Cashback Credited" list).
+  for (const [i, [days, amount, channel]] of [[40, 5400, 'offline'], [75, 8100, 'online'], [110, 2600, 'online']].entries()) {
+    await upsertDoc(`cardTransactions/seed_card_txn_old_${i}`, { cardId: 'seed_card_1', amount, channel, date: daysAgoISO(days), createdAt: now });
+  }
+
+  console.log('Seeded members, categories, currencies, 2 household entries, 1 trip + travel entry, 1 card + 4 transactions.');
 }
 
 main().catch((err) => {

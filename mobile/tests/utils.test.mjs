@@ -114,6 +114,8 @@ import {
   toCsv,
   buildFullBackupJson,
   pickDefaultTrip,
+  applyConfirmedRewards,
+  getCardYearRewards,
   computeCardBillSummary,
   getLastEntryDefaults,
   suggestFromNote,
@@ -3657,4 +3659,81 @@ test('getDefaultYear opens on this year even when later years have entries (inst
   assert.equal(getDefaultYear(['2027', '2026', '2025'], '2026-10-08'), '2026');
   assert.equal(getDefaultYear(['2027', '2026'], '2027-01-02'), '2027');
   assert.equal(getDefaultYear(['2025'], '2026-10-08'), '2025', 'falls back to the newest listed year');
+});
+
+test('ledger lumps say what they are, so a credit can be labelled and edited', () => {
+  const card = { id: 'c', name: 'SBI', billingCycleDay: 1, rewardStrategy: 'sbi_two_channel_cashback', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }] };
+  const ledger = computeCardRewardLedger(card, [{ id: 't1', cardId: 'c', date: '2026-08-10', amount: 10000, channel: 'online' }], '2026-10-08');
+  const lump = ledger.lumps.find((l) => l.kind === 'statement');
+  assert.equal(lump.cycleStart, '2026-08-01');
+  assert.equal(lump.date, '2026-09-01', 'SBI credits on the statement date');
+  assert.equal(lump.separate, 0);
+});
+
+test('applyConfirmedRewards - a confirmed amount replaces the calculated one and drives the totals', () => {
+  const card = { id: 'c', name: 'SBI', billingCycleDay: 1, rewardStrategy: 'sbi_two_channel_cashback', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }] };
+  const txns = [{ id: 't1', cardId: 'c', date: '2026-08-10', amount: 10000, channel: 'online' }, { id: 't2', cardId: 'c', date: '2026-10-03', amount: 4000, channel: 'online' }];
+  const ledger = computeCardRewardLedger(card, txns, '2026-10-08');
+  const none = applyConfirmedRewards(card, ledger, [], '2026-10-08');
+  assert.equal(none.credited, ledger.credited, 'with nothing confirmed it equals the calculated total');
+  assert.deepEqual(none.pending, ledger.pending);
+  const credited = none.credits.find((c) => c.credited);
+  assert.equal(credited.confirmed, false);
+  // the bank paid 17 more than calculated
+  const rec = [{ cardId: 'c', cycleStart: '2026-08-01', actualRewardCredited: credited.expected + 17, pointsConfirmedAt: '2026-09-02T00:00:00Z' }];
+  const r = applyConfirmedRewards(card, ledger, rec, '2026-10-08');
+  const edited = r.credits.find((c) => c.cycleStart === '2026-08-01');
+  assert.equal(edited.amount, credited.expected + 17);
+  assert.equal(edited.edited, true);
+  assert.equal(r.credited, ledger.credited + 17);
+  assert.equal(r.earned, ledger.total + 17, 'earned = credited + still to come');
+  // confirming the same figure is "confirmed" but not "edited"
+  const same = applyConfirmedRewards(card, ledger, [{ ...rec[0], actualRewardCredited: credited.expected }], '2026-10-08').credits.find((c) => c.cycleStart === '2026-08-01');
+  assert.deepEqual([same.confirmed, same.edited], [true, false]);
+  // clearing the record (reset) goes back to the calculated figure
+  const reset = applyConfirmedRewards(card, ledger, [{ ...rec[0], actualRewardCredited: null, pointsConfirmedAt: null }], '2026-10-08');
+  assert.equal(reset.credited, ledger.credited);
+});
+
+test('applyConfirmedRewards - the bank figure covers the whole statement, so separately-dated parts are taken off first (points cards)', () => {
+  const card = { id: 'd' };
+  const ledger = {
+    lumps: [
+      { date: '2026-09-01', amount: 100, kind: 'grocery', label: 'Grocery points (Aug 2026)', cycleStart: '2026-08-15' },
+      { date: '2026-09-15', amount: 900, kind: 'statement', cycleStart: '2026-08-15', cycleEnd: '2026-09-15', separate: 100, cycleTotal: 1000 },
+      { date: '2026-12-31', amount: 10000, kind: 'milestone', label: 'Quarterly milestone bonus' },
+    ],
+  };
+  const r = applyConfirmedRewards(card, ledger, [{ cardId: 'd', cycleStart: '2026-08-15', actualRewardCredited: 1050, pointsConfirmedAt: 'x' }], '2026-10-01');
+  assert.equal(r.credits.find((c) => c.kind === 'statement').amount, 950, 'statement-date part = 1050 - 100');
+  assert.equal(r.credits.find((c) => c.kind === 'grocery').amount, 100, 'grocery part is untouched');
+  assert.equal(r.credited, 1050, 'credited so far = the 1,050 the bank paid');
+  assert.deepEqual(r.pending, [{ date: '2026-12-31', amount: 10000 }]);
+  assert.equal(r.earned, 11050);
+});
+
+test('getCardYearRewards - totals for the current card year, anchored on the renewal month', () => {
+  const card = { renewalDate: '2025-03-20' };
+  const credits = [
+    { date: '2026-02-15', amount: 500, credited: true },   // previous card year
+    { date: '2026-03-15', amount: 200, credited: true },   // this year (starts 1 Mar 2026)
+    { date: '2026-09-15', amount: 300, credited: true },
+    { date: '2026-11-15', amount: 150, credited: false },  // still to come, still this year
+    { date: '2027-03-15', amount: 999, credited: false },  // next card year
+  ];
+  const y = getCardYearRewards(card, credits, '2026-10-08');
+  assert.deepEqual([y.periodStart, y.periodLastDay, y.anchored], ['2026-03-01', '2027-02-28', true]);
+  assert.deepEqual([y.credited, y.pending, y.earned], [500, 150, 650]);
+  // no renewal date: the calendar year
+  const cal = getCardYearRewards({}, credits, '2026-10-08');
+  assert.deepEqual([cal.periodStart, cal.anchored], ['2026-01-01', false]);
+  assert.equal(cal.earned, 500 + 200 + 300 + 150);
+});
+
+test('computeCardAnnualValue counts the amounts you confirmed, not just the calculated ones', () => {
+  const card = { id: 'c', name: 'SBI', annualFee: 500, renewalDate: '2025-08-01', billingCycleDay: 1, rewardStrategy: 'sbi_two_channel_cashback', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }] };
+  const txns = [{ id: 't1', cardId: 'c', date: '2026-08-10', amount: 10000, channel: 'online' }];
+  const base = computeCardAnnualValue(card, txns, '2026-10-08');
+  const withActual = computeCardAnnualValue(card, txns, '2026-10-08', [{ cardId: 'c', cycleStart: '2026-08-01', actualRewardCredited: base.earned + 40, pointsConfirmedAt: 'x' }]);
+  assert.equal(withActual.earned, base.earned + 40);
 });

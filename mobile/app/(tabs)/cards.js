@@ -6,6 +6,7 @@ import {
   subscribeToCardBillingCycles,
   updateCardTransaction,
   deleteCardTransaction,
+  saveCardBillingCycle,
 } from '../../lib/firebase';
 import {
   todayISO,
@@ -25,6 +26,8 @@ import {
   computeCardDueReminders,
   computeCardBillSummary,
   computeCardAnnualValue,
+  applyConfirmedRewards,
+  getCardYearRewards,
 } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import { useUndoDelete } from '../../lib/useUndoDelete';
@@ -34,6 +37,7 @@ import CardTransactionForm from '../../components/CardTransactionForm';
 import CardTransactionRow from '../../components/CardTransactionRow';
 import CardBillingHistory from '../../components/CardBillingHistory';
 import CardBillsSummary from '../../components/CardBillsSummary';
+import CardRewardCredits from '../../components/CardRewardCredits';
 import AppHeader from '../../components/AppHeader';
 import UndoToast from '../../components/UndoToast';
 
@@ -93,7 +97,11 @@ export default function Cards() {
   // actually credited - see computeCardRewardLedger.
   const ledger = selectedCard
     ? computeCardRewardLedger(selectedCard, cardTxns, today)
-    : { total: 0, credited: 0, pending: [], cycleRewards: {}, unit: 'inr' };
+    : { total: 0, credited: 0, pending: [], cycleRewards: {}, unit: 'inr', lumps: [] };
+  // What the bank really credited (your confirmed figures) replaces the
+  // calculated amounts wherever you've entered one - see applyConfirmedRewards.
+  const rewards = applyConfirmedRewards(selectedCard, ledger, cardBillingCycles, today);
+  const yearRewards = getCardYearRewards(selectedCard, rewards.credits, today);
   const currentCycleReward = ledger.cycleRewards[currentCycle?.cycleStart] || { totalReward: 0, unit: ledger.unit, perTransaction: [] };
   const currentCycleSpend = currentCycleTxns.reduce((s, t) => s + t.amount, 0);
   const lifetimePointsRedeemed = cardTxns.reduce((s, t) => s + (t.pointsRedeemed || 0), 0);
@@ -107,7 +115,7 @@ export default function Cards() {
   // date is worked out.
   // Only rewards already credited count as "in account"; the rest is shown as pending with its date.
   const lifetimeRewardTotal =
-    (selectedCard?.startingRewardPoints || 0) + ledger.credited - lifetimePointsRedeemed;
+    (selectedCard?.startingRewardPoints || 0) + rewards.credited - lifetimePointsRedeemed;
 
   const { quarterStart, quarterEnd } = getQuarterBounds(today);
   const quarterlyMilestoneCreditDate = selectedCard && params.quarterlyMilestoneTarget
@@ -148,7 +156,7 @@ export default function Cards() {
     () => computeCardBillSummary(creditCards, cardTransactions, cardBillingCycles, today),
     [creditCards, cardTransactions, cardBillingCycles, today],
   );
-  const annualValue = selectedCard ? computeCardAnnualValue(selectedCard, cardTxns, today) : null;
+  const annualValue = selectedCard ? computeCardAnnualValue(selectedCard, cardTxns, today, cardBillingCycles) : null;
 
   const filteredTxns = useMemo(() => {
     const term = txnSearch.trim().toLowerCase();
@@ -293,10 +301,10 @@ export default function Cards() {
                   </Text>
                 </View>
                 )}
-                {!statementOnly && ledger.pending.length > 0 && (
+                {!statementOnly && rewards.pending.length > 0 && (
                   <View className="rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5 mb-3">
                     <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider mb-1">Still to be credited</Text>
-                    {ledger.pending.map((p) => (
+                    {rewards.pending.map((p) => (
                       <View key={p.date} className="flex-row items-center justify-between">
                         <Text className="font-body text-xs text-muted-text">
                           {new Date(`${p.date}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
@@ -305,6 +313,23 @@ export default function Cards() {
                       </View>
                     ))}
                   </View>
+                )}
+                {!statementOnly && (
+                  <CardRewardCredits
+                    rewards={rewards}
+                    yearRewards={yearRewards}
+                    format={(amount) => formatReward(amount, ledger.unit)}
+                    onSave={(c, typed) =>
+                      saveCardBillingCycle(selectedCard.id, c.cycleStart, {
+                        actualRewardCredited: typed + (c.separate || 0),
+                        pointsConfirmedAt: new Date().toISOString(),
+                      }).catch((err) => { reportError(err, 'Could not save the credited amount'); throw err; })
+                    }
+                    onReset={(c) =>
+                      saveCardBillingCycle(selectedCard.id, c.cycleStart, { actualRewardCredited: null, pointsConfirmedAt: null })
+                        .catch((err) => { reportError(err, 'Could not reset the credited amount'); throw err; })
+                    }
+                  />
                 )}
                 <View className="flex-row gap-3">
                   <View className="flex-1">

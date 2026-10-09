@@ -2256,6 +2256,71 @@ export function computeCardBillSummary(cards, cardTransactions, cardBillingCycle
   };
 }
 
+// The ledger's rewards as the bank actually credited them: every statement
+// whose actual credit you've entered (in the Cashback/Points Credited list or
+// the billing history - same `actualRewardCredited` field) uses that figure
+// instead of the calculated one. The bank's number is for the WHOLE statement,
+// so for a card with separately-dated parts (Diners' monthly grocery points) it's
+// applied to the statement-date part after taking those off. Everything else
+// (grocery months, milestone bonuses) is the calculated amount. Pure.
+// Returns each credit with its date, calculated and effective amount, and the
+// totals the Cards screen shows: what's in the account, what's still to come,
+// and everything earned.
+export function applyConfirmedRewards(card, ledger, cardBillingCycles, today = todayISO()) {
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const recordFor = (cycleStart) =>
+    (cardBillingCycles || []).find((c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card?.id, cycleStart));
+  const credits = (ledger?.lumps || [])
+    .map((lump) => {
+      let amount = lump.amount;
+      let confirmed = false;
+      if (lump.kind === 'statement') {
+        const record = recordFor(lump.cycleStart);
+        if (record?.pointsConfirmedAt != null && record.actualRewardCredited != null) {
+          amount = round2(Number(record.actualRewardCredited) - (lump.separate || 0));
+          confirmed = true;
+        }
+      }
+      return {
+        ...lump,
+        expected: lump.amount,
+        amount,
+        confirmed,
+        edited: confirmed && Math.abs(amount - lump.amount) > 0.005,
+        credited: lump.date <= today,
+      };
+    })
+    .filter((c) => c.expected !== 0 || c.amount !== 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const creditedTotal = round2(credits.filter((c) => c.credited).reduce((t, c) => t + c.amount, 0));
+  const pendingByDate = {};
+  for (const c of credits) if (!c.credited && c.amount !== 0) pendingByDate[c.date] = round2((pendingByDate[c.date] || 0) + c.amount);
+  const pending = Object.entries(pendingByDate).map(([date, amount]) => ({ date, amount })).sort((a, b) => a.date.localeCompare(b.date));
+  return { credits, credited: creditedTotal, pending, earned: round2(credits.reduce((t, c) => t + c.amount, 0)) };
+}
+
+// What a card has earned in its current card year (the 12 months starting at
+// the card's renewal month; calendar year if no renewal date is set): credited
+// so far, still to come, and the two together. A reward belongs to the year its
+// credit date falls in - the same way the annual fee-versus-value comparison counts.
+export function getCardYearRewards(card, credits, today = todayISO()) {
+  const anchorMonth = card?.renewalDate ? Number(card.renewalDate.slice(5, 7)) : card?.annualMilestoneAnchorMonth || 1;
+  const { periodStart, periodEnd } = getAnnualMilestoneWindow(anchorMonth, today);
+  const inYear = (credits || []).filter((c) => c.date >= periodStart && c.date < periodEnd);
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const credited = round2(inYear.filter((c) => c.credited).reduce((t, c) => t + c.amount, 0));
+  const pending = round2(inYear.filter((c) => !c.credited).reduce((t, c) => t + c.amount, 0));
+  return {
+    periodStart,
+    periodEnd,
+    periodLastDay: addDaysISO(periodEnd, -1),
+    anchored: Boolean(card?.renewalDate || card?.annualMilestoneAnchorMonth),
+    credited,
+    pending,
+    earned: round2(credited + pending),
+  };
+}
+
 // "Is this card worth keeping" - reward value earned within the card's own
 // fee year (anchored to renewalDate's month, same shape as
 // getAnnualMilestoneWindow) against the annual fee charged for that year.
@@ -2263,14 +2328,14 @@ export function computeCardBillSummary(cards, cardTransactions, cardBillingCycle
 // needs a ₹-per-point conversion this app doesn't have (P1-9, declined).
 // Returns null when the card has no fee/renewal date set - nothing to
 // compare against.
-export function computeCardAnnualValue(card, cardTxns, today = todayISO()) {
+export function computeCardAnnualValue(card, cardTxns, today = todayISO(), cardBillingCycles = []) {
   const fee = Number(card?.annualFee);
   if (!card?.renewalDate || !(fee > 0)) return null;
   const anchorMonth = Number(card.renewalDate.slice(5, 7));
   const { periodStart, periodEnd } = getAnnualMilestoneWindow(anchorMonth, today);
   const ledger = computeCardRewardLedger(card, cardTxns, today);
-  const earned = (ledger.lumps || [])
-    .filter((l) => l.date >= periodStart && l.date < periodEnd)
+  const earned = applyConfirmedRewards(card, ledger, cardBillingCycles, today)
+    .credits.filter((l) => l.date >= periodStart && l.date < periodEnd)
     .reduce((sum, l) => sum + l.amount, 0);
   const netValue = ledger.unit === 'inr' ? earned - fee : null;
   return { periodStart, periodEnd, earned, fee, unit: ledger.unit, netValue };
@@ -3512,11 +3577,22 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
       for (const [monthKey, amount] of Object.entries(byMonth)) {
         // Negative too: a grocery refund was taken off the statement lump but
         // never added back here, so credited ran ahead of the total.
-        if (amount !== 0) lumps.push({ date: firstOfNextMonth(monthKey), amount });
+        if (amount !== 0) lumps.push({ date: firstOfNextMonth(monthKey), amount, kind: 'grocery', label: `Grocery points (${formatMonthLabel(monthKey)})`, cycleStart: cycle.cycleStart });
         separate += amount;
       }
     }
-    lumps.push({ date: getRewardCreditDate(card, cycle.cycleEnd), amount: adjusted.totalReward - separate });
+    // `cycleTotal` and `separate` let a confirmed amount (the bank's figure for the
+    // whole statement) be applied to just this statement-date part - see
+    // applyConfirmedRewards.
+    lumps.push({
+      date: getRewardCreditDate(card, cycle.cycleEnd),
+      amount: adjusted.totalReward - separate,
+      kind: 'statement',
+      cycleStart: cycle.cycleStart,
+      cycleEnd: cycle.cycleEnd,
+      separate,
+      cycleTotal: adjusted.totalReward,
+    });
   }
 
   // Quarterly milestone bonuses (e.g. Diners' 10,000 pts at ₹4L/quarter)
@@ -3533,7 +3609,7 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
       card, cardTxns, milestoneParams.quarterlyMilestoneTarget, milestoneParams.quarterlyMilestoneBonus, today, starting,
     );
     for (const m of milestoneLumps) {
-      lumps.push({ date: m.date, amount: m.amount });
+      lumps.push({ date: m.date, amount: m.amount, kind: 'milestone', label: 'Quarterly milestone bonus' });
       total += m.amount;
     }
   }
