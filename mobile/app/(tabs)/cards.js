@@ -314,7 +314,7 @@ export default function Cards() {
                     ))}
                   </View>
                 )}
-                {!statementOnly && (
+                {!statementOnly && ledger.unit !== 'points' && (
                   <CardRewardCredits
                     rewards={rewards}
                     yearRewards={yearRewards}
