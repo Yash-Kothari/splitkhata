@@ -283,7 +283,7 @@ export default function Cards() {
                 <View className="mb-3">
                   <Text className="font-display text-lg text-ink" numberOfLines={1}>{selectedCard.name}</Text>
                   <Text className="font-body text-2xs text-muted-text mb-1.5">
-                    {selectedCard.owner ? `${selectedCard.owner}'s card` : 'Shared card'}
+                    {selectedCard.owner ? `${selectedCard.owner}'s Card` : 'Shared Card'}
                   </Text>
                   <View className="self-start px-2.5 py-1 rounded-full bg-ledger-green/10">
                     <Text className="font-body-semibold text-2xs text-ledger-green">
@@ -294,7 +294,7 @@ export default function Cards() {
                 {!statementOnly && (
                 <View className="rounded-xl bg-ledger-green/10 px-3.5 py-2.5 mb-3">
                   <Text className="font-body-semibold text-2xs text-ledger-green uppercase tracking-wider">
-                    {ledger.unit === 'points' ? 'Total reward points in account' : 'Total cashback in account'}
+                    {ledger.unit === 'points' ? 'Total reward points in account' : 'Total cashback'}
                   </Text>
                   <Text className="font-mono-bold text-ledger-green text-2xl">
                     {formatReward(lifetimeRewardTotal, ledger.unit)}

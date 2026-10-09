@@ -131,7 +131,7 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
                   <View className={`w-4 h-4 rounded border items-center justify-center ${isRefund ? 'bg-ledger-green border-ledger-green' : 'border-ink/25 bg-paper'}`}>
                     {isRefund ? <Text className="text-white text-2xs">✓</Text> : null}
                   </View>
-                  <Text className="font-body text-xs text-muted-text">Refund / reversal (enters it as a minus)</Text>
+                  <Text className="font-body text-xs text-muted-text">Refund / Reversal (enters it as a minus)</Text>
                 </Pressable>
               )}
             </View>
