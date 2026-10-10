@@ -41,14 +41,20 @@ export default function PickerField({ label, value, options, onChange, labelExtr
 
   const screen = Dimensions.get('window');
   const menuWidth = anchor ? Math.max(anchor.width, 200) : 200;
-  const maxMenuHeight = 280;
+  const idealMenuHeight = 280;
   const spaceBelow = anchor ? screen.height - (anchor.y + anchor.height) : 0;
-  const opensUpward = anchor && spaceBelow < maxMenuHeight + 20 && anchor.y > maxMenuHeight + 20;
-  const menuTop = anchor
+  const spaceAbove = anchor ? anchor.y : 0;
+  // Open on whichever side has more room, and never taller than that room.
+  const opensUpward = Boolean(anchor) && spaceBelow < idealMenuHeight + 20 && spaceAbove > spaceBelow;
+  const maxMenuHeight = Math.max(120, Math.min(idealMenuHeight, (opensUpward ? spaceAbove : spaceBelow) - 20));
+  // Upward menus hang from their bottom edge: positioning them by top with
+  // the max height left a short list (Who Paid, 2 options) floating far
+  // above the field it belongs to.
+  const menuVertical = anchor
     ? opensUpward
-      ? Math.max(8, anchor.y - maxMenuHeight - 6)
-      : anchor.y + anchor.height + 6
-    : 0;
+      ? { bottom: screen.height - anchor.y + 6 }
+      : { top: anchor.y + anchor.height + 6 }
+    : {};
   const menuLeft = anchor ? Math.min(Math.max(8, anchor.x), screen.width - menuWidth - 8) : 0;
 
   return (
@@ -75,7 +81,7 @@ export default function PickerField({ label, value, options, onChange, labelExtr
         <Pressable className="flex-1" onPress={() => setOpen(false)}>
           {anchor && (
             <View
-              style={{ position: 'absolute', top: menuTop, left: menuLeft, width: menuWidth, maxHeight: maxMenuHeight }}
+              style={{ position: 'absolute', ...menuVertical, left: menuLeft, width: menuWidth, maxHeight: maxMenuHeight }}
               className="bg-paper-card rounded-xl border border-ink/10 shadow-lg overflow-hidden"
             >
               <ScrollView bounces={false}>
