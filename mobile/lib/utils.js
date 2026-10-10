@@ -719,8 +719,12 @@ export function isWithdrawalEntry(entry) {
 
 // A withdrawal is never "cash spend": it's the card/forex charge that carries
 // the shared debt for the cash.
+// A settlement is money handed from one person to another (the Settle Up form
+// defaults its payment method to Cash), not a purchase out of the trip's cash
+// pool - counting it as cash spend dropped it from the trip balance, so "X owes
+// Y" never moved after recording a payment.
 export function isCashPaid(entry) {
-  if (!entry || isWithdrawalEntry(entry)) return false;
+  if (!entry || isWithdrawalEntry(entry) || entry.splitType === 'settlement') return false;
   return isCashInstrumentEntry(entry);
 }
 

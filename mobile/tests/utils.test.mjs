@@ -3064,6 +3064,20 @@ test('isCashPaid goes by the saved instrument type, falling back to the legacy l
   assert.equal(isCashPaid(null), false);
 });
 
+test('a settlement paid in cash still moves the trip balance and is not cash spend', () => {
+  const members = ['Yash', 'Kruti', 'Guest'];
+  const entries = [
+    { amount: 3000, localAmount: 150, payer: 'Yash', split: true, splitType: 'shared', paymentMethod: 'HDFC Diners', paymentType: 'credit', ledger: 'travel' },
+  ];
+  const before = computeSettlements(excludeCashSpend(entries), 'travel', members);
+  assert.deepEqual(before.map((s) => [s.debtor, s.creditor, s.amount]), [['Kruti', 'Yash', 1000], ['Guest', 'Yash', 1000]]);
+  const payment = { amount: 400, payer: 'Guest', owedBy: 'Yash', split: true, splitType: 'settlement', paymentMethod: 'Cash', paymentType: 'cash', localAmount: null, ledger: 'travel' };
+  assert.equal(isCashPaid(payment), false, 'a settlement is not a purchase out of the cash pool');
+  const after = computeSettlements(excludeCashSpend([...entries, payment]), 'travel', members);
+  assert.deepEqual(after.map((s) => [s.debtor, s.creditor, s.amount]), [['Kruti', 'Yash', 1000], ['Guest', 'Yash', 600]]);
+  assert.equal(computeTripCashStats([...entries, { ...payment, localAmount: 20 }], [], undefined, undefined).spent, 0, 'and it never reduces the trip cash on hand');
+});
+
 test('renaming the cash method does not bring back trip cash double counting', () => {
   const members = ['Yash', 'Kruti'];
   const withLabel = (label, type) => [
