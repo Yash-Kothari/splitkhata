@@ -13,7 +13,6 @@ import {
   formatCurrency,
   getCardCycleForDate,
   getTransactionsInCycle,
-  computeCardRewardLedger,
   isStatementOnlyCard,
   resolveCardParams,
   computeCardMilestoneProgress,
@@ -25,11 +24,9 @@ import {
   getQuarterBounds,
   computeCardDueReminders,
   computeCardBillSummary,
-  computeCardAnnualValue,
-  applyConfirmedRewards,
-  getCardYearRewards,
 } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
+import { useCardRewards } from '../../lib/useCardRewards';
 import { useUndoDelete } from '../../lib/useUndoDelete';
 import { useSettingsModal } from '../../lib/SettingsModalContext';
 import Card from '../../components/Card';
@@ -95,13 +92,7 @@ export default function Cards() {
   // Everything is computed statement by statement (caps and the Diners slab
   // remainder carry per cycle), with each reward placed on the day it is
   // actually credited - see computeCardRewardLedger.
-  const ledger = selectedCard
-    ? computeCardRewardLedger(selectedCard, cardTxns, today)
-    : { total: 0, credited: 0, pending: [], cycleRewards: {}, unit: 'inr', lumps: [] };
-  // What the bank really credited (your confirmed figures) replaces the
-  // calculated amounts wherever you've entered one - see applyConfirmedRewards.
-  const rewards = applyConfirmedRewards(selectedCard, ledger, cardBillingCycles, today);
-  const yearRewards = getCardYearRewards(selectedCard, rewards.credits, today);
+  const { ledger, rewards, yearRewards, annualValue } = useCardRewards(selectedCard, cardTxns, cardBillingCycles, today);
   const currentCycleReward = ledger.cycleRewards[currentCycle?.cycleStart] || { totalReward: 0, unit: ledger.unit, perTransaction: [] };
   const currentCycleSpend = currentCycleTxns.reduce((s, t) => s + t.amount, 0);
   const lifetimePointsRedeemed = cardTxns.reduce((s, t) => s + (t.pointsRedeemed || 0), 0);
@@ -156,7 +147,6 @@ export default function Cards() {
     () => computeCardBillSummary(creditCards, cardTransactions, cardBillingCycles, today),
     [creditCards, cardTransactions, cardBillingCycles, today],
   );
-  const annualValue = selectedCard ? computeCardAnnualValue(selectedCard, cardTxns, today, cardBillingCycles) : null;
 
   const filteredTxns = useMemo(() => {
     const term = txnSearch.trim().toLowerCase();

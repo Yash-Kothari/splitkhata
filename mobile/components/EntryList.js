@@ -1,5 +1,5 @@
 import { useColorScheme } from 'nativewind';
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
 import Svg, { Line } from 'react-native-svg';
 import EditEntryRow from './EditEntryRow';
@@ -19,6 +19,193 @@ function formatShortDate(dateStr) {
     return dateStr;
   }
 }
+
+// One passbook row. Memoized: with 100+ rows on screen, a snapshot used to
+// re-render every one of them (about 50 ms) even when only a single entry had
+// changed. The entry objects keep their identity while their data is the same
+// (see createStableDocs in lib/firebase.js), so a row re-renders only when its
+// own entry or flags change - and the callbacks passed in must stay stable.
+const EntryRow = memo(function EntryRow({
+  item,
+  showDivider,
+  isTravel,
+  isDark,
+  currentCurrency,
+  isHighlighted,
+  deletingGroup,
+  onTogglePin,
+  onEdit,
+  onEditGroup,
+  onDeleteGroup,
+  onDelete,
+}) {
+    const isSettlement = item.splitType === 'settlement';
+    const hasPoints = (isTravel || item.isTripRollup || isSettlement) && Number(item.rewardPoints || 0) !== 0;
+    const isCashPool = isTravel && !item.split && isCashPaid(item);
+
+    return (
+      <Fragment>
+        {showDivider ? <View style={{ height: 1, backgroundColor: themeRgba('ink', isDark, 0.12) }} /> : null}
+        <View className={`relative pl-5 pr-2 py-3.5 ${isHighlighted ? 'bg-mustard/20' : ''}`}>
+          {/* RN's borderStyle:'dashed' logs "Unsupported dashed / dotted
+              border style" and silently renders solid on iOS when only
+              one side has width (confirmed via a real device/simulator
+              run, not just the web preview) - drawn as an SVG line
+              instead, which dashes reliably on every platform. */}
+          <View className="absolute" style={{ left: 0, top: 0, bottom: 0, width: 2 }}>
+            <Svg width="100%" height="100%">
+              <Line x1="1" y1="0" x2="1" y2="100%" stroke={themeRgba('ink', isDark, 0.3)} strokeWidth={2} strokeDasharray="4,3" />
+            </Svg>
+          </View>
+          <View
+            className="absolute rounded-full"
+            style={{ left: -3, top: '50%', marginTop: -4, width: 8, height: 8, backgroundColor: PERSON_COLORS[item.payer] || themeColor('ledgerGreen', isDark) }}
+          />
+          <View className="flex-row items-center justify-between gap-3">
+            <View className="flex-1 min-w-0">
+              <View className="flex-row items-baseline justify-between gap-2">
+                <View className="flex-row items-baseline flex-wrap gap-1.5 flex-1">
+                  {item.amount ? (
+                    <Text className="font-mono-bold text-base text-ink">{formatCurrency(item.amount, 'INR')}</Text>
+                  ) : null}
+                  {isTravel && item.localAmount != null && (
+                    <Text className="font-mono text-xs text-muted-text">
+                      ({formatCurrency(item.localAmount, currentCurrency)})
+                    </Text>
+                  )}
+                  {hasPoints ? (
+                    <Text
+                      className={`font-mono text-xs px-1.5 py-0.5 rounded ${
+                        item.rewardPoints > 0 ? 'bg-mustard/20 text-mustard' : 'bg-ledger-green/15 text-ledger-green'
+                      }`}
+                    >
+                      💳 {item.rewardPoints > 0 ? `-${item.rewardPoints}` : `+${Math.abs(item.rewardPoints)}`} pts
+                    </Text>
+                  ) : null}
+                </View>
+                <Text className="font-body-medium text-xs text-muted-text bg-paper border border-ink/10 rounded px-2 py-0.5">
+                  {formatShortDate(item.date)}
+                </Text>
+              </View>
+
+              {isSettlement ? (
+                <View className="mt-1.5 flex-row">
+                  <Text className="font-body-medium text-xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">
+                    ⇄ {item.payer} paid {item.owedBy}
+                  </Text>
+                </View>
+              ) : (
+                <View className="flex-row flex-wrap items-center gap-1.5 mt-1.5">
+                  <Text className="font-body-semibold text-xs text-ink bg-paper-card border border-ink/10 rounded px-2 py-0.5">
+                    {item.category}
+                  </Text>
+                  <Text className="font-body text-xs text-muted-text">
+                    Paid by <Text className="font-body-semibold text-ink">{item.payer}</Text>
+                  </Text>
+                  {!item.split && (
+                    <Text
+                      className={`font-body-medium text-xs rounded px-1.5 py-0.5 ${
+                        isCashPool ? 'bg-slate-500/15 text-slate-600' : 'bg-mustard/20 text-mustard'
+                      }`}
+                    >
+                      {isCashPool ? 'Cash Pool' : 'Personal'}
+                    </Text>
+                  )}
+                  {item.splitType === 'custom' && item.splitShares && (
+                    <Text className="font-body-medium text-xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">
+                      {(() => {
+                        // Shares are proportions - scale to this entry's amount so an
+                        // installment shows its own slice, not the whole purchase's.
+                        const total = Object.values(item.splitShares).reduce((a, b) => a + Number(b), 0) || 1;
+                        const amounts = Object.entries(item.splitShares)
+                          .map(([name, v]) => `${name} ${formatCurrency((Number(v) / total) * item.amount)}`)
+                          .join(' · ');
+                        // An entry split by ratio also shows its ratio ("2 : 3").
+                        return item.splitMode === 'ratio'
+                          ? `${Object.values(item.splitShares).map(Number).join(' : ')} - ${amounts}`
+                          : amounts;
+                      })()}
+                    </Text>
+                  )}
+                  {item.splitType === 'owed' && item.owedBy && (
+                    <Text className="font-body-medium text-xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">
+                      {item.owedBy} owes full amount
+                    </Text>
+                  )}
+                  {item.paymentMethod && (
+                    <Text className="font-body text-xs text-muted-text">
+                      via <Text className="font-body-semibold text-ink">{item.paymentMethod}</Text>
+                    </Text>
+                  )}
+                </View>
+              )}
+
+              {item.note ? (
+                <Text numberOfLines={1} className="font-body text-xs text-muted-text mt-1">
+                  {item.note}
+                </Text>
+              ) : null}
+
+              {item.tags?.length > 0 && (
+                <View className="flex-row flex-wrap gap-1 mt-1.5">
+                  {item.tags.map((tag) => (
+                    <Text key={tag} className="font-body-medium text-2xs text-muted-text bg-ink/5 rounded px-1.5 py-0.5">
+                      #{tag}
+                    </Text>
+                  ))}
+                </View>
+              )}
+
+              {item.installmentGroupId && (
+                <View className="flex-row items-center flex-wrap gap-2 mt-1.5">
+                  <Text className="font-body-medium text-2xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">
+                    Installment {item.installmentIndex} of {item.installmentCount}
+                  </Text>
+                  <Pressable onPress={() => onEditGroup(item.installmentGroupId)} hitSlop={4}>
+                    <Text className="font-body text-2xs text-muted-text underline">Edit set</Text>
+                  </Pressable>
+                  <Pressable onPress={() => onDeleteGroup(item)} disabled={deletingGroup} hitSlop={4}>
+                    <Text className="font-body text-2xs text-stamp-red/80 underline">
+                      {deletingGroup ? 'Deleting set...' : 'Delete set'}
+                    </Text>
+                  </Pressable>
+                </View>
+              )}
+            </View>
+
+            <View className="flex-row items-center gap-1 shrink-0">
+              {!isSettlement && (
+                <Pressable
+                  onPress={() => onTogglePin(item)}
+                  hitSlop={8}
+                  accessibilityLabel={item.pinned ? 'Unpin this entry' : 'Pin this entry to the top'}
+                  className={`min-w-8 min-h-8 items-center justify-center rounded-lg ${item.pinned ? 'bg-mustard/25 border border-mustard/50' : ''}`}
+                >
+                  {/* An emoji ignores text colour, so the state is shown with
+                      opacity and a tinted chip instead: dim = not pinned. */}
+                  <Text className="font-body-semibold text-xs" style={{ opacity: item.pinned ? 1 : 0.3 }}>📌</Text>
+                </Pressable>
+              )}
+              <Pressable
+                onPress={() => onEdit(item.id)}
+                hitSlop={8}
+                className="min-w-8 min-h-8 items-center justify-center rounded-lg"
+              >
+                <Text className="font-body-semibold text-xs text-muted-text">✎</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => onDelete(item)}
+                hitSlop={8}
+                className="min-w-8 min-h-8 items-center justify-center rounded-lg"
+              >
+                <Text className="font-body-semibold text-xs text-stamp-red/70">✕</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+    </Fragment>
+  );
+});
 
 // RN port of web's EntryList.jsx - shared by Household, Payments (Payment
 // History) and Travel (trip passbook). Renders with plain map() inside a
@@ -61,16 +248,18 @@ export default function EntryList({
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [deletingGroupId, setDeletingGroupId] = useState(null);
 
-  async function handleTogglePin(entry) {
+  // Stable callbacks (nothing here reads render-time state), so the memoized
+  // rows are not re-rendered just because this list was.
+  const handleTogglePin = useCallback(async (entry) => {
     try {
       await updateExpense(entry.id, { pinned: !entry.pinned });
     } catch (err) {
       reportError(err, 'Could not update pin');
       notify('Could not update pin', err?.message || String(err));
     }
-  }
+  }, []);
 
-  async function handleDeleteGroup(entry) {
+  const handleDeleteGroup = useCallback(async (entry) => {
     const count = entry.installmentCount || 0;
     const ok = await confirmAsync({
       title: `Delete all ${count} installments?`,
@@ -87,7 +276,14 @@ export default function EntryList({
     } finally {
       setDeletingGroupId(null);
     }
-  }
+  }, []);
+
+  // The parent's onDelete is rebuilt on its renders; read it through a ref.
+  const onDeleteRef = useRef(onDelete);
+  useEffect(() => {
+    onDeleteRef.current = onDelete;
+  });
+  const handleDeleteEntry = useCallback((entry) => onDeleteRef.current?.(entry), []);
 
   // GlobalSearch's "jump to entry" (P1-12) - a fresh highlightId floats that
   // entry to the top of the list (real scroll-into-view isn't feasible here;
@@ -234,168 +430,22 @@ export default function EntryList({
             );
           }
 
-          const isSettlement = item.splitType === 'settlement';
-          const hasPoints = (isTravel || item.isTripRollup || isSettlement) && Number(item.rewardPoints || 0) !== 0;
-          const isCashPool = isTravel && !item.split && isCashPaid(item);
-          const isHighlighted = item.id === activeHighlightId;
-
           return (
-            <Fragment key={item.id}>
-              {divider}
-              <View className={`relative pl-5 pr-2 py-3.5 ${isHighlighted ? 'bg-mustard/20' : ''}`}>
-                {/* RN's borderStyle:'dashed' logs "Unsupported dashed / dotted
-                    border style" and silently renders solid on iOS when only
-                    one side has width (confirmed via a real device/simulator
-                    run, not just the web preview) - drawn as an SVG line
-                    instead, which dashes reliably on every platform. */}
-                <View className="absolute" style={{ left: 0, top: 0, bottom: 0, width: 2 }}>
-                  <Svg width="100%" height="100%">
-                    <Line x1="1" y1="0" x2="1" y2="100%" stroke={themeRgba('ink', isDark, 0.3)} strokeWidth={2} strokeDasharray="4,3" />
-                  </Svg>
-                </View>
-                <View
-                  className="absolute rounded-full"
-                  style={{ left: -3, top: '50%', marginTop: -4, width: 8, height: 8, backgroundColor: PERSON_COLORS[item.payer] || themeColor('ledgerGreen', isDark) }}
-                />
-                <View className="flex-row items-center justify-between gap-3">
-                  <View className="flex-1 min-w-0">
-                    <View className="flex-row items-baseline justify-between gap-2">
-                      <View className="flex-row items-baseline flex-wrap gap-1.5 flex-1">
-                        {item.amount ? (
-                          <Text className="font-mono-bold text-base text-ink">{formatCurrency(item.amount, 'INR')}</Text>
-                        ) : null}
-                        {isTravel && item.localAmount != null && (
-                          <Text className="font-mono text-xs text-muted-text">
-                            ({formatCurrency(item.localAmount, currentCurrency)})
-                          </Text>
-                        )}
-                        {hasPoints ? (
-                          <Text
-                            className={`font-mono text-xs px-1.5 py-0.5 rounded ${
-                              item.rewardPoints > 0 ? 'bg-mustard/20 text-mustard' : 'bg-ledger-green/15 text-ledger-green'
-                            }`}
-                          >
-                            💳 {item.rewardPoints > 0 ? `-${item.rewardPoints}` : `+${Math.abs(item.rewardPoints)}`} pts
-                          </Text>
-                        ) : null}
-                      </View>
-                      <Text className="font-body-medium text-xs text-muted-text bg-paper border border-ink/10 rounded px-2 py-0.5">
-                        {formatShortDate(item.date)}
-                      </Text>
-                    </View>
-
-                    {isSettlement ? (
-                      <View className="mt-1.5 flex-row">
-                        <Text className="font-body-medium text-xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">
-                          ⇄ {item.payer} paid {item.owedBy}
-                        </Text>
-                      </View>
-                    ) : (
-                      <View className="flex-row flex-wrap items-center gap-1.5 mt-1.5">
-                        <Text className="font-body-semibold text-xs text-ink bg-paper-card border border-ink/10 rounded px-2 py-0.5">
-                          {item.category}
-                        </Text>
-                        <Text className="font-body text-xs text-muted-text">
-                          Paid by <Text className="font-body-semibold text-ink">{item.payer}</Text>
-                        </Text>
-                        {!item.split && (
-                          <Text
-                            className={`font-body-medium text-xs rounded px-1.5 py-0.5 ${
-                              isCashPool ? 'bg-slate-500/15 text-slate-600' : 'bg-mustard/20 text-mustard'
-                            }`}
-                          >
-                            {isCashPool ? 'Cash Pool' : 'Personal'}
-                          </Text>
-                        )}
-                        {item.splitType === 'custom' && item.splitShares && (
-                          <Text className="font-body-medium text-xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">
-                            {(() => {
-                              // Shares are proportions - scale to this entry's amount so an
-                              // installment shows its own slice, not the whole purchase's.
-                              const total = Object.values(item.splitShares).reduce((a, b) => a + Number(b), 0) || 1;
-                              return Object.entries(item.splitShares)
-                                .map(([name, v]) => `${name} ${formatCurrency((Number(v) / total) * item.amount)}`)
-                                .join(' · ');
-                            })()}
-                          </Text>
-                        )}
-                        {item.splitType === 'owed' && item.owedBy && (
-                          <Text className="font-body-medium text-xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">
-                            {item.owedBy} owes full amount
-                          </Text>
-                        )}
-                        {item.paymentMethod && (
-                          <Text className="font-body text-xs text-muted-text">
-                            via <Text className="font-body-semibold text-ink">{item.paymentMethod}</Text>
-                          </Text>
-                        )}
-                      </View>
-                    )}
-
-                    {item.note ? (
-                      <Text numberOfLines={1} className="font-body text-xs text-muted-text mt-1">
-                        {item.note}
-                      </Text>
-                    ) : null}
-
-                    {item.tags?.length > 0 && (
-                      <View className="flex-row flex-wrap gap-1 mt-1.5">
-                        {item.tags.map((tag) => (
-                          <Text key={tag} className="font-body-medium text-2xs text-muted-text bg-ink/5 rounded px-1.5 py-0.5">
-                            #{tag}
-                          </Text>
-                        ))}
-                      </View>
-                    )}
-
-                    {item.installmentGroupId && (
-                      <View className="flex-row items-center flex-wrap gap-2 mt-1.5">
-                        <Text className="font-body-medium text-2xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">
-                          Installment {item.installmentIndex} of {item.installmentCount}
-                        </Text>
-                        <Pressable onPress={() => setEditingGroupId(item.installmentGroupId)} hitSlop={4}>
-                          <Text className="font-body text-2xs text-muted-text underline">Edit set</Text>
-                        </Pressable>
-                        <Pressable onPress={() => handleDeleteGroup(item)} disabled={deletingGroupId === item.installmentGroupId} hitSlop={4}>
-                          <Text className="font-body text-2xs text-stamp-red/80 underline">
-                            {deletingGroupId === item.installmentGroupId ? 'Deleting set...' : 'Delete set'}
-                          </Text>
-                        </Pressable>
-                      </View>
-                    )}
-                  </View>
-
-                  <View className="flex-row items-center gap-1 shrink-0">
-                    {!isSettlement && (
-                      <Pressable
-                        onPress={() => handleTogglePin(item)}
-                        hitSlop={8}
-                        accessibilityLabel={item.pinned ? 'Unpin this entry' : 'Pin this entry to the top'}
-                        className={`min-w-8 min-h-8 items-center justify-center rounded-lg ${item.pinned ? 'bg-mustard/25 border border-mustard/50' : ''}`}
-                      >
-                        {/* An emoji ignores text colour, so the state is shown with
-                            opacity and a tinted chip instead: dim = not pinned. */}
-                        <Text className="font-body-semibold text-xs" style={{ opacity: item.pinned ? 1 : 0.3 }}>📌</Text>
-                      </Pressable>
-                    )}
-                    <Pressable
-                      onPress={() => setEditingId(item.id)}
-                      hitSlop={8}
-                      className="min-w-8 min-h-8 items-center justify-center rounded-lg"
-                    >
-                      <Text className="font-body-semibold text-xs text-muted-text">✎</Text>
-                    </Pressable>
-                    <Pressable
-                      onPress={() => onDelete?.(item)}
-                      hitSlop={8}
-                      className="min-w-8 min-h-8 items-center justify-center rounded-lg"
-                    >
-                      <Text className="font-body-semibold text-xs text-stamp-red/70">✕</Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </View>
-            </Fragment>
+            <EntryRow
+              key={item.id}
+              item={item}
+              showDivider={index > 0}
+              isTravel={isTravel}
+              isDark={isDark}
+              currentCurrency={currentCurrency}
+              isHighlighted={item.id === activeHighlightId}
+              deletingGroup={Boolean(item.installmentGroupId) && deletingGroupId === item.installmentGroupId}
+              onTogglePin={handleTogglePin}
+              onEdit={setEditingId}
+              onEditGroup={setEditingGroupId}
+              onDeleteGroup={handleDeleteGroup}
+              onDelete={handleDeleteEntry}
+            />
           );
         })
       )}

@@ -6,7 +6,8 @@ import DateField from './DateField';
 import EntryFormFields from './EntryFormFields';
 import { cardShadow } from './Card';
 import { useEntryForm } from '../lib/useEntryForm';
-import { updateExpense, updateCardTransaction, replaceCardTransaction } from '../lib/firebase';
+import { updateExpense, updateExpenseWithCard } from '../lib/firebase';
+import { settleOrHandOff } from '../lib/saveHandoff';
 import { reportError } from '../lib/errorReporting';
 import {
   parseCustomShares,
@@ -53,7 +54,6 @@ export default function EditEntryRow({
   });
   const { amount, payer, category, splitType, owedBy, splitAmong, customShares, date, note, paymentMethod, selectedInstrument } = f;
   const [saving, setSaving] = useState(false);
-  const [slowSave, setSlowSave] = useState(false);
 
   // Keeps the card transaction an entry created in step with the entry:
   // unchanged card -> update its amount/date/note; different or no card ->
@@ -62,7 +62,7 @@ export default function EditEntryRow({
   // all, so ticking it here removes the existing one. Best-effort like Add
   // Entry's link - a failure keeps the previous link instead of blocking the
   // entry save.
-  async function syncCardLink(parsedAmount) {
+  function planCardLink(parsedAmount) {
     const oldTxnId = entry.cardTransactionId || null;
     const trackedCardId = (id) => (id && !isStatementOnlyCard(creditCards.find((c) => c.id === id)) ? id : null);
     const oldCardId = trackedCardId(resolveInstrument(f.instruments, entry)?.cardId || null);
@@ -85,10 +85,9 @@ export default function EditEntryRow({
             inferCardRewardFields(card, category, resolveStrategyParamsForDate(card?.strategyParamsHistory, date), f.effectiveTravelMultiplier, { bookings: !isTravel }),
           );
         }
-        await updateCardTransaction(oldTxnId, updates);
-        return oldTxnId;
+        return { kind: 'update', id: oldTxnId, updates };
       }
-      if (!oldTxnId && !newCardId) return null;
+      if (!oldTxnId && !newCardId) return { kind: 'none', id: null };
       let newData = null;
       if (newCardId) {
         const newCard = creditCards.find((c) => c.id === newCardId);
@@ -101,10 +100,10 @@ export default function EditEntryRow({
           ...inferCardRewardFields(newCard, category, resolveStrategyParamsForDate(newCard?.strategyParamsHistory, date), f.effectiveTravelMultiplier, { bookings: !isTravel }),
         };
       }
-      return await replaceCardTransaction(oldTxnId, newData);
+      return { kind: 'replace', oldId: oldTxnId, newData };
     } catch (err) {
       reportError(err, 'Saved the entry, but could not update its linked card transaction');
-      return oldTxnId;
+      return { kind: 'none', id: oldTxnId };
     }
   }
 
@@ -136,8 +135,7 @@ export default function EditEntryRow({
       return;
     }
     setSaving(true);
-    const slowTimer = setTimeout(() => setSlowSave(true), 2500);
-    try {
+    const save = async () => {
       if (isSettlement) {
         await updateExpense(entry.id, {
           amount: parsed,
@@ -150,8 +148,10 @@ export default function EditEntryRow({
       } else {
         const effectiveSplitAmong =
           splitType === 'shared' && splitAmong.length > 0 && splitAmong.length < members.length ? splitAmong : null;
-        const cardTransactionId = await syncCardLink(parsed);
-        await updateExpense(entry.id, {
+        // The card side is planned here and written in the same commit as the
+        // entry (one server round trip, atomic), not before it.
+        const cardChange = planCardLink(parsed);
+        await updateExpenseWithCard(entry.id, {
           amount: parsed,
           payer,
           category,
@@ -160,30 +160,36 @@ export default function EditEntryRow({
           owedBy: splitType === 'owed' ? owedBy : null,
           splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
           splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
+          splitMode: splitType === 'custom' && f.splitMode === 'ratio' ? 'ratio' : null,
           note: note.trim(),
           tags: parseTagsInput(f.tagsText),
           date,
           paymentMethod: paymentMethod || null,
           paymentInstrumentId: selectedInstrument?.id || null,
           paymentType: selectedInstrument?.type || null,
-          cardTransactionId,
           skipCardTracking: f.cardSkipped || null,
           localAmount: parsedLocal,
           rewardPoints: parsedPoints,
           // Withdrawals are only created from Trip Settings; editing one keeps
           // it, and a stale flag on a cash-paid entry is dropped here.
           isWithdrawal: isTravel && isWithdrawalEntry(entry),
-        });
+        }, cardChange);
       }
-      onSaved?.();
-    } catch (err) {
-      onSaveError?.(err);
-      notify('Could not save', err?.message || String(err));
-    } finally {
-      clearTimeout(slowTimer);
-      setSaving(false);
-      setSlowSave(false);
+    };
+    // Wait for the server's acknowledgement only briefly (see settleOrHandOff):
+    // the edit is already visible everywhere, so the form closes and a late
+    // failure is reported afterwards.
+    const outcome = await settleOrHandOff(save(), (error) => {
+      onSaveError?.(error);
+      notify('Could not save', error?.message || String(error));
+    });
+    setSaving(false);
+    if (outcome.status === 'error') {
+      onSaveError?.(outcome.error);
+      notify('Could not save', outcome.error?.message || String(outcome.error));
+      return;
     }
+    onSaved?.();
   }
 
   const saveDisabled = saving || !amount || f.customSplitInvalid || (!isSettlement && f.inputInvalid);
@@ -197,7 +203,7 @@ export default function EditEntryRow({
         disabled={saveDisabled}
         className={`flex-1 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && saveDisabled ? 'opacity-40' : ''}`}
       >
-        <Text className="font-body-semibold text-sm text-white">{saving ? (slowSave ? 'Still saving…' : 'Saving...') : 'Save'}</Text>
+        <Text className="font-body-semibold text-sm text-white">{saving ? 'Saving...' : 'Save'}</Text>
       </Pressable>
     </View>
   );

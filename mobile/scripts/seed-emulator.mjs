@@ -103,6 +103,8 @@ async function main() {
   await upsertDoc('trips/seed_trip_1', {
     name: 'Goa',
     currency: 'INR',
+    // A guest makes it a three-person trip (Split Among, per-person settle-up).
+    guests: ['Riya'],
     createdAt: now,
   });
   await upsertDoc('expenses/seed_travel_1', {
@@ -121,7 +123,12 @@ async function main() {
 
   // One credit card with strategyParamsHistory (required, or rewards
   // compute as NaN) plus a card transaction so cards.js has a real cycle.
+  // Payment methods are what the entry forms list: Cash, plus the card through
+  // a method pointing at it (paymentMethodId) - otherwise it can't be picked.
+  await upsertDoc('paymentMethods/seed_method_cash', { name: 'Cash', type: 'cash', owner: '', createdAt: now });
+  await upsertDoc('paymentMethods/seed_method_card', { name: 'Seed SBI Cashback', type: 'credit', owner: '', createdAt: now });
   await upsertDoc('creditCards/seed_card_1', {
+    paymentMethodId: 'seed_method_card',
     name: 'Seed SBI Cashback',
     billingCycleDay: 1,
     rewardStrategy: 'sbi_two_channel_cashback',

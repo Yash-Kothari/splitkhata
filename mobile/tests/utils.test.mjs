@@ -9,6 +9,8 @@ import {
   getRewardCreditDate,
   buildPaymentInstruments,
   checkCustomSharesTotal,
+  customShareAmounts,
+  reduceSharesToRatio,
   customSharePortions,
   parseCustomShares,
   getUnlinkedCards,
@@ -2687,6 +2689,77 @@ test('customSharePortions hands out whole paise by largest remainder and sums ex
   const thirds = customSharePortions(100, { A: 1, B: 1, C: 1 }, ['A', 'B', 'C']);
   assert.equal(Object.values(thirds).reduce((a, b) => a + b, 0), 100);
   assert.deepEqual(customSharePortions(100, { Ghost: 5 }, ['A']), {});
+});
+
+test('ratio mode accepts any positive parts and works out each person\'s money', () => {
+  assert.equal(checkCustomSharesTotal({ Yash: 2, Kruti: 3 }, 500, 'ratio').ok, true, 'parts need not add up to the total');
+  assert.equal(checkCustomSharesTotal({ Yash: 2, Kruti: 3 }, 500).ok, false, 'in amount mode 2 + 3 is not 500');
+  assert.equal(checkCustomSharesTotal({ Yash: '', Kruti: '' }, 500, 'ratio').ok, false, 'no parts at all');
+  assert.deepEqual(customShareAmounts(500, { Yash: '2', Kruti: '3' }, ['Yash', 'Kruti']), { Yash: 200, Kruti: 300 });
+  // 100 in the ratio 1 : 2 : 2 - every paisa is handed out, nothing created or lost
+  const split = customShareAmounts(100, { A: 1, B: 2, C: 2 }, ['A', 'B', 'C']);
+  assert.equal(Math.round((split.A + split.B + split.C) * 100), 10000);
+  assert.deepEqual(split, { A: 20, B: 40, C: 40 });
+  const odd = customShareAmounts(100, { A: 1, B: 1, C: 1 }, ['A', 'B', 'C']);
+  assert.equal(Math.round((odd.A + odd.B + odd.C) * 100), 10000, 'thirds still add to the whole');
+  assert.deepEqual(customShareAmounts(500, { Yash: 0, Kruti: 0 }, ['Yash', 'Kruti']), {});
+});
+
+test('Add Entry remembers who the last shared entry was split among', () => {
+  const entry = (over) => ({ category: 'Dining', payer: 'Yash', split: true, splitType: 'shared', date: '2026-10-01', createdAt: '2026-10-01T10:00:00Z', ...over });
+  // the newest shared entry was between two of three people
+  const defaults = getLastEntryDefaults([entry({ splitAmong: ['Yash', 'Kruti'], createdAt: '2026-10-02T10:00:00Z' }), entry({ splitAmong: null })]);
+  assert.deepEqual(defaults.splitAmong, ['Yash', 'Kruti']);
+  // everyone -> null (not undefined), so the form can tell "everyone" from "no information"
+  assert.equal(getLastEntryDefaults([entry({ splitAmong: null })]).splitAmong, null);
+  // a newer personal entry does not erase what the last shared one told us
+  const withPersonal = getLastEntryDefaults([
+    entry({ splitAmong: ['Yash', 'Guest'], createdAt: '2026-10-02T10:00:00Z' }),
+    entry({ split: false, splitType: 'personal', createdAt: '2026-10-03T10:00:00Z' }),
+  ]);
+  assert.deepEqual(withPersonal.splitAmong, ['Yash', 'Guest']);
+  assert.equal(withPersonal.payer, 'Yash');
+  // no shared entry at all: nothing to go on
+  assert.equal(getLastEntryDefaults([entry({ split: false, splitType: 'personal' })]).splitAmong, undefined);
+  // custom amounts and settlements are not an even split
+  assert.equal(getLastEntryDefaults([entry({ splitType: 'custom', splitShares: { Yash: 1 } })]).splitAmong, undefined);
+});
+
+test('Recent combinations carry the latest split-among for that combination', () => {
+  const entry = (over) => ({ category: 'Dining', payer: 'Yash', paymentMethod: 'Cash', split: true, splitType: 'shared', date: '2026-10-01', ...over });
+  const [combo] = getRecentCombinations([
+    entry({ date: '2026-10-01', splitAmong: null }),
+    entry({ date: '2026-10-05', splitAmong: ['Yash', 'Kruti'] }),
+  ]);
+  assert.equal(combo.count, 2);
+  assert.deepEqual(combo.splitAmong, ['Yash', 'Kruti'], 'newest shared entry wins');
+  assert.equal(getRecentCombinations([entry({ split: false, splitType: 'personal' })])[0].splitAmong, undefined, 'personal-only combination says nothing');
+  // same day: the entry created last decides, whatever order they arrive in
+  const sameDay = [
+    entry({ splitAmong: ['Yash', 'Kruti'], createdAt: '2026-10-05T12:00:00Z' }),
+    entry({ splitAmong: null, createdAt: '2026-10-05T09:00:00Z' }),
+  ];
+  assert.deepEqual(getRecentCombinations(sameDay)[0].splitAmong, ['Yash', 'Kruti']);
+  assert.deepEqual(getRecentCombinations([...sameDay].reverse())[0].splitAmong, ['Yash', 'Kruti']);
+});
+
+test('reduceSharesToRatio turns amounts into the smallest whole parts', () => {
+  assert.deepEqual(reduceSharesToRatio({ Yash: '200', Kruti: '300' }), { Yash: '2', Kruti: '3' });
+  assert.deepEqual(reduceSharesToRatio({ Yash: '250.50', Kruti: '250.50' }), { Yash: '1', Kruti: '1' });
+  assert.deepEqual(reduceSharesToRatio({ A: '33.33', B: '66.67' }), { A: '33.33', B: '66.67' }, 'untidy amounts stay as typed');
+  assert.deepEqual(reduceSharesToRatio({ Yash: '', Kruti: '' }), { Yash: '', Kruti: '' });
+});
+
+test('a ratio-split entry is owed in proportion to its parts', () => {
+  const members = ['Yash', 'Kruti'];
+  const entries = [{ amount: 500, payer: 'Yash', split: true, splitType: 'custom', splitShares: { Yash: 2, Kruti: 3 }, splitMode: 'ratio', ledger: 'household' }];
+  const balance = computeBalance(entries, 'household', members);
+  assert.equal(balance.debtor, 'Kruti');
+  assert.equal(balance.creditor, 'Yash');
+  assert.equal(balance.amount, 300, 'Kruti owes her 3/5 of 500');
+  // the same entry saved as amounts gives the same balance
+  const asAmounts = computeBalance([{ ...entries[0], splitShares: { Yash: 200, Kruti: 300 }, splitMode: null }], 'household', members);
+  assert.equal(asAmounts.amount, balance.amount);
 });
 
 test('checkCustomSharesTotal flags shares that do not add up to the entry total', () => {

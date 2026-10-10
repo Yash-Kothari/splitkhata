@@ -72,10 +72,25 @@ export function useEntryForm({
   const [category, setCategory] = useState(entry?.category ?? (categories[0] || 'Groceries'));
   const [splitType, setSplitType] = useState(entry ? entry.splitType || (entry.split ? 'shared' : 'personal') : 'shared');
   const [owedBy, setOwedBy] = useState(entry?.owedBy || '');
-  const [splitAmong, setSplitAmong] = useState(entry?.splitAmong || members);
+  // Who an even split is between. Editing: what the entry has. Adding: what the
+  // user picked, else who the last shared entry was split among (so a trip's two
+  // of three people stay selected from one entry to the next), else everyone.
+  // Derived like payer above; setSplitAmong(null) goes back to that default.
+  const [splitAmongChoice, setSplitAmong] = useState(null);
+  const knownMembers = (list) => (list || []).filter((m) => members.includes(m));
+  const splitAmong = (() => {
+    const picked = knownMembers(splitAmongChoice);
+    if (picked.length > 0) return picked;
+    if (isEdit) return entry.splitAmong?.length ? entry.splitAmong : members;
+    // The Split Among chips only show for 3+ people, so nothing hidden is remembered for two.
+    if (members.length <= 2) return members;
+    const remembered = knownMembers(lastEntry?.splitAmong);
+    return remembered.length > 0 ? remembered : members;
+  })();
   const [customShares, setCustomShares] = useState(() =>
     Object.fromEntries(Object.entries(entry?.splitShares || {}).map(([k, v]) => [k, String(v)])),
   );
+  const [splitMode, setSplitMode] = useState(entry?.splitMode === 'ratio' ? 'ratio' : 'amount');
   const [date, setDate] = useState(entry?.date ?? todayISO());
   const [note, setNote] = useState(entry?.note || '');
   const [tagsText, setTagsText] = useState((entry?.tags || []).join(', '));
@@ -134,7 +149,7 @@ export function useEntryForm({
   const [moreToggle, setMoreToggle] = useState(null);
   const moreOpen = moreToggle ?? Boolean(tagsText.trim() || rewardPoints.trim() || extraMoreOpen);
 
-  const customSharesCheck = checkCustomSharesTotal(customShares, parseAmountInput(amount) || 0);
+  const customSharesCheck = checkCustomSharesTotal(customShares, parseAmountInput(amount) || 0, splitMode);
   const customSplitInvalid = splitType === 'custom' && !customSharesCheck.ok;
 
   // Shown under each field and block saving - bad input used to either save
@@ -158,22 +173,17 @@ export function useEntryForm({
   }, [members.join('|'), owedBy, payer]);
 
   useEffect(() => {
-    if (!isEdit) setSplitAmong(members);
-  }, [members.join('|')]);
-
-  useEffect(() => {
     if (!isTravel || selectedInstrument?.type !== 'cash' || fifoResult == null) return;
     setAmount(fifoResult.amount.toString());
   }, [fifoResult, paymentMethod, isTravel]);
 
   function toggleSplitAmong(name) {
-    setSplitAmong((prev) => {
-      if (prev.includes(name)) {
-        const next = prev.filter((p) => p !== name);
-        return next.length > 0 ? next : prev;
-      }
-      return [...prev, name];
-    });
+    if (splitAmong.includes(name)) {
+      const next = splitAmong.filter((p) => p !== name);
+      if (next.length > 0) setSplitAmong(next);
+    } else {
+      setSplitAmong([...splitAmong, name]);
+    }
   }
 
   // An owned card/account says who paid most of the time - fill it in, but
@@ -201,6 +211,7 @@ export function useEntryForm({
     owedBy, setOwedBy,
     splitAmong, setSplitAmong, toggleSplitAmong,
     customShares, setCustomShares, customSplitInvalid,
+    splitMode, setSplitMode,
     date, setDate,
     note, setNote,
     tagsText, setTagsText,

@@ -72,6 +72,7 @@ export default function EditInstallmentGroupRow({ groupId, sampleEntry, categori
       if (splitType !== 'custom') {
         updates.split = splitType !== 'personal';
         updates.splitType = splitType;
+        updates.splitMode = null;
       }
       await updateInstallmentGroup(groupId, updates);
       onSaved?.();

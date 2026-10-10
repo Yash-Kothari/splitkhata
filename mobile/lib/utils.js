@@ -384,11 +384,36 @@ export function customSharePortions(valuePaise, shares, members) {
   return Object.fromEntries(included.map((m, i) => [m, floors[i]]));
 }
 
-// Whether a custom split's amounts add up to the entry total (within a paisa).
-export function checkCustomSharesTotal(shares, total) {
+// Whether a custom split is usable. In 'amount' mode the amounts must add up to
+// the entry total (within a paisa). In 'ratio' mode the numbers are parts
+// ("2 and 3", i.e. 2/5 and 3/5), so any positive parts are fine and `diff` is 0.
+export function checkCustomSharesTotal(shares, total, mode = 'amount') {
   const sum = Object.values(parseCustomShares(shares)).reduce((a, b) => a + b, 0);
+  if (mode === 'ratio') return { sum, diff: 0, ok: sum > 0 };
   const diff = Math.round((Number(total) - sum) * 100) / 100;
   return { sum, diff, ok: Math.abs(diff) < 0.005 && sum > 0 };
+}
+
+// Amounts turned into the smallest whole parts with the same proportions
+// (200 and 300 -> 2 and 3). Falls back to the amounts as typed when they don't
+// reduce to something tidy.
+export function reduceSharesToRatio(shares) {
+  const parsed = parseCustomShares(shares);
+  const entries = Object.entries(parsed);
+  if (!entries.length) return { ...shares };
+  const paise = entries.map(([, v]) => Math.round(v * 100));
+  const g = paise.reduce((a, b) => gcd(a, b));
+  const parts = paise.map((p) => p / g);
+  if (!g || parts.some((p) => !Number.isInteger(p) || p > 1000)) return { ...shares };
+  return Object.fromEntries(entries.map(([name], i) => [name, String(parts[i])]));
+}
+
+// What each person's parts come to in money for this total: the same
+// largest-remainder rounding the balance maths uses, so the preview shown in the
+// form is exactly what will be owed.
+export function customShareAmounts(total, shares, members) {
+  const portions = customSharePortions(Math.round(Number(total || 0) * 100), parseCustomShares(shares), members);
+  return Object.fromEntries(Object.entries(portions).map(([m, paise]) => [m, paise / 100]));
 }
 
 // A shared expense's fair 1/k-per-member paise share (k = however many
@@ -3038,16 +3063,35 @@ export function getRecentCombinations(entries, limit = 5, windowSize = 40) {
     if (!e.category || !e.payer || e.splitType === 'settlement' || e.isTripRollup || isWithdrawalEntry(e)) continue;
     const key = `${e.category}|${e.payer}|${e.paymentMethod || ''}`;
     const existing = combos.get(key);
+    const shared = isSharedEvenSplit(e);
     if (existing) {
       existing.count += 1;
+      // The combination's latest shared entry decides who it is split among.
+      const stamp = `${e.date || ''}|${e.createdAt || ''}`;
+      if (shared && stamp > (existing.splitDate || '')) {
+        existing.splitAmong = entrySplitAmong(e);
+        existing.splitDate = stamp;
+      }
       if (e.date > existing.lastDate) existing.lastDate = e.date;
     } else {
-      combos.set(key, { category: e.category, payer: e.payer, paymentMethod: e.paymentMethod || null, count: 1, lastDate: e.date });
+      combos.set(key, {
+        category: e.category,
+        payer: e.payer,
+        paymentMethod: e.paymentMethod || null,
+        count: 1,
+        lastDate: e.date,
+        splitAmong: shared ? entrySplitAmong(e) : undefined,
+        splitDate: shared ? `${e.date || ''}|${e.createdAt || ''}` : '',
+      });
     }
   }
   return Array.from(combos.values())
     .sort((a, b) => b.count - a.count || (b.lastDate || '').localeCompare(a.lastDate || ''))
-    .slice(0, limit);
+    .slice(0, limit)
+    .map(({ splitDate, ...combo }) => {
+      if (combo.splitAmong === undefined) delete combo.splitAmong;
+      return combo;
+    });
 }
 
 // Entries that say how you usually enter things: not a settlement, a trip
@@ -3057,15 +3101,33 @@ function isRepeatableEntry(e) {
 }
 
 // Payer and payment method of the entry added most recently, so Add Entry can
-// start from them. Newest by creation time (falling back to its date).
+// start from them - plus who the newest *shared* entry was split among (a
+// subset such as just two of three people on a trip, or null for everyone;
+// undefined when there is no shared entry to learn from). Newest by creation
+// time (falling back to its date).
 export function getLastEntryDefaults(entries) {
   let best = null;
+  let bestShared = null;
   for (const e of entries || []) {
     if (!isRepeatableEntry(e)) continue;
     const key = `${e.createdAt || ''}|${e.date || ''}`;
     if (!best || key > best.key) best = { key, e };
+    if (isSharedEvenSplit(e) && (!bestShared || key > bestShared.key)) bestShared = { key, e };
   }
-  return best ? { payer: best.e.payer, paymentMethod: best.e.paymentMethod || null } : null;
+  if (!best) return null;
+  const defaults = { payer: best.e.payer, paymentMethod: best.e.paymentMethod || null };
+  if (bestShared) defaults.splitAmong = entrySplitAmong(bestShared.e);
+  return defaults;
+}
+
+// A plain even split (not custom amounts, "owed", personal or a settlement).
+function isSharedEvenSplit(e) {
+  return e.splitType === 'shared' || (!e.splitType && e.split === true);
+}
+
+// Who an even split was between: the named subset, or null when it was everyone.
+function entrySplitAmong(e) {
+  return Array.isArray(e.splitAmong) && e.splitAmong.length > 0 ? e.splitAmong : null;
 }
 
 // What an earlier entry with a similar note used: type "Uber" and, if earlier
@@ -3722,6 +3784,7 @@ export const LEDGER_CSV_COLUMNS = [
   'owedBy',
   'splitAmong',
   'splitShares',
+  'splitMode',
   'paymentMethod',
   'note',
   'rewardPoints',

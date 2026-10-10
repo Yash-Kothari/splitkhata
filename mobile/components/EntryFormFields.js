@@ -188,7 +188,14 @@ export default function EntryFormFields({
       )}
 
       {f.splitType === 'custom' && (
-        <CustomSplitEditor members={members} total={parseAmountInput(f.amount) || 0} shares={f.customShares} onChange={f.setCustomShares} />
+        <CustomSplitEditor
+          members={members}
+          total={parseAmountInput(f.amount) || 0}
+          shares={f.customShares}
+          onChange={f.setCustomShares}
+          mode={f.splitMode}
+          onModeChange={f.setSplitMode}
+        />
       )}
 
       {f.splitType === 'shared' && members.length > 2 && (

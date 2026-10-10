@@ -5,7 +5,8 @@ import * as ImagePicker from 'expo-image-picker';
 import Card from './Card';
 import EntryFormFields from './EntryFormFields';
 import { useEntryForm } from '../lib/useEntryForm';
-import { addExpense, addExpensesBatch, addCardTransactionAndLink, generateStructured, extractReceiptFromImage } from '../lib/firebase';
+import { addExpenseWithCard, addExpensesBatch, generateStructured, extractReceiptFromImage } from '../lib/firebase';
+import { settleOrHandOff } from '../lib/saveHandoff';
 import { reportError } from '../lib/errorReporting';
 import {
   isStatementOnlyCard,
@@ -121,6 +122,8 @@ export default function AddEntryForm({
     f.setCategory(combo.category);
     f.setPayer(combo.payer);
     if (combo.paymentMethod) f.setPaymentMethod(combo.paymentMethod);
+    // Same people as that combination's last shared entry (a subset, or everyone).
+    if (combo.splitAmong !== undefined) f.setSplitAmong(combo.splitAmong || membersList);
   }
 
   // Pre-fills the form from a casual sentence - never submits on its own.
@@ -147,6 +150,7 @@ export default function AddEntryForm({
       if (parsed.payer && membersList.includes(parsed.payer)) f.setPayer(parsed.payer);
       if (parsed.splitType) f.setSplitType(parsed.splitType);
       if (parsed.splitType === 'custom' && Array.isArray(parsed.splitShares)) {
+        f.setSplitMode('amount'); // the AI lists each person's amount
         f.setCustomShares(
           Object.fromEntries(
             parsed.splitShares.filter((s) => membersList.includes(s.person) && Number(s.amount) > 0).map((s) => [s.person, String(s.amount)]),
@@ -255,22 +259,16 @@ export default function AddEntryForm({
       setSplitAcrossMonths(false);
       f.setMoreToggle(null);
       f.setCustomShares({});
+      f.setSplitMode('amount');
       setMonthsCount('6');
-      f.setSplitAmong(membersList);
+      f.setSplitAmong(null); // back to following the last shared entry
     };
 
-    const savePromise = doSave();
-    // Firestore applies a write to its local cache (and this form's job is
-    // done from the user's point of view) well before the awaited promise
-    // below actually resolves - that only happens once the server
-    // acknowledges it, which can hang indefinitely while offline. Rather
-    // than let the button spin forever for a write that already "happened"
-    // locally, give it a few seconds, then hand off and let it keep going
-    // in the background (still visible via ConnectionBanner's pending-write
-    // count) instead of freezing the form.
-    const settled = savePromise.then(() => ({ status: 'done' })).catch((error) => ({ status: 'error', error }));
-    const timedOut = new Promise((resolve) => setTimeout(() => resolve({ status: 'timeout' }), 4000));
-    const outcome = await Promise.race([settled, timedOut]);
+    // Wait for the server's acknowledgement only briefly - see settleOrHandOff.
+    const outcome = await settleOrHandOff(doSave(), (error) => {
+      onSaveError?.(error);
+      notify('Could not save', error?.message || String(error));
+    });
 
     setSaving(false);
     if (outcome.status === 'error') {
@@ -279,14 +277,6 @@ export default function AddEntryForm({
       return;
     }
     resetForm();
-    if (outcome.status === 'timeout') {
-      settled.then((result) => {
-        if (result.status === 'error') {
-          onSaveError?.(result.error);
-          notify('Could not save', result.error?.message || String(result.error));
-        }
-      });
-    }
   }
 
   async function doSave() {
@@ -312,6 +302,7 @@ export default function AddEntryForm({
         owedBy: splitType === 'owed' ? owedBy : null,
         splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
         splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
+        splitMode: splitType === 'custom' && f.splitMode === 'ratio' ? 'ratio' : null,
         note: trimmedNote ? `${trimmedNote} (${i + 1}/${months})` : `Installment ${i + 1}/${months}`,
         tags,
         date: addMonthsToDateISO(date, i),
@@ -326,36 +317,37 @@ export default function AddEntryForm({
         installmentIndex: i + 1,
         installmentCount: months,
       }));
-      const createdIds = await addExpensesBatch(installments);
-
-      // Same best-effort card-linking the single-entry path below does, just
-      // once per installment instead of once - each installment gets its own
-      // CardTransaction, dated and reward-computed against its own month, not
-      // the purchase's original date (P1-14 - installments used to drop the
-      // card entirely, since addExpensesBatch never did this step).
+      // Each installment gets its own CardTransaction, dated and reward-computed
+      // against its own month, not the purchase's original date (P1-14), and the
+      // whole set is saved in one commit: the entries and their card transactions
+      // together, instead of a server round trip per installment.
       const linkedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
       // No card transaction for a ₹0 entry - there is no spend to earn on.
       const matchedCard = isStatementOnlyCard(linkedCard) || parsed === 0 || cardSkipped ? null : linkedCard;
+      let cardTransactions = [];
       if (matchedCard) {
-        for (let i = 0; i < installments.length; i += 1) {
-          const inst = installments[i];
-          try {
-            const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, inst.date);
-            const fields = inferCardRewardFields(matchedCard, inst.category, params, effectiveTravelMultiplier, { bookings: !isTravel });
-            await addCardTransactionAndLink(createdIds[i], {
-              cardId: matchedCard.id,
-              amount: inst.amount,
-              date: inst.date,
-              description: inst.note || inst.category,
-              ...fields,
-            });
-          } catch (err) {
-            reportError(err, 'Saved the installment, but could not link it to the card');
-          }
+        try {
+          cardTransactions = installments.map((inst) => ({
+            cardId: matchedCard.id,
+            amount: inst.amount,
+            date: inst.date,
+            description: inst.note || inst.category,
+            ...inferCardRewardFields(
+              matchedCard,
+              inst.category,
+              resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, inst.date),
+              effectiveTravelMultiplier,
+              { bookings: !isTravel },
+            ),
+          }));
+        } catch (err) {
+          cardTransactions = [];
+          reportError(err, 'Saved the installments, but could not link them to the card');
         }
       }
+      await addExpensesBatch(installments, cardTransactions);
     } else {
-      const newEntryId = await addExpense({
+      const entry = {
         amount: parsed,
         payer,
         category,
@@ -364,6 +356,7 @@ export default function AddEntryForm({
         owedBy: splitType === 'owed' ? owedBy : null,
         splitAmong: splitType === 'custom' ? null : effectiveSplitAmong,
         splitShares: splitType === 'custom' ? parseCustomShares(customShares) : null,
+        splitMode: splitType === 'custom' && f.splitMode === 'ratio' ? 'ratio' : null,
         note: trimmedNote,
         tags,
         date,
@@ -376,31 +369,32 @@ export default function AddEntryForm({
         rewardPoints: parsedPoints,
         skipCardTracking: cardSkipped || null,
         deviceName: deviceName || payer,
-      });
+      };
 
-      // When the payment method names a tracked card, create the card
-      // transaction as a side effect of saving the expense - one form,
-      // two records, joined by id - instead of making that a second,
-      // separate act of discipline in the Cards tab. Best-effort: a
-      // failure here shouldn't undo the expense that already saved fine.
-      // A statement-only card tracks just its statement amounts - copying every entry would double-count them.
+      // When the payment method names a tracked card, the card transaction is
+      // created in the same commit as the expense - one form, two records,
+      // joined by id, in one round trip - instead of making that a second,
+      // separate act of discipline in the Cards tab. A statement-only card
+      // tracks just its statement amounts - copying every entry would double-count them.
       const linkedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
       const matchedCard = isStatementOnlyCard(linkedCard) || parsed === 0 || cardSkipped ? null : linkedCard;
+      let cardTransaction = null;
       if (matchedCard) {
         try {
           const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, date);
-          const fields = inferCardRewardFields(matchedCard, category, params, effectiveTravelMultiplier, { bookings: !isTravel });
-          await addCardTransactionAndLink(newEntryId, {
+          cardTransaction = {
             cardId: matchedCard.id,
             amount: parsed,
             date,
             description: trimmedNote || category,
-            ...fields,
-          });
+            ...inferCardRewardFields(matchedCard, category, params, effectiveTravelMultiplier, { bookings: !isTravel }),
+          };
         } catch (err) {
+          // Working out the card side failed: still save the expense.
           reportError(err, 'Saved the entry, but could not link it to the card');
         }
       }
+      await addExpenseWithCard(entry, cardTransaction);
     }
   }
 

@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.2.4**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.3.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -132,6 +132,18 @@ and kill them if stuck. Never leave one running unattended.
   `shadowOpacity`/`shadowRadius`. react-native-web deprecated those and warns; the helper emits
   `boxShadow` on the web and the native props on the phone. Use `style.pointerEvents`, not the
   `pointerEvents` prop.
+- **One commit per save, and don't wait on the server for long.** An entry and the card
+  transaction it carries are written together (`addExpenseWithCard`, `addExpensesBatch`,
+  `updateExpenseWithCard`): one round trip, all or nothing. Forms wait for the server's
+  acknowledgement for about a second at most (`settleOrHandOff`), because Firestore has
+  already applied the write locally; a late failure is reported afterwards. Don't chain
+  `await`ed writes in a save handler.
+- **A save must not redo the whole screen.** Listeners for big collections (expenses, card
+  transactions) go through `createStableDocs`, which keeps an entry's object until its data
+  changes; list rows are `memo`ized (`EntryRow`) and take stable callbacks. Heavy sums over a
+  card's transactions live in a hook (`useCardRewards`), not inline in the screen: the React
+  Compiler skips a component whose manual `useMemo` it can't preserve, and the lint baseline
+  counts that warning. Measure with the Profiler on a seeded 2,500-entry emulator, not by feel.
 - **The console should be clean.** After UI work, walk all four tabs on a fresh page load and
   read the console; a new error or warning is a bug to fix, not noise to ignore. The seed
   script sets the app's `seed_state` flags, otherwise the members exist twice in the emulator

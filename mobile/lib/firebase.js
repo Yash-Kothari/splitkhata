@@ -361,19 +361,41 @@ export async function signOutUser() {
 let categoriesSeededFlag = false;
 let membersSeededFlag = false;
 
+// Firestore hands over a whole snapshot each time one document changes, and
+// mapping it with `snapshot.docs.map(...)` builds a new object for every
+// document - so every list row and every sum downstream sees "new" data and
+// redoes its work (about 50 ms for a month of entries, on a laptop). This keeps
+// the same object for a document until that document actually changes, so
+// React.memo and useMemo can skip everything that did not.
+function createStableDocs(mapDoc) {
+  const cache = new Map();
+  return (snapshot) => {
+    snapshot.docChanges().forEach((change) => {
+      if (change.type === 'removed') cache.delete(change.doc.id);
+      else cache.set(change.doc.id, mapDoc(change.doc));
+    });
+    return snapshot.docs.map((d) => {
+      let item = cache.get(d.id);
+      if (!item) {
+        item = mapDoc(d);
+        cache.set(d.id, item);
+      }
+      return item;
+    });
+  };
+}
+
 export function subscribeToExpenses(ledger, onData, onError) {
   const targetLedger = normalizeLedger(ledger);
   const q = query(expensesRef, where('ledger', '==', targetLedger), orderBy('date', 'desc'));
+  const toEntries = createStableDocs((d) => ({
+    id: d.id,
+    ...d.data(),
+    createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? null,
+  }));
   return onSnapshot(
     q,
-    (snapshot) => {
-      const entries = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-        createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? null,
-      }));
-      onData(entries);
-    },
+    (snapshot) => onData(toEntries(snapshot)),
     onError,
   );
 }
@@ -513,19 +535,73 @@ export async function addExpense(entry) {
 // docs. Returns each new doc's id, in the same order as `entries`, so a
 // caller can do something per-entry afterward (AddEntryForm's installment
 // card-linking pass needs each installment's own id).
-export async function addExpensesBatch(entries) {
+export async function addExpensesBatch(entries, cardTransactions = []) {
   if (!entries.length) return [];
   const batch = writeBatch(dbInstance);
   const refs = entries.map(() => doc(expensesRef));
   entries.forEach((entry, i) => {
-    batch.set(refs[i], { ...entry, createdAt: serverTimestamp() });
+    const cardTransaction = cardTransactions[i];
+    if (cardTransaction) {
+      // The card side rides in the same commit, so an installment set needs one
+      // round trip instead of one per installment.
+      const cardRef = doc(cardTransactionsRef);
+      batch.set(cardRef, { ...cardTransaction, linkedEntryId: refs[i].id, createdAt: serverTimestamp() });
+      batch.set(refs[i], { ...entry, cardTransactionId: cardRef.id, createdAt: serverTimestamp() });
+    } else {
+      batch.set(refs[i], { ...entry, createdAt: serverTimestamp() });
+    }
   });
   await track(batch.commit(), 'Could not save entries');
   return refs.map((r) => r.id);
 }
 
+// An entry and the card transaction it carries, in one commit - Add Entry used
+// to save the entry, wait for the server, then create and link the card
+// transaction and wait again. Returns the new entry's id.
+export async function addExpenseWithCard(entry, cardTransaction = null) {
+  const [id] = await addExpensesBatch([entry], [cardTransaction]);
+  return id;
+}
+
 export async function updateExpense(id, updates) {
   await track(updateDoc(doc(dbInstance, 'expenses', id), updates), 'Could not save changes');
+}
+
+// Edit Entry's save as one commit: the entry's own fields plus whatever its
+// linked card transaction needs (previously the card side was written and
+// awaited first, then the entry - two server round trips back to back).
+// cardChange is { kind: 'update', id, updates } (same card, new amount/date),
+// { kind: 'replace', oldId, newData } (drop the old one and/or create a new
+// one) or { kind: 'none', id } (leave the link as it is). The entry's
+// cardTransactionId is set to match.
+export async function updateExpenseWithCard(entryId, updates, cardChange = { kind: 'none', id: null }) {
+  const batch = writeBatch(dbInstance);
+  let cardTransactionId = cardChange.id ?? null;
+  if (cardChange.kind === 'update' && cardChange.id) {
+    batch.update(doc(dbInstance, 'cardTransactions', cardChange.id), cardChange.updates);
+  } else if (cardChange.kind === 'replace') {
+    if (cardChange.oldId) batch.delete(doc(dbInstance, 'cardTransactions', cardChange.oldId));
+    cardTransactionId = null;
+    if (cardChange.newData) {
+      const newRef = doc(cardTransactionsRef);
+      batch.set(newRef, { ...cardChange.newData, createdAt: serverTimestamp() });
+      cardTransactionId = newRef.id;
+    }
+  }
+  batch.update(doc(dbInstance, 'expenses', entryId), { ...updates, cardTransactionId });
+  try {
+    await track(batch.commit(), 'Could not save changes');
+  } catch (err) {
+    // The entry points at a card transaction that no longer exists (deleted in
+    // the Cards tab): updating it fails the whole commit. Save the entry
+    // itself as it was before this change, and say so.
+    if (err?.code === 'not-found' && cardChange.kind === 'update') {
+      reportError(err, 'Saved the entry, but its linked card transaction no longer exists');
+      await updateExpense(entryId, { ...updates, cardTransactionId });
+      return;
+    }
+    throw err;
+  }
 }
 
 export async function deleteExpense(id) {
@@ -1495,16 +1571,14 @@ export async function deleteCreditCardFromDb(cardId) {
 
 export function subscribeToCardTransactions(onData, onError) {
   const q = query(cardTransactionsRef, orderBy('date', 'desc'));
+  const toTransactions = createStableDocs((d) => ({
+    id: d.id,
+    ...d.data(),
+    createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? null,
+  }));
   return onSnapshot(
     q,
-    (snapshot) =>
-      onData(
-        snapshot.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-          createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? null,
-        })),
-      ),
+    (snapshot) => onData(toTransactions(snapshot)),
     onError,
   );
 }

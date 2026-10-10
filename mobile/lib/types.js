@@ -21,6 +21,7 @@
  * @property {string|null} [owedBy] - only for splitType 'owed'
  * @property {string[]|null} [splitAmong] - a subset of members, for splitType 'shared'; null = everyone
  * @property {Object<string, number>|null} [splitShares] - member -> share count, for splitType 'custom'
+ * @property {'ratio'|null} [splitMode] - 'ratio' when splitShares were entered as parts (2 and 3) rather than amounts; the maths is identical, this only decides how the form reopens
  * @property {string} [note]
  * @property {string} date - YYYY-MM-DD
  * @property {'household'|'travel'} ledger
