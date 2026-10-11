@@ -11,6 +11,7 @@ import {
   getCardBillingCycleKey,
   isStatementOnlyCard,
   parseAmountInput,
+  getRewardCreditDate,
 } from '../lib/utils';
 
 function formatReward(amount, unit) {
@@ -27,7 +28,9 @@ function formatCycleMonthLabel(cycle) {
 }
 
 // RN port of web's BillingCycleRow (inside CardsManager.jsx).
-function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSaveError }) {
+// `bare` drops the row's own box and stacks Bill above Reward, for use inside a
+// card (the Last Statement tile) that is already narrow.
+function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSaveError, bare = false }) {
   const [billDraft, setBillDraft] = useState('');
   const [pointsDraft, setPointsDraft] = useState('');
   const [saving, setSaving] = useState(false);
@@ -94,12 +97,12 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
   }
 
   return (
-    <View className="rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3">
+    <View className={bare ? '' : 'rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3'}>
       <Text className="font-body-semibold text-sm text-ink mb-2">
         {formatDate(cycle.cycleStart)} – {formatDate(cycle.cycleEnd)}
       </Text>
-      <View className="flex-row gap-3">
-        <View className="flex-1">
+      <View className={bare ? 'gap-3' : 'flex-row gap-3'}>
+        <View className={bare ? '' : 'flex-1'}>
           <Text className="font-body text-xs text-muted-text">Bill</Text>
           <Text className="font-mono text-xs text-ink">Expected {formatCurrency(expectedBill)}</Text>
           {bill && bill.carryIn !== 0 ? (
@@ -136,7 +139,7 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
           </Pressable>
         </View>
         {!isStatementOnlyCard(card) && (
-        <View className="flex-1">
+        <View className={bare ? 'border-t border-ink/10 pt-3' : 'flex-1'}>
           <Text className="font-body text-xs text-muted-text">Reward</Text>
           <Text className="font-mono text-xs text-ink">Expected {formatReward(expectedReward, rewardUnit)}</Text>
           {pointsConfirmed ? (
@@ -165,18 +168,65 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
   );
 }
 
+// Closed billing cycles that have transactions, newest first.
+function listPastCycles(card, cardTxns, today) {
+  const earliestTxnDate = cardTxns.length > 0 ? cardTxns.reduce((min, t) => (t.date < min ? t.date : min), cardTxns[0].date) : null;
+  if (!earliestTxnDate) return [];
+  return listRecentCardCycles(card.billingCycleDay ?? 1, today, 60)
+    .slice(1)
+    .filter((cyc) => cyc.cycleEnd > earliestTxnDate);
+}
+
+const cycleRecordOf = (cardBillingCycles, cardId, cycle) =>
+  cardBillingCycles.find((c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(cardId, cycle.cycleStart));
+
+// The most recent closed statement, up where the card's totals are: its bill
+// and reward (expected, then the bank's figure once you Confirm it), whether it
+// is paid, and the day the reward lands. It writes the same fields as the
+// Billing Cycle History row, which keeps the older statements.
+export function LastStatementCard({ card, cardTxns, cardBillingCycles, today, ledger, onSaveError }) {
+  const cycle = listPastCycles(card, cardTxns, today)[0];
+  if (!cycle) return null;
+  const creditDate = getRewardCreditDate(card, cycle.cycleEnd);
+  const credited = creditDate <= today;
+  const result = ledger.cycleRewards[cycle.cycleStart];
+  const unit = result?.unit ?? ledger.unit;
+  return (
+    <Card className="p-4">
+      <View className="flex-row items-baseline justify-between mb-0.5">
+        <Text className="font-display text-base text-ink">Last Statement</Text>
+        <Text className="font-body text-2xs text-muted-text">Closed {formatDate(cycle.cycleEnd)}</Text>
+      </View>
+      {isStatementOnlyCard(card) ? null : (
+        <Text className={`font-body-semibold text-2xs mb-2 ${credited ? 'text-ledger-green' : 'text-muted-text'}`}>
+          {unit === 'points' ? 'Points' : 'Cashback'} {credited ? 'credited' : 'credits'} {formatDate(creditDate)}
+        </Text>
+      )}
+      <BillingCycleRow
+        key={cycle.cycleKey}
+        card={card}
+        cycle={cycle}
+        transactions={cardTxns}
+        cycleRecord={cycleRecordOf(cardBillingCycles, card.id, cycle)}
+        ledger={ledger}
+        onSaveError={onSaveError}
+        bare
+      />
+    </Card>
+  );
+}
+
 // RN port of the "Billing Cycle History" section inside web's CardsManager.
-export default function CardBillingHistory({ card, cardTxns, cardBillingCycles, today, onSaveError }) {
+export default function CardBillingHistory({ card, cardTxns, cardBillingCycles, today, ledger: ledgerProp, skipLatest = false, onSaveError }) {
   const [historyYear, setHistoryYear] = useState(null);
   const [historyCycleKey, setHistoryCycleKey] = useState(null);
-  const ledger = computeCardRewardLedger(card, cardTxns, today);
+  // The ledger is worked out once on the Cards screen and passed in; computing it
+  // here is only the fallback for a caller that doesn't have it.
+  const ledger = ledgerProp || computeCardRewardLedger(card, cardTxns, today);
 
-  const earliestTxnDate = cardTxns.length > 0 ? cardTxns.reduce((min, t) => (t.date < min ? t.date : min), cardTxns[0].date) : null;
-  const pastCycles = earliestTxnDate
-    ? listRecentCardCycles(card.billingCycleDay ?? 1, today, 60)
-        .slice(1)
-        .filter((cyc) => cyc.cycleEnd > earliestTxnDate)
-    : [];
+  // With the Last Statement tile above showing the newest closed statement,
+  // this keeps the older ones (so each statement has exactly one set of boxes).
+  const pastCycles = listPastCycles(card, cardTxns, today).slice(skipLatest ? 1 : 0);
 
   if (pastCycles.length === 0) return null;
 
@@ -192,8 +242,7 @@ export default function CardBillingHistory({ card, cardTxns, cardBillingCycles, 
     ? historyCycleKey
     : cyclesInHistoryYear[0]?.cycleKey || null;
   const selectedHistoryCycle = cyclesInHistoryYear.find((c) => c.cycleKey === effectiveHistoryCycleKey) || null;
-  const cycleRecordFor = (cycle) =>
-    cardBillingCycles.find((c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card.id, cycle.cycleStart));
+  const cycleRecordFor = (cycle) => cycleRecordOf(cardBillingCycles, card.id, cycle);
 
   return (
     <Card className="p-4 mb-4">

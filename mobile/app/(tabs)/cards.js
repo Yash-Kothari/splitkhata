@@ -32,7 +32,7 @@ import { useSettingsModal } from '../../lib/SettingsModalContext';
 import Card from '../../components/Card';
 import CardTransactionForm from '../../components/CardTransactionForm';
 import CardTransactionRow from '../../components/CardTransactionRow';
-import CardBillingHistory from '../../components/CardBillingHistory';
+import CardBillingHistory, { LastStatementCard } from '../../components/CardBillingHistory';
 import CardBillsSummary from '../../components/CardBillsSummary';
 import CardRewardCredits from '../../components/CardRewardCredits';
 import AppHeader from '../../components/AppHeader';
@@ -232,6 +232,16 @@ export default function Cards() {
             <View className="order-2 lg:order-1 lg:flex-1 px-4">
               <CardTransactionForm key={selectedCard.id} card={selectedCard} cardTxns={cardTxns} onSaveError={(err) => reportError(err, 'Could not save transaction')} />
 
+              <CardBillingHistory
+                card={selectedCard}
+                cardTxns={cardTxns}
+                cardBillingCycles={cardBillingCycles}
+                today={today}
+                ledger={ledger}
+                skipLatest
+                onSaveError={(err) => reportError(err, 'Could not save billing cycle')}
+              />
+
               <Card className="p-4 mb-4">
                 <View className="flex-row items-center justify-between gap-2 mb-3">
                   <Text className="font-display text-base text-ink">Transactions</Text>
@@ -258,14 +268,6 @@ export default function Cards() {
                   ))
                 )}
               </Card>
-
-              <CardBillingHistory
-                card={selectedCard}
-                cardTxns={cardTxns}
-                cardBillingCycles={cardBillingCycles}
-                today={today}
-                onSaveError={(err) => reportError(err, 'Could not save billing cycle')}
-              />
             </View>
 
             <View className="order-1 lg:order-2 w-full lg:w-96 px-4" style={{ gap: 16 }}>
@@ -336,6 +338,15 @@ export default function Cards() {
                   )}
                 </View>
               </Card>
+
+              <LastStatementCard
+                card={selectedCard}
+                cardTxns={cardTxns}
+                cardBillingCycles={cardBillingCycles}
+                today={today}
+                ledger={ledger}
+                onSaveError={(err) => reportError(err, 'Could not save billing cycle')}
+              />
 
               {annualValue && (
                 <Card className="p-4">
