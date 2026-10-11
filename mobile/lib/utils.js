@@ -2120,6 +2120,27 @@ export function listRecentCardCycles(billingCycleDay, today, count = 12) {
   return cycles;
 }
 
+// A card's transactions grouped by the statement they fall in, newest first.
+// The current cycle is always there, even when nothing has been spent in it yet.
+// status: 'open' (this cycle, not billed yet), 'upcoming' (a post-dated cycle) or
+// 'closed' (a statement that has been generated). Within a group the input order
+// is kept. Pure.
+export function groupTransactionsByCycle(transactions, billingCycleDay, today) {
+  const groups = new Map();
+  const groupFor = (date) => {
+    const { cycleStart, cycleEnd } = getCardCycleForDate(date, billingCycleDay);
+    if (!groups.has(cycleStart)) groups.set(cycleStart, { cycleStart, cycleEnd, txns: [] });
+    return groups.get(cycleStart);
+  };
+  groupFor(today);
+  for (const t of transactions || []) {
+    if (t.date) groupFor(t.date).txns.push(t);
+  }
+  return [...groups.values()]
+    .sort((a, b) => b.cycleStart.localeCompare(a.cycleStart))
+    .map((g) => ({ ...g, status: g.cycleStart > today ? 'upcoming' : g.cycleEnd > today ? 'open' : 'closed' }));
+}
+
 // Whole days from ISO date `a` to ISO date `b` (positive when b is later).
 function daysBetweenISO(a, b) {
   return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);

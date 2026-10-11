@@ -101,8 +101,8 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
       <Text className="font-body-semibold text-sm text-ink mb-2">
         {formatDate(cycle.cycleStart)} – {formatDate(cycle.cycleEnd)}
       </Text>
-      <View className={bare ? 'gap-3' : 'flex-row gap-3'}>
-        <View className={bare ? '' : 'flex-1'}>
+      <View className={bare ? 'gap-3' : 'flex-col sm:flex-row gap-3'}>
+        <View className={bare ? '' : 'sm:flex-1'}>
           <Text className="font-body text-xs text-muted-text">Bill</Text>
           <Text className="font-mono text-xs text-ink">Expected {formatCurrency(expectedBill)}</Text>
           {bill && bill.carryIn !== 0 ? (
@@ -139,7 +139,7 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
           </Pressable>
         </View>
         {!isStatementOnlyCard(card) && (
-        <View className={bare ? 'border-t border-ink/10 pt-3' : 'flex-1'}>
+        <View className={bare ? 'border-t border-ink/10 pt-3' : 'border-t border-ink/10 pt-3 sm:border-t-0 sm:pt-0 sm:flex-1'}>
           <Text className="font-body text-xs text-muted-text">Reward</Text>
           <Text className="font-mono text-xs text-ink">Expected {formatReward(expectedReward, rewardUnit)}</Text>
           {pointsConfirmed ? (

@@ -31,7 +31,7 @@ import { useUndoDelete } from '../../lib/useUndoDelete';
 import { useSettingsModal } from '../../lib/SettingsModalContext';
 import Card from '../../components/Card';
 import CardTransactionForm from '../../components/CardTransactionForm';
-import CardTransactionRow from '../../components/CardTransactionRow';
+import CardTransactionGroups from '../../components/CardTransactionGroups';
 import CardBillingHistory, { LastStatementCard } from '../../components/CardBillingHistory';
 import CardBillsSummary from '../../components/CardBillsSummary';
 import CardRewardCredits from '../../components/CardRewardCredits';
@@ -252,21 +252,16 @@ export default function Cards() {
                     className="h-9 px-3 text-xs font-body rounded-lg border border-ink/15 bg-paper text-ink w-36 shadow-2xs"
                   />
                 </View>
-                {filteredTxns.length === 0 ? (
-                  <Text className="font-body text-sm text-muted-text text-center py-6">No transactions yet.</Text>
-                ) : (
-                  filteredTxns.map((txn, i) => (
-                    <CardTransactionRow
-                      key={txn.id}
-                      txn={txn}
-                      card={selectedCard}
-                      cardTxns={cardTxns}
-                      cycleReward={ledger.cycleRewards[getCardCycleForDate(txn.date, selectedCard.billingCycleDay ?? 1).cycleStart] || null}
-                      onDelete={handleDelete}
-                      isLast={i === filteredTxns.length - 1}
-                    />
-                  ))
-                )}
+                <CardTransactionGroups
+                  card={selectedCard}
+                  cardTxns={cardTxns}
+                  shownTxns={filteredTxns}
+                  searching={txnSearch.trim() !== ''}
+                  ledger={ledger}
+                  cardBillingCycles={cardBillingCycles}
+                  today={today}
+                  onDelete={handleDelete}
+                />
               </Card>
             </View>
 

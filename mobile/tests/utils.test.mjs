@@ -120,6 +120,7 @@ import {
   getCardYearRewards,
   computeCardBillSummary,
   getLastEntryDefaults,
+  groupTransactionsByCycle,
   suggestFromNote,
   sortTripsRecentFirst,
   isWithdrawalEntry,
@@ -2703,6 +2704,28 @@ test('ratio mode accepts any positive parts and works out each person\'s money',
   const odd = customShareAmounts(100, { A: 1, B: 1, C: 1 }, ['A', 'B', 'C']);
   assert.equal(Math.round((odd.A + odd.B + odd.C) * 100), 10000, 'thirds still add to the whole');
   assert.deepEqual(customShareAmounts(500, { Yash: 0, Kruti: 0 }, ['Yash', 'Kruti']), {});
+});
+
+test('groupTransactionsByCycle puts the open cycle first, then each statement newest first', () => {
+  const txn = (id, date, amount = 100) => ({ id, date, amount });
+  // statement day 10, today 11 Oct 2026: the open cycle is 10 Oct - 10 Nov
+  const groups = groupTransactionsByCycle(
+    [txn('a', '2026-10-06'), txn('b', '2026-09-10'), txn('c', '2026-09-30'), txn('d', '2026-08-15'), txn('e', '2026-10-10')],
+    10,
+    '2026-10-11',
+  );
+  assert.deepEqual(groups.map((g) => [g.cycleStart, g.cycleEnd, g.status, g.txns.map((t) => t.id)]), [
+    ['2026-10-10', '2026-11-10', 'open', ['e']],
+    ['2026-09-10', '2026-10-10', 'closed', ['a', 'b', 'c']],
+    ['2026-08-10', '2026-09-10', 'closed', ['d']],
+  ]);
+  // nothing spent in the open cycle yet: it is still the first group, empty
+  const empty = groupTransactionsByCycle([txn('a', '2026-10-06')], 10, '2026-10-11');
+  assert.deepEqual(empty.map((g) => [g.status, g.txns.length]), [['open', 0], ['closed', 1]]);
+  // no transactions at all
+  assert.deepEqual(groupTransactionsByCycle([], 10, '2026-10-11').map((g) => g.status), ['open']);
+  // a post-dated transaction lands in a cycle that has not started
+  assert.equal(groupTransactionsByCycle([txn('f', '2026-11-20')], 10, '2026-10-11')[0].status, 'upcoming');
 });
 
 test('Add Entry remembers who the last shared entry was split among', () => {
