@@ -40,7 +40,9 @@ export default function CardTransactionGroups({ card, cardTxns, shownTxns, searc
     const closed = g.status === 'closed';
     const withYear = g.cycleStart.slice(0, 4) !== thisYear || g.cycleEnd.slice(0, 4) !== thisYear;
     const period = `${formatDate(g.cycleStart, withYear)} – ${formatDate(g.cycleEnd, withYear)}`;
-    const bill = closed ? (ledger.cycleBills[g.cycleStart]?.statement ?? spend) : spend;
+    // The bill the ledger works out - transactions, less last statement's cashback credit.
+    const bill = ledger.cycleBills[g.cycleStart]?.statement ?? spend;
+    const credits = (ledger.cashbackCredits || []).filter((c) => c.cycleStart === g.cycleStart);
     const billShown = closed && record?.billConfirmedAt != null && record.actualBillAmount != null ? record.actualBillAmount : bill;
     const result = ledger.cycleRewards[g.cycleStart];
     const paid = record?.paidAt != null;
@@ -76,11 +78,28 @@ export default function CardTransactionGroups({ card, cardTxns, shownTxns, searc
             </Text>
             {!statementOnly && result ? (
               <Text className="font-body text-2xs text-muted-text">
-                {formatReward(result.totalReward, result.unit)} {result.unit === 'points' ? 'points' : 'cashback'}
+                {formatReward(result.totalReward, result.unit)}{result.unit === 'points' ? '' : ' cashback'}
               </Text>
             ) : null}
           </View>
         </Pressable>
+        {open && !searching
+          ? credits.map((c) => (
+              <View key={c.sourceCycleStart} className="flex-row items-center justify-between rounded-lg bg-ledger-green/10 px-3 py-2 mb-2" style={{ gap: 8 }}>
+                <View className="flex-1">
+                  <Text className="font-body-semibold text-xs text-ledger-green" numberOfLines={1}>
+                    Cashback credit · {formatDate(c.date)}
+                  </Text>
+                  <Text className="font-body text-2xs text-muted-text" numberOfLines={2}>
+                    From the {formatDate(c.sourceCycleStart, c.sourceCycleStart.slice(0, 4) !== thisYear || c.sourceCycleEnd.slice(0, 4) !== thisYear)} –{' '}
+                    {formatDate(c.sourceCycleEnd, c.sourceCycleStart.slice(0, 4) !== thisYear || c.sourceCycleEnd.slice(0, 4) !== thisYear)} statement ·{' '}
+                    {c.confirmed ? 'the bank\'s figure' : 'expected - confirm it in Last Statement'} · added automatically
+                  </Text>
+                </View>
+                <Text className="font-mono-bold text-sm text-ledger-green">−{formatCurrency(c.amount)}</Text>
+              </View>
+            ))
+          : null}
         {open ? (
           rows.length === 0 ? (
             <Text className="font-body text-xs text-muted-text pb-3">No transactions in this cycle yet.</Text>

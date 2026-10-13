@@ -2200,7 +2200,7 @@ export function computeCardDueReminders(cards, cardTransactions, cardBillingCycl
     const daysUntilDue = daysBetweenISO(today, dueCycle.dueDate);
     if (daysUntilDue > daysAhead) continue;
     const cardTxns = (cardTransactions || []).filter((t) => t.cardId === card.id);
-    const ledger = computeCardRewardLedger(card, cardTxns, today);
+    const ledger = computeCardRewardLedger(card, cardTxns, today, cardBillingCycles);
     const amountDue = ledger.cycleBills[dueCycle.cycleStart]?.statement ?? 0;
     if (amountDue <= 0) continue;
     const cycleRecord = (cardBillingCycles || []).find(
@@ -2268,9 +2268,10 @@ export function computeCardBillSummary(cards, cardTransactions, cardBillingCycle
         },
       };
     } else {
-      const ledger = computeCardRewardLedger(card, cardTxns, today);
+      const ledger = computeCardRewardLedger(card, cardTxns, today, cardBillingCycles);
       const open = getCardCycleForDate(today, card.billingCycleDay ?? 1);
-      const nextAmount = ledger.cycleBills[open.cycleStart]?.statement ?? 0;
+      // A cycle holding only last statement's cashback credit is a credit balance, not a bill.
+      const nextAmount = Math.max(0, ledger.cycleBills[open.cycleStart]?.statement ?? 0);
 
       let billed = null;
       const dueCycle = getCardDueCycle(card, today);
@@ -3600,7 +3601,13 @@ const CARD_STATEMENT_ROUNDED = new Set(['hdfc_diners_slab_milestone']);
  * @param {CardTransaction[]} cardTxns
  * @param {string} [today]
  */
-export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
+// A cashback card's reward comes back to you as a credit on a later statement
+// (e.g. HSBC Live+'s 12 Oct credit lands in the 10 Oct - 10 Nov statement). From
+// this date on the app adds that credit to the bill by itself; earlier credits
+// were typed in by hand as negative transactions and stay as they are.
+export const CASHBACK_CREDIT_LINES_FROM = '2026-10-01';
+
+export function computeCardRewardLedger(card, cardTxns, today = todayISO(), cardBillingCycles = []) {
   const billingDay = card?.billingCycleDay ?? 1;
   const byCycle = new Map();
   for (const t of cardTxns) {
@@ -3701,6 +3708,42 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
     }
   }
 
+  // The bank's cashback comes off a later statement: put each statement's reward
+  // (your confirmed figure once you've entered it, else the expected one) on the
+  // bill of the cycle that contains its credit date - even a cycle with no
+  // transactions yet. Rupee cashback cards only; points never come back as a credit.
+  const cashbackCredits = [];
+  if (unit === 'inr' && !isStatementOnlyCard(card)) {
+    for (const l of lumps) {
+      // Only a statement that has closed: the open cycle's reward is still moving.
+      if (l.kind !== 'statement' || l.date < CASHBACK_CREDIT_LINES_FROM || l.cycleEnd > today) continue;
+      const record = (cardBillingCycles || []).find(
+        (c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card?.id, l.cycleStart),
+      );
+      const confirmed = record?.pointsConfirmedAt != null && record.actualRewardCredited != null;
+      const amount = confirmed ? Math.round((Number(record.actualRewardCredited) - (l.separate || 0)) * 100) / 100 : l.amount;
+      if (!amount) continue;
+      const landsIn = getCardCycleForDate(l.date, billingDay);
+      cashbackCredits.push({
+        date: l.date,
+        amount,
+        confirmed,
+        sourceCycleStart: l.cycleStart,
+        sourceCycleEnd: l.cycleEnd,
+        cycleStart: landsIn.cycleStart,
+        cycleEnd: landsIn.cycleEnd,
+      });
+      const bill = cycleBills[landsIn.cycleStart] || { rawTotal: 0, carryIn: 0, statement: 0, carryOut: 0 };
+      const round2 = (n) => Math.round(n * 100) / 100;
+      cycleBills[landsIn.cycleStart] = {
+        ...bill,
+        rawTotal: round2(bill.rawTotal - amount),
+        statement: round2(bill.statement - amount),
+        cashbackCredit: round2((bill.cashbackCredit || 0) + amount),
+      };
+    }
+  }
+
   const credited = lumps.filter((l) => l.date <= today).reduce((sum, l) => sum + l.amount, 0);
   const pendingByDate = {};
   for (const l of lumps) {
@@ -3710,7 +3753,7 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO()) {
     .map(([date, amount]) => ({ date, amount }))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  return { total, credited, pending, cycleRewards, cycleBills, unit, capUsage: ctx, lumps };
+  return { total, credited, pending, cycleRewards, cycleBills, unit, capUsage: ctx, lumps, cashbackCredits };
 }
 
 export const CREDIT_CARDS_KEY = 'splitkhata_credit_cards';

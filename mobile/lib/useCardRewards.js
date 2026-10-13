@@ -8,7 +8,7 @@ import { computeCardRewardLedger, applyConfirmedRewards, getCardYearRewards, com
 export function useCardRewards(card, cardTxns, cardBillingCycles, today) {
   return useMemo(() => {
     const ledger = card
-      ? computeCardRewardLedger(card, cardTxns, today)
+      ? computeCardRewardLedger(card, cardTxns, today, cardBillingCycles)
       : { total: 0, credited: 0, pending: [], cycleRewards: {}, unit: 'inr', lumps: [] };
     // What the bank really credited (your confirmed figures) replaces the
     // calculated amounts wherever you've entered one - see applyConfirmedRewards.

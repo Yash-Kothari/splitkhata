@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.5.0**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.6.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -309,6 +309,12 @@ local testing predicted.
 ## 11. Known gotchas
 
 - The browser pane may not composite screenshots when hidden; use text and style reads then.
+- **Cashback comes back as a credit on the next statement.** For every rupee cashback card (not
+  points, not statement-only) the ledger puts each *closed* statement's reward (your confirmed figure,
+  else the expected one) on the bill of the cycle containing its credit date (`cashbackCredits`,
+  `cycleBills[].cashbackCredit`). Nothing is stored, so never also enter it as a negative transaction.
+  It only applies to credits dated on/after `CASHBACK_CREDIT_LINES_FROM` (2026-10-01); older ones
+  were typed in by hand as negative transactions.
 - A statement-only card entered with the statement date falls inside the open cycle,
   which is why it's tracked per statement (paid/unpaid) and never as a "next statement".
 - An old "Cash withdrawal" checkbox once let ordinary cash purchases be flagged as

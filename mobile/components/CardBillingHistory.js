@@ -105,6 +105,9 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
         <View className={bare ? '' : 'sm:flex-1'}>
           <Text className="font-body text-xs text-muted-text">Bill</Text>
           <Text className="font-mono text-xs text-ink">Expected {formatCurrency(expectedBill)}</Text>
+          {bill && bill.cashbackCredit ? (
+            <Text className="font-body text-2xs text-muted-text">after {formatCurrency(bill.cashbackCredit)} cashback credit from the last statement</Text>
+          ) : null}
           {bill && bill.carryIn !== 0 ? (
             <Text className="font-body text-2xs text-muted-text">{signedRupees(bill.carryIn)} carried in from last statement</Text>
           ) : null}

@@ -3700,17 +3700,58 @@ test('computeCardBillSummary - estimated next statement and unpaid last statemen
   const r = computeCardBillSummary(cards, txns, paid, '2026-10-07');
   assert.deepEqual(r.people.map((p) => p.owner), ['Kruti', 'Yash']);
   const yash = r.people.find((p) => p.owner === 'Yash');
-  assert.equal(yash.nextTotal, 1800, 'Axis 1500 + HDFC 300 so far this cycle');
+  // last statement's cashback (5% of 2000 and of 700) comes off this cycle's bill
+  assert.equal(yash.nextTotal, 1665, 'Axis 1500 - 100 cashback + HDFC 300 - 35 cashback');
   assert.equal(yash.billedTotal, 2000, 'only Axis last statement is unpaid; HDFC was marked paid');
   assert.equal(yash.cards.find((c) => c.name === 'Axis').next.closesOn, '2026-11-01');
   const kruti = r.people.find((p) => p.owner === 'Kruti');
   assert.equal(kruti.nextTotal, 0);
   assert.equal(kruti.billedTotal, 400);
   assert.equal(kruti.cards.length, 1, 'a card with nothing to show is left out');
-  assert.equal(r.nextTotal, 1800);
+  assert.equal(r.nextTotal, 1665);
   assert.equal(r.billedTotal, 2400);
   assert.equal(kruti.cards[0].billed.dueDate, '2026-10-21');
   assert.equal(kruti.cards[0].billed.overdue, false);
+});
+
+test('cashback cards: last statement\'s reward is taken off the bill it credits against', () => {
+  // HSBC Live+: statement day 10, reward credits 2 days after the statement closes
+  const live = { id: 'l', name: 'Live+', billingCycleDay: 10, rewardStrategy: 'hsbc_tiered_cashback_aggregate', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }] };
+  const txns = [
+    { id: 'a', cardId: 'l', date: '2026-09-15', amount: 1000, isBonusEligible: false }, // statement 10 Sep - 10 Oct: 1.5% = 15
+    { id: 'b', cardId: 'l', date: '2026-10-12', amount: 400, isBonusEligible: false },  // open cycle 10 Oct - 10 Nov
+  ];
+  const ledger = computeCardRewardLedger(live, txns, '2026-10-13');
+  const expectedReward = ledger.cycleRewards['2026-09-10'].totalReward;
+  assert.equal(expectedReward, 15);
+  assert.equal(ledger.cycleBills['2026-09-10'].statement, 1000, 'the closed statement itself is untouched');
+  assert.equal(ledger.cycleBills['2026-10-10'].statement, 385, 'open cycle: 400 spend - 15 expected cashback');
+  assert.equal(ledger.cycleBills['2026-10-10'].cashbackCredit, 15);
+  assert.deepEqual(ledger.cashbackCredits.map((c) => [c.date, c.amount, c.confirmed, c.cycleStart]), [['2026-10-12', 15, false, '2026-10-10']]);
+  // the bank's figure replaces the expected one once you have confirmed it
+  const confirmed = computeCardRewardLedger(live, txns, '2026-10-13', [{ cardId: 'l', cycleStart: '2026-09-10', pointsConfirmedAt: '2026-10-12', actualRewardCredited: 18 }]);
+  assert.equal(confirmed.cycleBills['2026-10-10'].statement, 382);
+  assert.equal(confirmed.cashbackCredits[0].confirmed, true);
+  // a cycle with no transactions yet still carries the credit (a negative bill)
+  const empty = computeCardRewardLedger(live, [txns[0]], '2026-10-13');
+  assert.equal(empty.cycleBills['2026-10-10'].statement, -15);
+  // spend and rewards are unaffected - the credit is only on the bill
+  assert.equal(ledger.cycleRewards['2026-10-10'].totalReward, 6);
+});
+
+test('cashback credit lines: not for points cards, statement-only cards, or credits before the start date', () => {
+  const diners = { id: 'd', name: 'Diners', billingCycleDay: 19, rewardStrategy: 'hdfc_diners_slab_milestone', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone }] };
+  const dTxns = [{ id: 'x', cardId: 'd', date: '2026-09-25', amount: 50000, category: 'regular' }];
+  const dLedger = computeCardRewardLedger(diners, dTxns, '2026-10-25');
+  assert.deepEqual(dLedger.cashbackCredits, []);
+  assert.ok(Object.values(dLedger.cycleBills).every((b) => !b.cashbackCredit), 'points never come back as a credit');
+  const stmt = { id: 's', name: 'SBI', billingCycleDay: 18, rewardStrategy: 'annual_milestone_only', strategyParamsHistory: [] };
+  assert.deepEqual(computeCardRewardLedger(stmt, [{ id: 'y', cardId: 's', date: '2026-09-20', amount: 20524 }], '2026-10-25').cashbackCredits, []);
+  // a credit dated before 2026-10-01 was entered by hand as a negative transaction: not added again
+  const live = { id: 'l', name: 'Live+', billingCycleDay: 10, rewardStrategy: 'hsbc_tiered_cashback_aggregate', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }] };
+  const old = computeCardRewardLedger(live, [{ id: 'o', cardId: 'l', date: '2026-08-15', amount: 1000, isBonusEligible: false }], '2026-10-13');
+  assert.deepEqual(old.cashbackCredits, [], 'its credit date (12 Sep) is before the start date');
+  assert.equal(old.cycleBills['2026-08-10'].statement, 1000);
 });
 
 test('computeCardBillSummary - a statement-only card has no "next statement"; each statement is unpaid until marked paid', () => {
