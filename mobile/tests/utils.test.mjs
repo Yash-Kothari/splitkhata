@@ -2188,8 +2188,9 @@ test('inferCardRewardFields (HSBC Live+) infers the bonus tier and exclusions by
   assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'hsbc_tiered_cashback_aggregate' }, 'Amazon Shopping'), { channel: null, isBonusEligible: false });
 });
 
-test('inferCardRewardFields (Axis Supermoney) defaults to the bonus pool unless a keyword excludes it', () => {
-  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'axis_supermoney_dual_pool' }, 'Groceries'), { channel: null, isBonusEligible: true });
+test('inferCardRewardFields (Axis Supermoney) defaults to the 1% pool unless a keyword excludes it', () => {
+  // 3% is only for super.money app spend and is ticked on purpose
+  assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'axis_supermoney_dual_pool' }, 'Groceries'), { channel: null, isBonusEligible: false });
   assert.deepEqual(inferCardRewardFields({ rewardStrategy: 'axis_supermoney_dual_pool' }, 'Telecom'), { channel: 'excluded', isBonusEligible: false });
 });
 
@@ -2213,13 +2214,21 @@ test('rankCardsForEntry ranks tracked cards by what each would actually earn, be
     strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool }],
   };
   // ₹2000 spent on "Dining" - HSBC Live+'s 10% bonus tier (round(2000*10/100)=200) beats
-  // Axis's 3% super.money tier (floor(2000*3/100)=60).
+  // Axis's 1% default (floor(2000*1/100)=20).
   const ranked = rankCardsForEntry([axisCard, hsbcCard], [], 2000, 'Dining', '2026-08-10');
   assert.equal(ranked.length, 2);
   assert.equal(ranked[0].card.id, 'c1', 'HSBC Live+ earns more on this dining spend than Axis');
   assert.equal(ranked[0].earned, 200);
-  assert.equal(ranked[1].earned, 60);
+  assert.equal(ranked[1].earned, 20);
   assert.ok(ranked[0].earned >= ranked[1].earned, 'sorted best-first');
+});
+
+test('Axis: a super.money line you tick earns 3%, an untouched one earns 1%, and the 3% is held to what the 1% lines earned', () => {
+  const axis = { id: 'x', billingCycleDay: 16, rewardStrategy: 'axis_supermoney_dual_pool', strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool }] };
+  const untouched = previewTransactionReward(axis, [], { date: '2026-09-20', amount: 10000, ...defaultCardTxnFields(axis) });
+  assert.equal(untouched.earned, 100, '1% of 10,000');
+  const ticked = previewTransactionReward(axis, [], { date: '2026-09-20', amount: 1000, ...defaultCardTxnFields(axis), isBonusEligible: true });
+  assert.equal(ticked.earned, 30, '3% of 1,000 (within the 100 floor on the 3% pool)');
 });
 
 test('rankCardsForEntry returns [] until there is an amount, a date, or any tracked card', () => {
@@ -3283,7 +3292,7 @@ test('an untouched card form means the same thing the pickers show', () => {
   assert.deepEqual(defaultCardTxnFields({ rewardStrategy: 'hsbc_premier_flat_capped' }), { category: 'regular' });
   assert.deepEqual(defaultCardTxnFields({ rewardStrategy: 'sbi_two_channel_cashback' }), { channel: 'online' });
   assert.deepEqual(defaultCardTxnFields({ rewardStrategy: 'hsbc_tiered_cashback_aggregate' }), { isBonusEligible: true });
-  assert.deepEqual(defaultCardTxnFields({ rewardStrategy: 'axis_supermoney_dual_pool' }), { isBonusEligible: true });
+  assert.deepEqual(defaultCardTxnFields({ rewardStrategy: 'axis_supermoney_dual_pool' }), { isBonusEligible: false });
   assert.deepEqual(defaultCardTxnFields({ rewardStrategy: 'annual_milestone_only' }), {});
   const sbi = {
     id: 's1', rewardStrategy: 'sbi_two_channel_cashback', billingCycleDay: 10,
@@ -3747,6 +3756,11 @@ test('cashback credit lines: not for points cards, statement-only cards, or cred
   assert.ok(Object.values(dLedger.cycleBills).every((b) => !b.cashbackCredit), 'points never come back as a credit');
   const stmt = { id: 's', name: 'SBI', billingCycleDay: 18, rewardStrategy: 'annual_milestone_only', strategyParamsHistory: [] };
   assert.deepEqual(computeCardRewardLedger(stmt, [{ id: 'y', cardId: 's', date: '2026-09-20', amount: 20524 }], '2026-10-25').cashbackCredits, []);
+  // Axis pays monthly, and far less than its per-line cashback: no automatic credit line
+  const axis = { id: 'x', name: 'Axis Supermoney', billingCycleDay: 16, rewardStrategy: 'axis_supermoney_dual_pool', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool }] };
+  const axisLedger = computeCardRewardLedger(axis, [{ id: 'q', cardId: 'x', date: '2026-09-20', amount: 10000, isBonusEligible: true }], '2026-10-17');
+  assert.deepEqual(axisLedger.cashbackCredits, []);
+  assert.ok(Object.values(axisLedger.cycleBills).every((b) => !b.cashbackCredit), 'its bill is just the spend');
   // a credit dated before 2026-10-01 was entered by hand as a negative transaction: not added again
   const live = { id: 'l', name: 'Live+', billingCycleDay: 10, rewardStrategy: 'hsbc_tiered_cashback_aggregate', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }] };
   const old = computeCardRewardLedger(live, [{ id: 'o', cardId: 'l', date: '2026-08-15', amount: 1000, isBonusEligible: false }], '2026-10-13');

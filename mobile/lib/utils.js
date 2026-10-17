@@ -2917,8 +2917,12 @@ export function defaultCardTxnFields(card) {
     case 'sbi_two_channel_cashback':
       return { channel: 'online' };
     case 'hsbc_tiered_cashback_aggregate':
-    case 'axis_supermoney_dual_pool':
       return { isBonusEligible: true };
+    case 'axis_supermoney_dual_pool':
+      // 1% unless you paid through the super.money app: most spend on this card is
+      // the 1% kind (10 of 85 lines on the first statement earned 3%), so a line
+      // you forget to tick errs low instead of silently high.
+      return { isBonusEligible: false };
     default:
       return {};
   }
@@ -3017,7 +3021,8 @@ export function inferCardRewardFields(card, householdCategory, params, travelMul
       return { channel: null, isBonusEligible: !categoryNameMatches(name, HSBC_LIVE_NON_BONUS_KEYWORDS) };
     case 'axis_supermoney_dual_pool':
       if (categoryNameMatches(name, AXIS_EXCLUDED_KEYWORDS)) return { channel: 'excluded', isBonusEligible: false };
-      return { channel: null, isBonusEligible: true };
+      // 1% by default - see defaultCardTxnFields; 3% is only for super.money app spend.
+      return { channel: null, isBonusEligible: false };
     case 'hsbc_premier_flat_capped':
       // A multiplier typed for this entry means it was a Travel with Points
       // booking, whatever its category is called; the category name alone
@@ -3607,6 +3612,13 @@ const CARD_STATEMENT_ROUNDED = new Set(['hdfc_diners_slab_milestone']);
 // were typed in by hand as negative transactions and stay as they are.
 export const CASHBACK_CREDIT_LINES_FROM = '2026-10-01';
 
+// Cards left out of the automatic credit line because the bank's payout is not
+// "this statement's reward on the next bill". Axis Supermoney pays monthly
+// ("CASHBACK CREDIT SEP26-SMPOS:13~SMQR:60" = Rs 73 for September, against about
+// Rs 1,100 shown as per-line cashback), so an expected credit would be many times
+// too big. Until its real payout rule is known its credits are typed in by hand.
+const CASHBACK_CREDIT_EXCLUDED = new Set(['axis_supermoney_dual_pool']);
+
 export function computeCardRewardLedger(card, cardTxns, today = todayISO(), cardBillingCycles = []) {
   const billingDay = card?.billingCycleDay ?? 1;
   const byCycle = new Map();
@@ -3713,7 +3725,7 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO(), card
   // bill of the cycle that contains its credit date - even a cycle with no
   // transactions yet. Rupee cashback cards only; points never come back as a credit.
   const cashbackCredits = [];
-  if (unit === 'inr' && !isStatementOnlyCard(card)) {
+  if (unit === 'inr' && !isStatementOnlyCard(card) && !CASHBACK_CREDIT_EXCLUDED.has(card?.rewardStrategy)) {
     for (const l of lumps) {
       // Only a statement that has closed: the open cycle's reward is still moving.
       if (l.kind !== 'statement' || l.date < CASHBACK_CREDIT_LINES_FROM || l.cycleEnd > today) continue;
