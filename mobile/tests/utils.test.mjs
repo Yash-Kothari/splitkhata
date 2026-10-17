@@ -2941,11 +2941,12 @@ test('an older stored Diners rule set still gets the insurance monthly cap and g
   assert.equal(ledger.credited, 50, 'grocery points for August land on 2026-09-01');
 });
 
-test('credit dates: Diners statement day, HSBC Live+ +2 days, Axis the 10th of the next month', () => {
+test('credit dates: Diners statement day, HSBC Live+ +2 days, Axis 3 days before the next statement date', () => {
   assert.equal(getRewardCreditDate({ rewardStrategy: 'hdfc_diners_slab_milestone', billingCycleDay: 10 }, '2026-09-10'), '2026-09-10');
   assert.equal(getRewardCreditDate({ rewardStrategy: 'hsbc_tiered_cashback_aggregate', billingCycleDay: 10 }, '2026-09-10'), '2026-09-12');
-  assert.equal(getRewardCreditDate({ rewardStrategy: 'axis_supermoney_dual_pool', billingCycleDay: 10 }, '2026-09-10'), '2026-10-10');
-  assert.equal(getRewardCreditDate({ rewardStrategy: 'axis_supermoney_dual_pool', billingCycleDay: 25 }, '2026-12-25'), '2027-01-10', 'rolls into the next year');
+  // next cycle ends 10 Oct (statement date 9 Oct) -> 3 days before that
+  assert.equal(getRewardCreditDate({ rewardStrategy: 'axis_supermoney_dual_pool', billingCycleDay: 10 }, '2026-09-10'), '2026-10-06');
+  assert.equal(getRewardCreditDate({ rewardStrategy: 'axis_supermoney_dual_pool', billingCycleDay: 25 }, '2026-12-25'), '2027-01-21', 'rolls into the next year');
 });
 
 test('Diners grocery points credit together on the 1st of the next month, the rest on the statement date', () => {
@@ -3748,6 +3749,35 @@ test('cashback cards: last statement\'s reward is taken off the bill it credits 
   assert.equal(ledger.cycleRewards['2026-10-10'].totalReward, 6);
 });
 
+test('Axis: a cycle\'s cashback credits 3 days before the NEXT statement date (the T&C\'s own example)', () => {
+  const axis = { id: 'x', name: 'Axis Supermoney', billingCycleDay: 16, rewardStrategy: 'axis_supermoney_dual_pool', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool }] };
+  // T&C: statement date 15 Feb, cycle 16 Jan - 15 Feb, "credited on 12th March"
+  assert.equal(getRewardCreditDate(axis, '2027-02-16'), '2027-03-12');
+  // this card's first statement: cycle 16 Sep - 15 Oct credits 12 Nov
+  assert.equal(getRewardCreditDate(axis, '2026-10-16'), '2026-11-12');
+  const txns = [
+    { id: 'a', cardId: 'x', date: '2026-09-20', amount: 10000, isBonusEligible: false }, // 1% = 100
+    { id: 'b', cardId: 'x', date: '2026-10-18', amount: 500, isBonusEligible: false },
+  ];
+  const ledger = computeCardRewardLedger(axis, txns, '2026-10-20');
+  assert.deepEqual(ledger.cashbackCredits.map((c) => [c.date, c.amount, c.cycleStart]), [['2026-11-12', 100, '2026-10-16']]);
+  assert.equal(ledger.cycleBills['2026-10-16'].statement, 400, 'the open cycle: 500 spend - 100 cashback credit');
+  // the 3% pool is held to what the other spend earned (with a 100 floor)
+  const capped = computeCardRewardLedger(axis, [
+    { id: 'p', cardId: 'x', date: '2026-09-20', amount: 4000, isBonusEligible: true },  // 120 raw
+    { id: 'q', cardId: 'x', date: '2026-09-21', amount: 9000, isBonusEligible: false }, // 90
+  ], '2026-10-20');
+  assert.equal(capped.cycleRewards['2026-09-16'].totalReward, 190, 'T&C scenario 2: 100 (capped) + 90');
+});
+
+test('Axis exclusions follow the T&C list: gift cards, telecom, utilities, tolls, jewellery and watches earn nothing', () => {
+  const axis = { rewardStrategy: 'axis_supermoney_dual_pool' };
+  for (const category of ['Gift Card', 'Telecom', 'Utilities', 'Toll', 'Jewellery', 'Watch']) {
+    assert.deepEqual(inferCardRewardFields(axis, category), { channel: 'excluded', isBonusEligible: false }, category);
+  }
+  assert.deepEqual(inferCardRewardFields(axis, 'Groceries'), { channel: null, isBonusEligible: false });
+});
+
 test('cashback credit lines: not for points cards, statement-only cards, or credits before the start date', () => {
   const diners = { id: 'd', name: 'Diners', billingCycleDay: 19, rewardStrategy: 'hdfc_diners_slab_milestone', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone }] };
   const dTxns = [{ id: 'x', cardId: 'd', date: '2026-09-25', amount: 50000, category: 'regular' }];
@@ -3756,11 +3786,6 @@ test('cashback credit lines: not for points cards, statement-only cards, or cred
   assert.ok(Object.values(dLedger.cycleBills).every((b) => !b.cashbackCredit), 'points never come back as a credit');
   const stmt = { id: 's', name: 'SBI', billingCycleDay: 18, rewardStrategy: 'annual_milestone_only', strategyParamsHistory: [] };
   assert.deepEqual(computeCardRewardLedger(stmt, [{ id: 'y', cardId: 's', date: '2026-09-20', amount: 20524 }], '2026-10-25').cashbackCredits, []);
-  // Axis pays monthly, and far less than its per-line cashback: no automatic credit line
-  const axis = { id: 'x', name: 'Axis Supermoney', billingCycleDay: 16, rewardStrategy: 'axis_supermoney_dual_pool', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool }] };
-  const axisLedger = computeCardRewardLedger(axis, [{ id: 'q', cardId: 'x', date: '2026-09-20', amount: 10000, isBonusEligible: true }], '2026-10-17');
-  assert.deepEqual(axisLedger.cashbackCredits, []);
-  assert.ok(Object.values(axisLedger.cycleBills).every((b) => !b.cashbackCredit), 'its bill is just the spend');
   // a credit dated before 2026-10-01 was entered by hand as a negative transaction: not added again
   const live = { id: 'l', name: 'Live+', billingCycleDay: 10, rewardStrategy: 'hsbc_tiered_cashback_aggregate', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }] };
   const old = computeCardRewardLedger(live, [{ id: 'o', cardId: 'l', date: '2026-08-15', amount: 1000, isBonusEligible: false }], '2026-10-13');

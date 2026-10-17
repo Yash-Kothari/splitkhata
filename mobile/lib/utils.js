@@ -2048,8 +2048,11 @@ export const CARD_CREDIT_TIMING = {
   sbi_two_channel_cashback: { basis: 'statement', offsetDays: 0 },
   // HSBC Live+ cashback posts on the 2nd day after the statement is generated.
   hsbc_tiered_cashback_aggregate: { basis: 'statement', offsetDays: 2 },
-  // Axis cashback posts on the 10th of the month after the statement.
-  axis_supermoney_dual_pool: { basis: 'day_of_next_month', day: 10 },
+  // Axis (cashback T&C): what a cycle earns is credited in the NEXT cycle, 3 days
+  // before that cycle's statement date ("statement date 15 Feb, cycle 16 Jan-15 Feb,
+  // credited 12 March"). A cycle's end here is the day after the statement date
+  // (cycles run start-day to start-day), so that is the next cycle's end minus 4.
+  axis_supermoney_dual_pool: { basis: 'next_statement', offsetDays: -4 },
   hsbc_premier_flat_capped: { basis: 'statement', offsetDays: 0 },
   annual_milestone_only: { basis: 'statement', offsetDays: 0 },
 };
@@ -2971,7 +2974,7 @@ const SBI_EXCLUDED_KEYWORDS = ['fuel', 'gaming', 'toll', 'government', 'govt', '
 const HSBC_LIVE_EXCLUDED_KEYWORDS = ['rent', 'fuel', 'insurance', 'education', 'government', 'govt', 'wallet', 'financial institution', 'money transfer', 'jewellery', 'jewelry', 'toll', 'gambling', 'hospital', 'wholesale', 'international', 'forex', 'emi'];
 const HSBC_LIVE_NON_BONUS_KEYWORDS = ['amazon', 'flipkart', 'myntra', 'travel', 'flight', 'hotel', 'airline'];
 const HSBC_LIVE_BONUS_KEYWORDS = ['dining', 'eating out', 'restaurant', 'food delivery', 'grocery', 'groceries', 'shopping', 'utility', 'utilities'];
-const AXIS_EXCLUDED_KEYWORDS = ['repayment', 'utility', 'utilities', 'fuel', 'jewellery', 'jewelry', 'cash withdrawal', 'wallet', 'insurance', 'education', 'government', 'govt', 'financial institution', 'rent', 'emi', 'telecom', 'mobile bill', 'phone bill'];
+const AXIS_EXCLUDED_KEYWORDS = ['repayment', 'utility', 'utilities', 'fuel', 'jewellery', 'jewelry', 'cash withdrawal', 'wallet', 'insurance', 'education', 'government', 'govt', 'financial institution', 'rent', 'emi', 'telecom', 'mobile bill', 'phone bill', 'gift card', 'toll', 'bridge', 'watch', 'silverware'];
 const HSBC_PREMIER_TRAVEL_KEYWORDS = ['travel with points'];
 const HSBC_PREMIER_FUEL_KEYWORDS = ['fuel', 'petrol', 'diesel'];
 const HSBC_PREMIER_CAPPED_KEYWORDS = ['insurance', 'utility', 'utilities', 'education', 'government', 'govt', 'wallet', 'real estate', 'jewellery', 'jewelry', 'tax', 'money transfer'];
@@ -3612,13 +3615,6 @@ const CARD_STATEMENT_ROUNDED = new Set(['hdfc_diners_slab_milestone']);
 // were typed in by hand as negative transactions and stay as they are.
 export const CASHBACK_CREDIT_LINES_FROM = '2026-10-01';
 
-// Cards left out of the automatic credit line because the bank's payout is not
-// "this statement's reward on the next bill". Axis Supermoney pays monthly
-// ("CASHBACK CREDIT SEP26-SMPOS:13~SMQR:60" = Rs 73 for September, against about
-// Rs 1,100 shown as per-line cashback), so an expected credit would be many times
-// too big. Until its real payout rule is known its credits are typed in by hand.
-const CASHBACK_CREDIT_EXCLUDED = new Set(['axis_supermoney_dual_pool']);
-
 export function computeCardRewardLedger(card, cardTxns, today = todayISO(), cardBillingCycles = []) {
   const billingDay = card?.billingCycleDay ?? 1;
   const byCycle = new Map();
@@ -3725,7 +3721,7 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO(), card
   // bill of the cycle that contains its credit date - even a cycle with no
   // transactions yet. Rupee cashback cards only; points never come back as a credit.
   const cashbackCredits = [];
-  if (unit === 'inr' && !isStatementOnlyCard(card) && !CASHBACK_CREDIT_EXCLUDED.has(card?.rewardStrategy)) {
+  if (unit === 'inr' && !isStatementOnlyCard(card)) {
     for (const l of lumps) {
       // Only a statement that has closed: the open cycle's reward is still moving.
       if (l.kind !== 'statement' || l.date < CASHBACK_CREDIT_LINES_FROM || l.cycleEnd > today) continue;
