@@ -20,6 +20,7 @@ import {
   getQuarterStartingSpend,
   getAnnualStartingSpend,
   getAnnualMilestoneWindow,
+  getCardAnniversaryMonth,
   computeCardCapStatus,
   getQuarterBounds,
   computeCardDueReminders,
@@ -113,7 +114,7 @@ export default function Cards() {
     ? getQuarterlyMilestoneCreditDate(selectedCard, quarterEnd)
     : null;
   const { periodStart: annualPeriodStart, periodEnd: annualPeriodEnd } = getAnnualMilestoneWindow(
-    selectedCard?.annualMilestoneAnchorMonth,
+    getCardAnniversaryMonth(selectedCard),
     today,
   );
   const quarterlyMilestone = params.quarterlyMilestoneTarget

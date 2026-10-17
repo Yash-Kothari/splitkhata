@@ -3,7 +3,7 @@ import { View, Text, Pressable } from 'react-native';
 import CardTransactionRow from './CardTransactionRow';
 import CashbackCreditLine from './CashbackCreditLine';
 import { saveCardBillingCycle } from '../lib/firebase';
-import { formatCurrency, groupTransactionsByCycle, getCardBillingCycleKey, isStatementOnlyCard } from '../lib/utils';
+import { formatCurrency, groupTransactionsByCycle, findCycleRecord, isStatementOnlyCard } from '../lib/utils';
 
 function formatDate(dateStr, withYear = false) {
   return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-IN', withYear ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' });
@@ -49,7 +49,7 @@ export default function CardTransactionGroups({ card, cardTxns, shownTxns, searc
     });
 
   return groups.map((g, index) => {
-    const record = cardBillingCycles.find((c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card.id, g.cycleStart));
+    const record = findCycleRecord(cardBillingCycles, card.id, g.cycleStart);
     const spend = g.txns.reduce((sum, t) => sum + t.amount, 0);
     const closed = g.status === 'closed';
     const withYear = g.cycleStart.slice(0, 4) !== thisYear || g.cycleEnd.slice(0, 4) !== thisYear;

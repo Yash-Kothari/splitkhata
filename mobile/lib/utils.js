@@ -2046,7 +2046,9 @@ export const CARD_STRATEGY_DEFAULTS = {
 export const CARD_CREDIT_TIMING = {
   hdfc_diners_slab_milestone: { basis: 'statement', offsetDays: 0 },
   sbi_two_channel_cashback: { basis: 'statement', offsetDays: 0 },
-  // HSBC Live+ cashback posts on the 2nd day after the statement is generated.
+  // HSBC Live+ cashback posts on the 2nd day after the statement is generated. (Measured
+  // from the cycle's end, which is the statement date while the card's billing day equals
+  // its statement date; it becomes end + 1 once the card's cycle starts the day after.)
   hsbc_tiered_cashback_aggregate: { basis: 'statement', offsetDays: 2 },
   // Axis (cashback T&C): what a cycle earns is credited in the NEXT cycle, 3 days
   // before that cycle's statement date ("statement date 15 Feb, cycle 16 Jan-15 Feb,
@@ -2206,9 +2208,7 @@ export function computeCardDueReminders(cards, cardTransactions, cardBillingCycl
     const ledger = computeCardRewardLedger(card, cardTxns, today, cardBillingCycles);
     const amountDue = ledger.cycleBills[dueCycle.cycleStart]?.statement ?? 0;
     if (amountDue <= 0) continue;
-    const cycleRecord = (cardBillingCycles || []).find(
-      (c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card.id, dueCycle.cycleStart),
-    );
+    const cycleRecord = findCycleRecord(cardBillingCycles, card.id, dueCycle.cycleStart);
     if (cycleRecord?.paidAt) continue;
     reminders.push({
       cardId: card.id,
@@ -2280,9 +2280,7 @@ export function computeCardBillSummary(cards, cardTransactions, cardBillingCycle
       const dueCycle = getCardDueCycle(card, today);
       if (dueCycle) {
         const amount = ledger.cycleBills[dueCycle.cycleStart]?.statement ?? 0;
-        const record = (cardBillingCycles || []).find(
-          (c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card.id, dueCycle.cycleStart),
-        );
+        const record = findCycleRecord(cardBillingCycles, card.id, dueCycle.cycleStart);
         if (amount > 0 && !record?.paidAt) {
           const daysUntilDue = daysBetweenISO(today, dueCycle.dueDate);
           billed = { amount, dueDate: dueCycle.dueDate, daysUntilDue, overdue: daysUntilDue < 0 };
@@ -2323,7 +2321,7 @@ export function computeCardBillSummary(cards, cardTransactions, cardBillingCycle
 export function applyConfirmedRewards(card, ledger, cardBillingCycles, today = todayISO()) {
   const round2 = (n) => Math.round(n * 100) / 100;
   const recordFor = (cycleStart) =>
-    (cardBillingCycles || []).find((c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card?.id, cycleStart));
+    findCycleRecord(cardBillingCycles, card?.id, cycleStart);
   const credits = (ledger?.lumps || [])
     .map((lump) => {
       let amount = lump.amount;
@@ -2353,13 +2351,21 @@ export function applyConfirmedRewards(card, ledger, cardBillingCycles, today = t
   return { credits, credited: creditedTotal, pending, earned: round2(credits.reduce((t, c) => t + c.amount, 0)) };
 }
 
+// The month (1-12) the card's year starts: the anniversary date's month. Cards set up
+// before the anniversary date existed carry the month on its own
+// (annualMilestoneAnchorMonth), so that is the fallback; January if neither is set.
+export function getCardAnniversaryMonth(card) {
+  if (card?.renewalDate) return Number(card.renewalDate.slice(5, 7)) || 1;
+  return Number(card?.annualMilestoneAnchorMonth) || 1;
+}
+
 // The card's own year, not the financial year: it starts in the card's anniversary
 // month (the renewal date's month, else the "Annual Milestone from" month, else
 // January) on the day its statement cycles start, so it is whole statement cycles -
 // a card with an April anniversary and statements from the 10th runs 10 Apr to 9 Apr,
 // never 1 Apr to 31 Mar. `periodEnd` is the day the next year starts.
 export function getCardYearWindow(card, today = todayISO()) {
-  const anchorMonth = card?.renewalDate ? Number(card.renewalDate.slice(5, 7)) : card?.annualMilestoneAnchorMonth || 1;
+  const anchorMonth = getCardAnniversaryMonth(card);
   const cycleDay = card?.billingCycleDay ?? 1;
   const startIn = (year) => `${year}-${pad2(anchorMonth)}-${pad2(Math.min(cycleDay, daysInMonth(year, anchorMonth)))}`;
   const thisYear = Number(today.slice(0, 4));
@@ -3325,7 +3331,7 @@ export function getAnnualStartingSpend(card, periodStart) {
     const createdDate = typeof card.createdAt.toDate === 'function' ? card.createdAt.toDate() : new Date(card.createdAt);
     if (!Number.isNaN(createdDate.getTime())) {
       const createdISO = `${createdDate.getFullYear()}-${pad2(createdDate.getMonth() + 1)}-${pad2(createdDate.getDate())}`;
-      const { periodStart: createdWindowStart } = getAnnualMilestoneWindow(card.annualMilestoneAnchorMonth, createdISO);
+      const { periodStart: createdWindowStart } = getAnnualMilestoneWindow(getCardAnniversaryMonth(card), createdISO);
       if (createdWindowStart === periodStart) return Number(card?.annualMilestoneStartingSpend) || 0;
     }
   }
@@ -3736,9 +3742,7 @@ export function computeCardRewardLedger(card, cardTxns, today = todayISO(), card
     for (const l of lumps) {
       // Only a statement that has closed: the open cycle's reward is still moving.
       if (l.kind !== 'statement' || l.date < CASHBACK_CREDIT_LINES_FROM || l.cycleEnd > today) continue;
-      const record = (cardBillingCycles || []).find(
-        (c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card?.id, l.cycleStart),
-      );
+      const record = findCycleRecord(cardBillingCycles, card?.id, l.cycleStart);
       const confirmed = record?.pointsConfirmedAt != null && record.actualRewardCredited != null;
       const amount = confirmed ? Math.round((Number(record.actualRewardCredited) - (l.separate || 0)) * 100) / 100 : l.amount;
       if (!amount) continue;
@@ -3826,6 +3830,18 @@ export function getCardBillingCycles() {
 
 export function setCardBillingCycles(cycles) {
   setItem(CARD_BILLING_CYCLES_KEY, JSON.stringify(cycles || []));
+}
+
+// The saved bill/reward confirmation for a statement cycle. Looked up by the exact
+// cycle start; failing that, by a cycle starting within a day of it, so moving a
+// card's billing day by one (statement date 10th -> cycle starting the 11th) keeps
+// what was already confirmed instead of orphaning it. Cycles are about a month
+// apart, so one day of slack can never pick the neighbouring statement.
+export function findCycleRecord(cardBillingCycles, cardId, cycleStart) {
+  const records = (cardBillingCycles || []).filter((c) => c.cardId === cardId);
+  const exact = records.find((c) => c.cycleStart === cycleStart);
+  if (exact) return exact;
+  return records.find((c) => c.cycleStart && Math.abs(daysBetweenISO(c.cycleStart, cycleStart)) <= 1) || null;
 }
 
 export function getCardBillingCycleKey(cardId, cycleStart) {

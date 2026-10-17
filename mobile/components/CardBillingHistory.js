@@ -8,7 +8,7 @@ import {
   listRecentCardCycles,
   getTransactionsInCycle,
   computeCardRewardLedger,
-  getCardBillingCycleKey,
+  findCycleRecord,
   isStatementOnlyCard,
   parseAmountInput,
   getRewardCreditDate,
@@ -180,8 +180,7 @@ function listPastCycles(card, cardTxns, today) {
     .filter((cyc) => cyc.cycleEnd > earliestTxnDate);
 }
 
-const cycleRecordOf = (cardBillingCycles, cardId, cycle) =>
-  cardBillingCycles.find((c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(cardId, cycle.cycleStart));
+const cycleRecordOf = (cardBillingCycles, cardId, cycle) => findCycleRecord(cardBillingCycles, cardId, cycle.cycleStart);
 
 // The most recent closed statement, up where the card's totals are: its bill
 // and reward (expected, then the bank's figure once you Confirm it), whether it

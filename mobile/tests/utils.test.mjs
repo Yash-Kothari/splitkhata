@@ -119,6 +119,8 @@ import {
   applyConfirmedRewards,
   getCardYearRewards,
   getCardYearWindow,
+  getCardAnniversaryMonth,
+  findCycleRecord,
   computeCardBillSummary,
   getLastEntryDefaults,
   groupTransactionsByCycle,
@@ -2942,7 +2944,7 @@ test('an older stored Diners rule set still gets the insurance monthly cap and g
   assert.equal(ledger.credited, 50, 'grocery points for August land on 2026-09-01');
 });
 
-test('credit dates: Diners statement day, HSBC Live+ +2 days, Axis 3 days before the next statement date', () => {
+test('credit dates: Diners statement day, HSBC Live+ 2 days after the statement date, Axis 3 days before the next statement date', () => {
   assert.equal(getRewardCreditDate({ rewardStrategy: 'hdfc_diners_slab_milestone', billingCycleDay: 10 }, '2026-09-10'), '2026-09-10');
   assert.equal(getRewardCreditDate({ rewardStrategy: 'hsbc_tiered_cashback_aggregate', billingCycleDay: 10 }, '2026-09-10'), '2026-09-12');
   // next cycle ends 10 Oct (statement date 9 Oct) -> 3 days before that
@@ -3933,6 +3935,27 @@ test('the card year starts in the anniversary month on the statement day - whole
   assert.equal(getCardYearWindow({ annualMilestoneAnchorMonth: 2, billingCycleDay: 31 }, '2026-10-13').periodEnd, '2027-02-28');
   // no anniversary set: calendar-year start on the cycle day, flagged unanchored
   assert.deepEqual([getCardYearWindow({ billingCycleDay: 1 }, '2026-10-13').periodStart, getCardYearWindow({}, '2026-10-13').anchored], ['2026-01-01', false]);
+});
+
+test('the anniversary month is the anniversary date\'s month, with the old milestone month as the fallback', () => {
+  assert.equal(getCardAnniversaryMonth({ renewalDate: '2025-07-04', annualMilestoneAnchorMonth: 4 }), 7, 'the date wins');
+  assert.equal(getCardAnniversaryMonth({ annualMilestoneAnchorMonth: 4 }), 4, 'cards set up before the date existed');
+  assert.equal(getCardAnniversaryMonth({}), 1);
+  assert.equal(getCardAnniversaryMonth(null), 1);
+});
+
+test('a confirmed statement survives the card\'s billing day moving by one (10th -> 11th)', () => {
+  const records = [
+    { cardId: 'l', cycleStart: '2026-09-10', actualBillAmount: 40993.8 },
+    { cardId: 'other', cycleStart: '2026-09-11', actualBillAmount: 1 },
+  ];
+  assert.equal(findCycleRecord(records, 'l', '2026-09-11').actualBillAmount, 40993.8, 'within a day of the saved cycle');
+  assert.equal(findCycleRecord(records, 'l', '2026-09-10').actualBillAmount, 40993.8, 'exact match');
+  assert.equal(findCycleRecord(records, 'l', '2026-10-11'), null, 'the next statement is a month away');
+  assert.equal(findCycleRecord(records, 'l', '2026-09-13'), null, 'two days is not close enough');
+  // an exact record beats a near one
+  const both = [...records, { cardId: 'l', cycleStart: '2026-09-11', actualBillAmount: 5 }];
+  assert.equal(findCycleRecord(both, 'l', '2026-09-11').actualBillAmount, 5);
 });
 
 test('a reward counts toward the card year its statement was earned in, not the year its credit landed in', () => {
