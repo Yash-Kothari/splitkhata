@@ -2046,10 +2046,12 @@ export const CARD_STRATEGY_DEFAULTS = {
 export const CARD_CREDIT_TIMING = {
   hdfc_diners_slab_milestone: { basis: 'statement', offsetDays: 0 },
   sbi_two_channel_cashback: { basis: 'statement', offsetDays: 0 },
-  // HSBC Live+ cashback posts on the 2nd day after the statement is generated. The card's
-  // cycle starts the day after its statement date (statement 10th -> billing day 11), so the
-  // cycle's end here is statement date + 1 and the credit is end + 1.
-  hsbc_tiered_cashback_aggregate: { basis: 'statement', offsetDays: 1 },
+  // HSBC Live+ cashback posts on the 2nd day after the statement is generated. Measured from
+  // the cycle's end, which is the statement date while the card's billing day equals its
+  // statement date (Live+ is kept on billing day 10: nothing yet shows whether purchases on
+  // the 10th belong to that statement). If it moves to 11 (cycle starts the day after the
+  // statement), this becomes end + 1.
+  hsbc_tiered_cashback_aggregate: { basis: 'statement', offsetDays: 2 },
   // Axis (cashback T&C): what a cycle earns is credited in the NEXT cycle, 3 days
   // before that cycle's statement date ("statement date 15 Feb, cycle 16 Jan-15 Feb,
   // credited 12 March"). A cycle's end here is the day after the statement date

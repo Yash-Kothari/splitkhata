@@ -2946,8 +2946,7 @@ test('an older stored Diners rule set still gets the insurance monthly cap and g
 
 test('credit dates: Diners statement day, HSBC Live+ 2 days after the statement date, Axis 3 days before the next statement date', () => {
   assert.equal(getRewardCreditDate({ rewardStrategy: 'hdfc_diners_slab_milestone', billingCycleDay: 10 }, '2026-09-10'), '2026-09-10');
-  // statement date 10th -> cycle starts the 11th and ends (exclusive) the 11th; credited 2 days after the statement date
-  assert.equal(getRewardCreditDate({ rewardStrategy: 'hsbc_tiered_cashback_aggregate', billingCycleDay: 11 }, '2026-10-11'), '2026-10-12');
+  assert.equal(getRewardCreditDate({ rewardStrategy: 'hsbc_tiered_cashback_aggregate', billingCycleDay: 10 }, '2026-09-10'), '2026-09-12');
   // next cycle ends 10 Oct (statement date 9 Oct) -> 3 days before that
   assert.equal(getRewardCreditDate({ rewardStrategy: 'axis_supermoney_dual_pool', billingCycleDay: 10 }, '2026-09-10'), '2026-10-06');
   assert.equal(getRewardCreditDate({ rewardStrategy: 'axis_supermoney_dual_pool', billingCycleDay: 25 }, '2026-12-25'), '2027-01-21', 'rolls into the next year');
@@ -3729,28 +3728,28 @@ test('computeCardBillSummary - estimated next statement and unpaid last statemen
 });
 
 test('cashback cards: last statement\'s reward is taken off the bill it credits against', () => {
-  // HSBC Live+: statement date 10th (cycle starts the 11th), reward credits 2 days after the statement date
-  const live = { id: 'l', name: 'Live+', billingCycleDay: 11, rewardStrategy: 'hsbc_tiered_cashback_aggregate', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }] };
+  // HSBC Live+: statement day 10, reward credits 2 days after the statement closes
+  const live = { id: 'l', name: 'Live+', billingCycleDay: 10, rewardStrategy: 'hsbc_tiered_cashback_aggregate', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }] };
   const txns = [
-    { id: 'a', cardId: 'l', date: '2026-09-15', amount: 1000, isBonusEligible: false }, // statement 11 Sep - 10 Oct: 1.5% = 15
-    { id: 'b', cardId: 'l', date: '2026-10-12', amount: 400, isBonusEligible: false },  // open cycle 11 Oct - 10 Nov
+    { id: 'a', cardId: 'l', date: '2026-09-15', amount: 1000, isBonusEligible: false }, // statement 10 Sep - 10 Oct: 1.5% = 15
+    { id: 'b', cardId: 'l', date: '2026-10-12', amount: 400, isBonusEligible: false },  // open cycle 10 Oct - 10 Nov
   ];
   const ledger = computeCardRewardLedger(live, txns, '2026-10-13');
-  const expectedReward = ledger.cycleRewards['2026-09-11'].totalReward;
+  const expectedReward = ledger.cycleRewards['2026-09-10'].totalReward;
   assert.equal(expectedReward, 15);
-  assert.equal(ledger.cycleBills['2026-09-11'].statement, 1000, 'the closed statement itself is untouched');
-  assert.equal(ledger.cycleBills['2026-10-11'].statement, 385, 'open cycle: 400 spend - 15 expected cashback');
-  assert.equal(ledger.cycleBills['2026-10-11'].cashbackCredit, 15);
-  assert.deepEqual(ledger.cashbackCredits.map((c) => [c.date, c.amount, c.confirmed, c.cycleStart]), [['2026-10-12', 15, false, '2026-10-11']]);
+  assert.equal(ledger.cycleBills['2026-09-10'].statement, 1000, 'the closed statement itself is untouched');
+  assert.equal(ledger.cycleBills['2026-10-10'].statement, 385, 'open cycle: 400 spend - 15 expected cashback');
+  assert.equal(ledger.cycleBills['2026-10-10'].cashbackCredit, 15);
+  assert.deepEqual(ledger.cashbackCredits.map((c) => [c.date, c.amount, c.confirmed, c.cycleStart]), [['2026-10-12', 15, false, '2026-10-10']]);
   // the bank's figure replaces the expected one once you have confirmed it
-  const confirmed = computeCardRewardLedger(live, txns, '2026-10-13', [{ cardId: 'l', cycleStart: '2026-09-11', pointsConfirmedAt: '2026-10-12', actualRewardCredited: 18 }]);
-  assert.equal(confirmed.cycleBills['2026-10-11'].statement, 382);
+  const confirmed = computeCardRewardLedger(live, txns, '2026-10-13', [{ cardId: 'l', cycleStart: '2026-09-10', pointsConfirmedAt: '2026-10-12', actualRewardCredited: 18 }]);
+  assert.equal(confirmed.cycleBills['2026-10-10'].statement, 382);
   assert.equal(confirmed.cashbackCredits[0].confirmed, true);
   // a cycle with no transactions yet still carries the credit (a negative bill)
   const empty = computeCardRewardLedger(live, [txns[0]], '2026-10-13');
-  assert.equal(empty.cycleBills['2026-10-11'].statement, -15);
+  assert.equal(empty.cycleBills['2026-10-10'].statement, -15);
   // spend and rewards are unaffected - the credit is only on the bill
-  assert.equal(ledger.cycleRewards['2026-10-11'].totalReward, 6);
+  assert.equal(ledger.cycleRewards['2026-10-10'].totalReward, 6);
 });
 
 test('Axis: a cycle\'s cashback credits 3 days before the NEXT statement date (the T&C\'s own example)', () => {

@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.8.1**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.8.2**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -320,9 +320,12 @@ local testing predicted.
   year, the annual milestone window and the fee year (`getCardAnniversaryMonth`); cards that only have the
   old "Annual Milestone from" month keep working through that fallback, and saving the card turns it into a
   date. The one-time "spend counted so far" figures are set in Add Card only, never in Edit.
-- **A card's cycle starts the day after its statement date**: statement date 15th -> billing day 16 (Axis),
-  10th -> 11 (HSBC Live+). A cycle's end is therefore statement date + 1, and credit-timing offsets in
-  `CARD_CREDIT_TIMING` are measured from it. Saved bill/reward confirmations are found by cycle start within
+- **A card's cycle starts the day after its statement date**: statement date 15th -> billing day 16 (Axis,
+  confirmed: 16 Sep purchases are on its statement, 16 Oct ones are not). A cycle's end is therefore statement
+  date + 1, and credit-timing offsets in `CARD_CREDIT_TIMING` are measured from it. HSBC Live+ is deliberately
+  left on billing day 10 (credit offset 2): no purchase has ever been dated the 10th, so there is no proof yet
+  of which statement such a purchase lands on. If one shows it is the one *before* the 11th, set the card's billing
+  day to 11 and the HSBC offset to 1 (confirmations carry over - see `findCycleRecord`). Saved bill/reward confirmations are found by cycle start within
   one day (`findCycleRecord`), so moving a billing day by one does not orphan them.
 - **The card year is the card's, not the financial year** (`getCardYearWindow`): it starts in the anniversary
   month (renewal date's month, else "Annual Milestone from", else January) on the card's statement-cycle start
