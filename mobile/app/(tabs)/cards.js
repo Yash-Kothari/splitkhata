@@ -279,28 +279,17 @@ export default function Cards() {
                     </Text>
                   </View>
                 </View>
-                {!statementOnly && (
+                {/* Points sit in an account until redeemed, so a running total is real. Cashback
+                    comes off a later bill instead, so a cashback card leads with its card year below. */}
+                {!statementOnly && ledger.unit === 'points' && (
                 <View className="rounded-xl bg-ledger-green/10 px-3.5 py-2.5 mb-3">
                   <Text className="font-body-semibold text-2xs text-ledger-green uppercase tracking-wider">
-                    {ledger.unit === 'points' ? 'Total reward points in account' : 'Total cashback'}
+                    Total reward points in account
                   </Text>
                   <Text className="font-mono-bold text-ledger-green text-2xl">
                     {formatReward(lifetimeRewardTotal, ledger.unit)}
                   </Text>
                 </View>
-                )}
-                {!statementOnly && rewards.pending.length > 0 && (
-                  <View className="rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5 mb-3">
-                    <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider mb-1">Still to be credited</Text>
-                    {rewards.pending.map((p) => (
-                      <View key={p.date} className="flex-row items-center justify-between">
-                        <Text className="font-body text-xs text-muted-text">
-                          {new Date(`${p.date}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                        </Text>
-                        <Text className="font-mono-bold text-xs text-ink">{formatReward(p.amount, ledger.unit)}</Text>
-                      </View>
-                    ))}
-                  </View>
                 )}
                 {!statementOnly && ledger.unit !== 'points' && (
                   <CardRewardCredits
@@ -318,6 +307,19 @@ export default function Cards() {
                         .catch((err) => { reportError(err, 'Could not reset the credited amount'); throw err; })
                     }
                   />
+                )}
+                {!statementOnly && rewards.pending.length > 0 && (
+                  <View className="rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5 mb-3">
+                    <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider mb-1">Still to be credited</Text>
+                    {rewards.pending.map((p) => (
+                      <View key={p.date} className="flex-row items-center justify-between">
+                        <Text className="font-body text-xs text-muted-text">
+                          {new Date(`${p.date}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                        </Text>
+                        <Text className="font-mono-bold text-xs text-ink">{formatReward(p.amount, ledger.unit)}</Text>
+                      </View>
+                    ))}
+                  </View>
                 )}
                 <View className="flex-row gap-3">
                   <View className="flex-1">

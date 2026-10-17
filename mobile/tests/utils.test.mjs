@@ -118,6 +118,7 @@ import {
   pickDefaultTrip,
   applyConfirmedRewards,
   getCardYearRewards,
+  getCardYearWindow,
   computeCardBillSummary,
   getLastEntryDefaults,
   groupTransactionsByCycle,
@@ -1520,14 +1521,14 @@ test('computeCardAnnualValue nets rewards earned in the card\'s fee-year against
     id: 'a', billingCycleDay: 10, rewardStrategy: 'sbi_two_channel_cashback', annualFee: 5000, renewalDate: '2026-03-15',
     strategyParamsHistory: [{ effectiveFrom: '2026-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }],
   };
-  // Fee year is 2026-03-01..2027-03-01 (anchored to renewalDate's month).
+  // Fee year is 2026-03-10..2027-03-10: the renewal month, starting on the card's statement day (10th).
   const txns = [
     { id: 't1', cardId: 'a', date: '2026-04-01', amount: 100000, channel: 'online' }, // in this fee-year
     { id: 't2', cardId: 'a', date: '2026-01-01', amount: 100000, channel: 'online' }, // before this fee-year - excluded
   ];
   const value = computeCardAnnualValue(card, txns, '2026-08-15');
-  assert.equal(value.periodStart, '2026-03-01');
-  assert.equal(value.periodEnd, '2027-03-01');
+  assert.equal(value.periodStart, '2026-03-10');
+  assert.equal(value.periodEnd, '2027-03-10');
   assert.equal(value.fee, 5000);
   assert.equal(value.unit, 'inr');
   assert.ok(value.earned > 0, 'the April transaction earned some cashback');
@@ -3918,6 +3919,32 @@ test('getCardYearRewards - totals for the current card year, anchored on the ren
   const cal = getCardYearRewards({}, credits, '2026-10-08');
   assert.deepEqual([cal.periodStart, cal.anchored], ['2026-01-01', false]);
   assert.equal(cal.earned, 500 + 200 + 300 + 150);
+});
+
+test('the card year starts in the anniversary month on the statement day - whole cycles, not the financial year', () => {
+  // HSBC Live+-like: "Annual Milestone from" April, statements from the 10th
+  const live = { annualMilestoneAnchorMonth: 4, billingCycleDay: 10 };
+  const now = getCardYearWindow(live, '2026-10-13');
+  assert.deepEqual([now.periodStart, now.periodEnd, now.periodLastDay, now.anchored], ['2026-04-10', '2027-04-10', '2027-04-09', true]);
+  assert.equal(getCardYearWindow(live, '2026-04-09').periodStart, '2025-04-10', 'the day before the anniversary is still last year');
+  assert.equal(getCardYearWindow(live, '2026-04-10').periodStart, '2026-04-10');
+  // a renewal date wins over the milestone month; a short anchor month clamps the day
+  assert.equal(getCardYearWindow({ renewalDate: '2025-07-04', annualMilestoneAnchorMonth: 4, billingCycleDay: 16 }, '2026-10-13').periodStart, '2026-07-16');
+  assert.equal(getCardYearWindow({ annualMilestoneAnchorMonth: 2, billingCycleDay: 31 }, '2026-10-13').periodEnd, '2027-02-28');
+  // no anniversary set: calendar-year start on the cycle day, flagged unanchored
+  assert.deepEqual([getCardYearWindow({ billingCycleDay: 1 }, '2026-10-13').periodStart, getCardYearWindow({}, '2026-10-13').anchored], ['2026-01-01', false]);
+});
+
+test('a reward counts toward the card year its statement was earned in, not the year its credit landed in', () => {
+  const card = { annualMilestoneAnchorMonth: 4, billingCycleDay: 10 };
+  const credits = [
+    { date: '2026-04-12', cycleStart: '2026-03-10', amount: 700, credited: true },  // credited in the new year, earned in the old
+    { date: '2026-05-12', cycleStart: '2026-04-10', amount: 300, credited: true },  // first statement of this card year
+    { date: '2026-11-12', cycleStart: '2026-10-10', amount: 40, credited: false },
+    { date: '2026-09-30', amount: 100, credited: true, kind: 'milestone' },         // no statement: counted by date
+  ];
+  const y = getCardYearRewards(card, credits, '2026-10-13');
+  assert.deepEqual([y.credited, y.pending, y.earned], [400, 40, 440]);
 });
 
 test('computeCardAnnualValue counts the amounts you confirmed, not just the calculated ones', () => {

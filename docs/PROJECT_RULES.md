@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.7.2**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.7.3**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -316,6 +316,11 @@ local testing predicted.
   offset -4 because a cycle here ends the day after the statement date). Excluded: repayments, utilities,
   fuel, jewellery/watches, cash, wallet loads, insurance, education, government, financial institutions,
   rent, EMI, telecom, gift cards, tolls. New Axis transactions default to 1%; tick 3% for super.money spend.
+- **The card year is the card's, not the financial year** (`getCardYearWindow`): it starts in the anniversary
+  month (renewal date's month, else "Annual Milestone from", else January) on the card's statement-cycle start
+  day, so it is whole statement cycles (April + 10th = 10 Apr - 9 Apr). A reward counts toward the year its
+  statement was *earned* in, not the year its credit landed in. The fee-waiver "Milestone Progress" spend
+  window is separate (it keys stored starting-spend by 1st-of-month dates) and still starts on the 1st.
 - **Cashback comes back as a credit on the next statement.** For every rupee cashback card (not
   points, not statement-only) the ledger puts each *closed* statement's reward (your confirmed figure,
   else the expected one) on the bill of the cycle containing its credit date (`cashbackCredits`,

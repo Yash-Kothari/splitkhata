@@ -38,11 +38,11 @@ export default function CardRewardCredits({ rewards, yearRewards, format, onSave
   const typed = parseAmountInput(draft, { allowNegative: true });
 
   return (
-    <View className="rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5 mb-3">
-      <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">
+    <View className="rounded-xl bg-ledger-green/10 px-3.5 py-2.5 mb-3">
+      <Text className="font-body-semibold text-2xs text-ledger-green uppercase tracking-wider">
         {yearRewards.anchored ? 'This card year' : 'This year'} · {shortDate(yearRewards.periodStart)} – {shortDate(yearRewards.periodLastDay, true)}
       </Text>
-      <Text className="font-mono-bold text-ink text-lg">{format(yearRewards.earned)}</Text>
+      <Text className="font-mono-bold text-ledger-green text-2xl">{format(yearRewards.earned)}</Text>
       <Text className="font-body text-2xs text-muted-text">
         {format(yearRewards.credited)} credited
         {yearRewards.pending !== 0 ? ` · ${format(yearRewards.pending)} still to come` : ''}

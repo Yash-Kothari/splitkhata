@@ -2353,31 +2353,43 @@ export function applyConfirmedRewards(card, ledger, cardBillingCycles, today = t
   return { credits, credited: creditedTotal, pending, earned: round2(credits.reduce((t, c) => t + c.amount, 0)) };
 }
 
-// What a card has earned in its current card year (the 12 months starting at
-// the card's renewal month; calendar year if no renewal date is set): credited
-// so far, still to come, and the two together. A reward belongs to the year its
-// credit date falls in - the same way the annual fee-versus-value comparison counts.
-export function getCardYearRewards(card, credits, today = todayISO()) {
+// The card's own year, not the financial year: it starts in the card's anniversary
+// month (the renewal date's month, else the "Annual Milestone from" month, else
+// January) on the day its statement cycles start, so it is whole statement cycles -
+// a card with an April anniversary and statements from the 10th runs 10 Apr to 9 Apr,
+// never 1 Apr to 31 Mar. `periodEnd` is the day the next year starts.
+export function getCardYearWindow(card, today = todayISO()) {
   const anchorMonth = card?.renewalDate ? Number(card.renewalDate.slice(5, 7)) : card?.annualMilestoneAnchorMonth || 1;
-  const { periodStart, periodEnd } = getAnnualMilestoneWindow(anchorMonth, today);
-  const inYear = (credits || []).filter((c) => c.date >= periodStart && c.date < periodEnd);
+  const cycleDay = card?.billingCycleDay ?? 1;
+  const startIn = (year) => `${year}-${pad2(anchorMonth)}-${pad2(Math.min(cycleDay, daysInMonth(year, anchorMonth)))}`;
+  const thisYear = Number(today.slice(0, 4));
+  const periodStart = today >= startIn(thisYear) ? startIn(thisYear) : startIn(thisYear - 1);
+  const periodEnd = startIn(Number(periodStart.slice(0, 4)) + 1);
+  return { periodStart, periodEnd, periodLastDay: addDaysISO(periodEnd, -1), anchored: Boolean(card?.renewalDate || card?.annualMilestoneAnchorMonth) };
+}
+
+// A reward belongs to the card year its *statement* was earned in (not the year it
+// happened to be credited in - the credit for a year's last statement lands a couple
+// of days into the next one). Rewards with no statement (milestone bonuses) go by date.
+function rewardIsInYear(credit, periodStart, periodEnd) {
+  const key = credit.cycleStart || credit.date;
+  return key >= periodStart && key < periodEnd;
+}
+
+// What a card has earned in its current card year (see getCardYearWindow): credited
+// so far, still to come, and the two together - counted the same way the annual
+// fee-versus-value comparison counts.
+export function getCardYearRewards(card, credits, today = todayISO()) {
+  const { periodStart, periodEnd, periodLastDay, anchored } = getCardYearWindow(card, today);
+  const inYear = (credits || []).filter((c) => rewardIsInYear(c, periodStart, periodEnd));
   const round2 = (n) => Math.round(n * 100) / 100;
   const credited = round2(inYear.filter((c) => c.credited).reduce((t, c) => t + c.amount, 0));
   const pending = round2(inYear.filter((c) => !c.credited).reduce((t, c) => t + c.amount, 0));
-  return {
-    periodStart,
-    periodEnd,
-    periodLastDay: addDaysISO(periodEnd, -1),
-    anchored: Boolean(card?.renewalDate || card?.annualMilestoneAnchorMonth),
-    credited,
-    pending,
-    earned: round2(credited + pending),
-  };
+  return { periodStart, periodEnd, periodLastDay, anchored, credited, pending, earned: round2(credited + pending) };
 }
 
 // "Is this card worth keeping" - reward value earned within the card's own
-// fee year (anchored to renewalDate's month, same shape as
-// getAnnualMilestoneWindow) against the annual fee charged for that year.
+// year (see getCardYearWindow) against the annual fee charged for that year.
 // Points-unit cards get their earned total but no rupee net value - that
 // needs a ₹-per-point conversion this app doesn't have (P1-9, declined).
 // Returns null when the card has no fee/renewal date set - nothing to
@@ -2385,11 +2397,10 @@ export function getCardYearRewards(card, credits, today = todayISO()) {
 export function computeCardAnnualValue(card, cardTxns, today = todayISO(), cardBillingCycles = []) {
   const fee = Number(card?.annualFee);
   if (!card?.renewalDate || !(fee > 0)) return null;
-  const anchorMonth = Number(card.renewalDate.slice(5, 7));
-  const { periodStart, periodEnd } = getAnnualMilestoneWindow(anchorMonth, today);
+  const { periodStart, periodEnd } = getCardYearWindow(card, today);
   const ledger = computeCardRewardLedger(card, cardTxns, today);
   const earned = applyConfirmedRewards(card, ledger, cardBillingCycles, today)
-    .credits.filter((l) => l.date >= periodStart && l.date < periodEnd)
+    .credits.filter((l) => rewardIsInYear(l, periodStart, periodEnd))
     .reduce((sum, l) => sum + l.amount, 0);
   const netValue = ledger.unit === 'inr' ? earned - fee : null;
   return { periodStart, periodEnd, earned, fee, unit: ledger.unit, netValue };
