@@ -261,6 +261,7 @@ export default function Cards() {
                   cardBillingCycles={cardBillingCycles}
                   today={today}
                   onDelete={handleDelete}
+                  onSaveError={(err) => reportError(err, 'Could not save the cashback')}
                 />
               </Card>
             </View>

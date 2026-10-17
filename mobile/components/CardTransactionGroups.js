@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import CardTransactionRow from './CardTransactionRow';
+import CashbackCreditLine from './CashbackCreditLine';
+import { saveCardBillingCycle } from '../lib/firebase';
 import { formatCurrency, groupTransactionsByCycle, getCardBillingCycleKey, isStatementOnlyCard } from '../lib/utils';
 
 function formatDate(dateStr, withYear = false) {
@@ -17,7 +19,7 @@ function formatReward(amount, unit) {
 // The current cycle and the latest statement start open; older ones are folded.
 // `shownTxns` is the search-filtered list; the header figures always count the
 // whole statement. While searching, groups with a match open and the rest hide.
-export default function CardTransactionGroups({ card, cardTxns, shownTxns, searching, ledger, cardBillingCycles, today, onDelete }) {
+export default function CardTransactionGroups({ card, cardTxns, shownTxns, searching, ledger, cardBillingCycles, today, onDelete, onSaveError }) {
   const [toggled, setToggled] = useState({});
   const statementOnly = isStatementOnlyCard(card);
   const day = card.billingCycleDay ?? 1;
@@ -34,6 +36,18 @@ export default function CardTransactionGroups({ card, cardTxns, shownTxns, searc
     return <Text className="font-body text-sm text-muted-text text-center py-6">{searching ? 'No transactions match.' : 'No transactions yet.'}</Text>;
   }
 
+  // Entering the bank's cashback figure is the same write as the Reward box in Last Statement.
+  const saveActualCashback = (sourceCycleStart, amount) =>
+    saveCardBillingCycle(card.id, sourceCycleStart, { actualRewardCredited: amount, pointsConfirmedAt: new Date().toISOString() }).catch((err) => {
+      onSaveError?.(err);
+      throw err;
+    });
+  const resetActualCashback = (sourceCycleStart) =>
+    saveCardBillingCycle(card.id, sourceCycleStart, { actualRewardCredited: null, pointsConfirmedAt: null }).catch((err) => {
+      onSaveError?.(err);
+      throw err;
+    });
+
   return groups.map((g, index) => {
     const record = cardBillingCycles.find((c) => getCardBillingCycleKey(c.cardId, c.cycleStart) === getCardBillingCycleKey(card.id, g.cycleStart));
     const spend = g.txns.reduce((sum, t) => sum + t.amount, 0);
@@ -49,6 +63,12 @@ export default function CardTransactionGroups({ card, cardTxns, shownTxns, searc
     const defaultOpen = !closed || g.cycleStart === latestClosed;
     const open = searching ? true : (toggled[g.cycleStart] ?? defaultOpen);
     const rows = shownByCycle.get(g.cycleStart) || [];
+    // The cashback credit sits among the transactions at its credit date, like the
+    // bank's statement (hidden while searching - it isn't a transaction to find).
+    const items = [
+      ...(searching ? [] : credits.map((credit) => ({ credit, date: credit.date, order: 0 }))),
+      ...rows.map((txn) => ({ txn, date: txn.date, order: 1 })),
+    ].sort((a, b) => b.date.localeCompare(a.date) || a.order - b.order);
     // Only the latest statement (or any, on a statement-only card) is shown as
     // unpaid - older ones you never ticked are history, not debts.
     const unpaid = closed && !paid && (statementOnly || g.cycleStart === latestClosed);
@@ -83,38 +103,32 @@ export default function CardTransactionGroups({ card, cardTxns, shownTxns, searc
             ) : null}
           </View>
         </Pressable>
-        {open && !searching
-          ? credits.map((c) => (
-              <View key={c.sourceCycleStart} className="flex-row items-center justify-between rounded-lg bg-ledger-green/10 px-3 py-2 mb-2" style={{ gap: 8 }}>
-                <View className="flex-1">
-                  <Text className="font-body-semibold text-xs text-ledger-green" numberOfLines={1}>
-                    Cashback credit · {formatDate(c.date)}
-                  </Text>
-                  <Text className="font-body text-2xs text-muted-text" numberOfLines={2}>
-                    From the {formatDate(c.sourceCycleStart, c.sourceCycleStart.slice(0, 4) !== thisYear || c.sourceCycleEnd.slice(0, 4) !== thisYear)} –{' '}
-                    {formatDate(c.sourceCycleEnd, c.sourceCycleStart.slice(0, 4) !== thisYear || c.sourceCycleEnd.slice(0, 4) !== thisYear)} statement ·{' '}
-                    {c.confirmed ? 'the bank\'s figure' : 'expected - confirm it in Last Statement'} · added automatically
-                  </Text>
-                </View>
-                <Text className="font-mono-bold text-sm text-ledger-green">−{formatCurrency(c.amount)}</Text>
-              </View>
-            ))
-          : null}
         {open ? (
-          rows.length === 0 ? (
+          items.length === 0 ? (
             <Text className="font-body text-xs text-muted-text pb-3">No transactions in this cycle yet.</Text>
           ) : (
-            rows.map((txn, i) => (
-              <CardTransactionRow
-                key={txn.id}
-                txn={txn}
-                card={card}
-                cardTxns={cardTxns}
-                cycleReward={ledger.cycleRewards[g.cycleStart] || null}
-                onDelete={onDelete}
-                isLast={i === rows.length - 1}
-              />
-            ))
+            items.map((item, i) =>
+              item.credit ? (
+                <CashbackCreditLine
+                  key={`credit-${item.credit.sourceCycleStart}`}
+                  credit={item.credit}
+                  today={today}
+                  thisYear={thisYear}
+                  onSave={saveActualCashback}
+                  onReset={resetActualCashback}
+                />
+              ) : (
+                <CardTransactionRow
+                  key={item.txn.id}
+                  txn={item.txn}
+                  card={card}
+                  cardTxns={cardTxns}
+                  cycleReward={ledger.cycleRewards[g.cycleStart] || null}
+                  onDelete={onDelete}
+                  isLast={i === items.length - 1}
+                />
+              ),
+            )
           )
         ) : null}
       </View>
