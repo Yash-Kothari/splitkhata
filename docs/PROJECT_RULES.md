@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.9.0**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.9.1**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -356,5 +356,7 @@ local testing predicted.
 - The browser's NetInfo probe (`HEAD /`) 404s on GitHub Pages, so it is switched off on the web
   (`ConnectionBanner`); the app only uses the browser's online signal.
 - Pins sort within the currently shown list (for Household, the selected month).
+- `EntryList` draws 100 rows at a time (`PAGE_SIZE`) with a "Show N More" button; the count in its header
+  still covers every match, and a jump-to-entry highlight floats to the top so it is always drawn.
 - GitHub's "AI Scan for PRs" is explicitly **disabled** on all repos
   (`gh api repos/Yash-Kothari/<repo>/code-scanning/ai-scan`).

@@ -12,6 +12,11 @@ import { reportError } from '../lib/errorReporting';
 import { formatCurrency, formatMonthLabel, PERSON_COLORS, isCashPaid } from '../lib/utils';
 import { themeRgba, themeColor } from '../lib/theme';
 
+// Rows drawn at once. "All Months" and long trips can hold hundreds of entries; drawing every
+// one slows a phone down, so the rest wait behind a "Show more" button. The count above the
+// list still covers every match.
+const PAGE_SIZE = 100;
+
 function formatShortDate(dateStr) {
   try {
     return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
@@ -330,6 +335,14 @@ export default function EntryList({
 
   const loading = entries === null;
 
+  // How many rows are drawn. Tied to the current search/month, so changing either starts over
+  // at one page without an effect to reset it.
+  const pageKey = `${searchTerm}|${selectedMonth}`;
+  const [pageState, setPageState] = useState({ key: pageKey, count: PAGE_SIZE });
+  const visibleCount = pageState.key === pageKey ? pageState.count : PAGE_SIZE;
+  const visible = filtered.length > visibleCount ? filtered.slice(0, visibleCount) : filtered;
+  const hidden = filtered.length - visible.length;
+
   return (
     <View className="mx-4 mb-4 rounded-2xl border border-ink/10 bg-paper-card overflow-hidden px-4 sm:px-5 pt-4 pb-4" style={cardShadow}>
       <View className="mb-4">
@@ -377,7 +390,7 @@ export default function EntryList({
           </Text>
         </View>
       ) : (
-        filtered.map((item, index) => {
+        visible.map((item, index) => {
           // Mirrors web's <ul className="divide-y divide-ink/10"> - a plain
           // 1px hairline between rows, kept as its own element rather than a
           // border on the row itself since RN's borderStyle is one value for
@@ -449,6 +462,17 @@ export default function EntryList({
           );
         })
       )}
+
+      {hidden > 0 ? (
+        <Pressable
+          onPress={() => setPageState({ key: pageKey, count: visibleCount + PAGE_SIZE })}
+          className="mt-3 min-h-11 items-center justify-center rounded-xl border border-ink/15"
+        >
+          <Text className="font-body-semibold text-sm text-ink">
+            Show {Math.min(PAGE_SIZE, hidden)} More ({hidden} Not Shown)
+          </Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
