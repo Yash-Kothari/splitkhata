@@ -119,6 +119,10 @@ import {
   applyConfirmedRewards,
   getCardYearRewards,
   getCardYearWindow,
+  cycleLastDay,
+  hashString,
+  diffStatementSummaries,
+  computeStatementSummaries,
   getCardAnniversaryMonth,
   findCycleRecord,
   computeCardBillSummary,
@@ -3935,6 +3939,66 @@ test('the card year starts in the anniversary month on the statement day - whole
   assert.equal(getCardYearWindow({ annualMilestoneAnchorMonth: 2, billingCycleDay: 31 }, '2026-10-13').periodEnd, '2027-02-28');
   // no anniversary set: calendar-year start on the cycle day, flagged unanchored
   assert.deepEqual([getCardYearWindow({ billingCycleDay: 1 }, '2026-10-13').periodStart, getCardYearWindow({}, '2026-10-13').anchored], ['2026-01-01', false]);
+});
+
+test('saved "spend counted so far" is found when the card year now starts on the statement day, not the 1st', () => {
+  // figures saved before the year started on the statement day are keyed by the 1st of the month
+  const card = { annualMilestoneAnchorMonth: 3, billingCycleDay: 10, annualStartingSpend: { '2026-03-01': 50000, '2025-03-01': 7000 } };
+  const window = getCardYearWindow(card, '2026-10-13');
+  assert.equal(window.periodStart, '2026-03-10');
+  assert.equal(getAnnualStartingSpend(card, window.periodStart), 50000, 'matched by year-month');
+  assert.equal(getAnnualStartingSpend(card, '2025-03-10'), 7000, 'and for the previous year');
+  assert.equal(getAnnualStartingSpend(card, '2027-03-10'), 0, 'nothing saved for a year that has not been set');
+  // an exact key still wins
+  assert.equal(getAnnualStartingSpend({ annualStartingSpend: { '2026-03-01': 1, '2026-03-10': 2 } }, '2026-03-10'), 2);
+});
+
+test('statement summaries: one per closed statement, stable, and chained so an old edit invalidates every later one', () => {
+  const live = { id: 'l', billingCycleDay: 10, rewardStrategy: 'hsbc_tiered_cashback_aggregate', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate }] };
+  const txns = [
+    { id: 'a', cardId: 'l', date: '2026-08-15', amount: 1000, isBonusEligible: false },
+    { id: 'b', cardId: 'l', date: '2026-09-15', amount: 2000, isBonusEligible: false },
+    { id: 'c', cardId: 'l', date: '2026-10-12', amount: 500, isBonusEligible: false }, // open cycle: no summary yet
+  ];
+  const first = computeStatementSummaries(live, txns, '2026-10-13');
+  assert.deepEqual(first.map((x) => [x.cycleStart, x.txnCount, x.spend]), [['2026-08-10', 1, 1000], ['2026-09-10', 1, 2000]]);
+  assert.equal(first[0].reward, 15, '1.5% of 1,000');
+  // the same inputs give the same summaries (and the same fingerprints)
+  assert.deepEqual(computeStatementSummaries(live, [...txns].reverse(), '2026-10-13'), first);
+  // editing the OLD transaction changes its own fingerprint and the later one's, whose maths did not change
+  const edited = computeStatementSummaries(live, txns.map((t) => (t.id === 'a' ? { ...t, amount: 1100 } : t)), '2026-10-13');
+  assert.notEqual(edited[0].fingerprint, first[0].fingerprint);
+  assert.notEqual(edited[1].fingerprint, first[1].fingerprint, 'chained: a later statement depends on every earlier one');
+  assert.equal(edited[1].spend, first[1].spend);
+  // changing the card's rules invalidates everything
+  const retuned = computeStatementSummaries({ ...live, strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: { ...CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate, baseRate: 2 } }] }, txns, '2026-10-13');
+  assert.notEqual(retuned[0].fingerprint, first[0].fingerprint);
+  // a confirmed cashback changes the NEXT statement's bill (it comes off it), so its fingerprint moves too
+  const confirmed = computeStatementSummaries(live, txns, '2026-10-13', [{ cardId: 'l', cycleStart: '2026-08-10', actualRewardCredited: 40, pointsConfirmedAt: 'x' }]);
+  assert.notEqual(confirmed[0].fingerprint, first[0].fingerprint);
+  assert.notEqual(confirmed[1].fingerprint, first[1].fingerprint);
+  // statement-only cards have nothing to summarise
+  assert.deepEqual(computeStatementSummaries({ id: 's', billingCycleDay: 18, rewardStrategy: 'annual_milestone_only', strategyParamsHistory: [] }, [{ id: 'x', cardId: 's', date: '2026-08-20', amount: 5000 }], '2026-10-13'), []);
+  assert.equal(hashString('abc'), hashString('abc'));
+  assert.notEqual(hashString('abc'), hashString('abd'));
+});
+
+test('diffStatementSummaries writes what is missing or changed, and flags same-inputs-different-answer as drift', () => {
+  const item = (over = {}) => ({ cardId: 'l', cycleStart: '2026-08-10', cycleEnd: '2026-09-10', unit: 'inr', txnCount: 1, spend: 1000, bill: 1000, reward: 15, fingerprint: 'f1', ...over });
+  assert.deepEqual(diffStatementSummaries([item()], []), { toWrite: [item()], drift: [] }, 'nothing stored yet');
+  assert.deepEqual(diffStatementSummaries([item()], [item()]), { toWrite: [], drift: [] }, 'in step: nothing to do');
+  assert.deepEqual(diffStatementSummaries([item({ fingerprint: 'f2', spend: 1100 })], [item()]), { toWrite: [item({ fingerprint: 'f2', spend: 1100 })], drift: [] }, 'an edit: rewrite, not drift');
+  const d = diffStatementSummaries([item({ reward: 16 })], [item()]);
+  assert.equal(d.toWrite.length, 1);
+  assert.equal(d.drift.length, 1, 'identical fingerprint but a different reward: the maths depends on something the fingerprint misses');
+});
+
+test('a cycle\'s shown end is the last day it holds, one before the day the next cycle starts', () => {
+  assert.equal(cycleLastDay('2026-10-16'), '2026-10-15', 'Axis: cycle 16 Sep - 16 Oct holds purchases through the statement date, 15 Oct');
+  assert.equal(cycleLastDay('2026-10-01'), '2026-09-30', 'a cycle ending on the 1st ends on the last day of the month before');
+  assert.equal(cycleLastDay('2027-03-01'), '2027-02-28', 'across a short month');
+  assert.equal(cycleLastDay('2027-01-01'), '2026-12-31', 'and across a year');
+  assert.equal(getCardYearWindow({ annualMilestoneAnchorMonth: 4, billingCycleDay: 10 }, '2026-10-13').periodLastDay, cycleLastDay('2027-04-10'));
 });
 
 test('the anniversary month is the anniversary date\'s month, with the old milestone month as the fallback', () => {

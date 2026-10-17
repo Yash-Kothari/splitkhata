@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.8.2**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.9.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -168,7 +168,7 @@ at 375px wide as well as desktop.
   summary on phones.
 - **Add Entry stays short:** two fields per row (`47%` widths so it fits a 320px
   screen), Category right after Amount, rarely used fields (tags, reward points,
-  split across months) under **More details**, which opens itself when one has a value.
+  split across months) under **More Details**, which opens itself when one has a value.
 - **Defaults help, they never decide.** The form starts from the last entry's payer
   and payment method. A "💡 … (as before)" suggestion from the note is a tap-to-apply
   chip, **never** applied automatically: category drives card rewards and budgets.
@@ -328,16 +328,26 @@ local testing predicted.
   day to 11 and the HSBC offset to 1 (confirmations carry over - see `findCycleRecord`). Saved bill/reward confirmations are found by cycle start within
   one day (`findCycleRecord`), so moving a billing day by one does not orphan them.
 - **The card year is the card's, not the financial year** (`getCardYearWindow`): it starts in the anniversary
-  month (renewal date's month, else "Annual Milestone from", else January) on the card's statement-cycle start
-  day, so it is whole statement cycles (April + 10th = 10 Apr - 9 Apr). A reward counts toward the year its
-  statement was *earned* in, not the year its credit landed in. The fee-waiver "Milestone Progress" spend
-  window is separate (it keys stored starting-spend by 1st-of-month dates) and still starts on the 1st.
+  month (anniversary date's month, else the old stored milestone month, else January) on the card's
+  statement-cycle start day, so it is whole statement cycles (April + 10th = 10 Apr - 9 Apr). A reward counts
+  toward the year its statement was *earned* in, not the year its credit landed in. The fee-waiver "Milestone
+  Progress" window is the same year; saved starting-spend figures keyed by the 1st of the month are still found
+  (matched by year-month in `getAnnualStartingSpend`). Cashback cards lead with the card-year tile and have no
+  "Still to be credited" tile (each credit shows as a dated line in its cycle); points cards keep both their
+  points balance and that tile.
 - **Cashback comes back as a credit on the next statement.** For every rupee cashback card (not
   points, not statement-only) the ledger puts each *closed* statement's reward (your confirmed figure,
   else the expected one) on the bill of the cycle containing its credit date (`cashbackCredits`,
   `cycleBills[].cashbackCredit`). Nothing is stored, so never also enter it as a negative transaction.
   It only applies to credits dated on/after `CASHBACK_CREDIT_LINES_FROM` (2026-10-01); older ones
   were typed in by hand as negative transactions.
+- **Statement summaries are in their shadow phase.** `useStatementSummaries` writes one summary per closed
+  statement (`computeStatementSummaries`: spend, bill, reward, plus a chained fingerprint of every input
+  including all earlier statements) to its own `cardStatementSummaries` collection, `{cardId}|{cycleStart}`.
+  **Nothing reads or shows them yet** - the app still computes everything live. It only writes after cards,
+  transactions and cycle confirmations have all loaded, 4 s after the last change, 25 items per pass. A summary
+  whose fingerprint is unchanged but whose numbers differ is reported quietly to Sentry as drift (no banner).
+  Bump `STATEMENT_SUMMARY_ENGINE` whenever the reward/bill maths changes so every summary is rewritten.
 - A statement-only card entered with the statement date falls inside the open cycle,
   which is why it's tracked per statement (paid/unpaid) and never as a "next statement".
 - An old "Cash withdrawal" checkbox once let ordinary cash purchases be flagged as

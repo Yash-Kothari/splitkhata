@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { View, Text, TextInput, Pressable } from 'react-native';
-import { formatCurrency, parseAmountInput } from '../lib/utils';
+import { formatCurrency, parseAmountInput, cycleLastDay } from '../lib/utils';
 
 function formatDate(dateStr, withYear = false) {
   return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-IN', withYear ? { day: 'numeric', month: 'short', year: 'numeric' } : { day: 'numeric', month: 'short' });
@@ -16,7 +16,8 @@ export default function CashbackCreditLine({ credit, today, thisYear, onSave, on
   const [draft, setDraft] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const withYear = credit.sourceCycleStart.slice(0, 4) !== thisYear || credit.sourceCycleEnd.slice(0, 4) !== thisYear;
+  const sourceLastDay = cycleLastDay(credit.sourceCycleEnd);
+  const withYear = credit.sourceCycleStart.slice(0, 4) !== thisYear || sourceLastDay.slice(0, 4) !== thisYear;
   const credited = credit.date <= today;
   const status = credit.confirmed
     ? "✓ the bank's figure"
@@ -52,7 +53,7 @@ export default function CashbackCreditLine({ credit, today, thisYear, onSave, on
             Cashback credit · {formatDate(credit.date)}
           </Text>
           <Text className="font-body text-2xs text-muted-text" numberOfLines={2}>
-            From the {formatDate(credit.sourceCycleStart, withYear)} – {formatDate(credit.sourceCycleEnd, withYear)} statement · {status}
+            From the {formatDate(credit.sourceCycleStart, withYear)} – {formatDate(sourceLastDay, withYear)} statement · {status}
           </Text>
         </View>
         <Text className="font-mono-bold text-sm text-ledger-green">−{formatCurrency(credit.amount)}</Text>
@@ -60,7 +61,7 @@ export default function CashbackCreditLine({ credit, today, thisYear, onSave, on
 
       {editing ? (
         <View className="mt-2">
-          <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Amount the bank credited</Text>
+          <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Amount the Bank Credited</Text>
           <View className="flex-row mt-1" style={{ gap: 8 }}>
             <TextInput
               value={draft}

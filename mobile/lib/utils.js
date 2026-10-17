@@ -2153,6 +2153,14 @@ function daysBetweenISO(a, b) {
   return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
 }
 
+// A cycle's (or year's) end in this app is the day the NEXT one starts, so it is exclusive:
+// the cycle 16 Sep - 16 Oct holds purchases through 15 Oct. This is the last day it holds -
+// what to show as the end ("16 Sept - 15 Oct", "Closed 15 Oct"), and for a card whose billing
+// day follows its statement date, the statement date itself.
+export function cycleLastDay(cycleEnd) {
+  return addDaysISO(cycleEnd, -1);
+}
+
 // Adds `days` calendar days to an ISO date string.
 export function addDaysToDateISO(dateStr, days) {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -2411,7 +2419,7 @@ export function computeCardAnnualValue(card, cardTxns, today = todayISO(), cardB
     .credits.filter((l) => rewardIsInYear(l, periodStart, periodEnd))
     .reduce((sum, l) => sum + l.amount, 0);
   const netValue = ledger.unit === 'inr' ? earned - fee : null;
-  return { periodStart, periodEnd, earned, fee, unit: ledger.unit, netValue };
+  return { periodStart, periodEnd, periodLastDay: addDaysISO(periodEnd, -1), earned, fee, unit: ledger.unit, netValue };
 }
 
 // Calendar-quarter bounds (Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec) for whichever
@@ -3326,6 +3334,10 @@ function buildQuarterlyStartingMap(card) {
 export function getAnnualStartingSpend(card, periodStart) {
   const map = card?.annualStartingSpend;
   if (map && map[periodStart] != null) return Number(map[periodStart]) || 0;
+  // The window now starts on the card's statement day (see getCardYearWindow), but figures saved
+  // before that are keyed by the 1st of the same month: the same card year, so match on year-month.
+  const sameMonth = map && Object.keys(map).find((k) => k.slice(0, 7) === periodStart.slice(0, 7) && map[k] != null);
+  if (sameMonth) return Number(map[sameMonth]) || 0;
   // Legacy fallback: the single old field only ever meant the window the
   // card was created in, since there was nowhere else to record which
   // window it was for.
@@ -3334,7 +3346,7 @@ export function getAnnualStartingSpend(card, periodStart) {
     if (!Number.isNaN(createdDate.getTime())) {
       const createdISO = `${createdDate.getFullYear()}-${pad2(createdDate.getMonth() + 1)}-${pad2(createdDate.getDate())}`;
       const { periodStart: createdWindowStart } = getAnnualMilestoneWindow(getCardAnniversaryMonth(card), createdISO);
-      if (createdWindowStart === periodStart) return Number(card?.annualMilestoneStartingSpend) || 0;
+      if (createdWindowStart.slice(0, 7) === periodStart.slice(0, 7)) return Number(card?.annualMilestoneStartingSpend) || 0;
     }
   }
   return 0;
@@ -3848,6 +3860,78 @@ export function findCycleRecord(cardBillingCycles, cardId, cycleStart) {
 
 export function getCardBillingCycleKey(cardId, cycleStart) {
   return `${cardId}|${cycleStart}`;
+}
+
+// --- Statement summaries (shadow phase) ---
+// Each closed statement's headline numbers, saved so a later version can show old
+// statements without loading all their transactions (see docs/PROJECT_RULES.md). For now
+// they are only WRITTEN and checked - nothing displays them. A summary is only as good as
+// its fingerprint: a statement's numbers depend on every earlier statement too (caps and the
+// Diners slab remainder carry over, a confirmed cashback lands on the next bill), so the
+// fingerprint chains: each statement's hash includes the one before it, the card's rules and
+// the fields of its own transactions that feed the maths. Editing an old transaction changes
+// its fingerprint and every later one.
+export const STATEMENT_SUMMARY_ENGINE = 1; // bump when the reward/bill maths changes meaning
+
+// 32-bit FNV-1a, as 8 hex digits - enough to tell "same inputs" from "changed", not for security.
+export function hashString(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i += 1) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+export function computeStatementSummaries(card, cardTxns, today = todayISO(), cardBillingCycles = []) {
+  if (!card || isStatementOnlyCard(card)) return [];
+  const day = card.billingCycleDay ?? 1;
+  const ledger = computeCardRewardLedger(card, cardTxns, today, cardBillingCycles);
+  const closed = groupTransactionsByCycle(cardTxns, day, today)
+    .filter((g) => g.status === 'closed')
+    .sort((a, b) => a.cycleStart.localeCompare(b.cycleStart));
+  let chain = hashString(JSON.stringify([STATEMENT_SUMMARY_ENGINE, card.rewardStrategy, day, card.strategyParamsHistory || null]));
+  const round2 = (n) => Math.round(n * 100) / 100;
+  return closed.map((g) => {
+    const txns = [...g.txns]
+      .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+      .map((t) => [t.id, t.amount, t.date, t.channel ?? null, t.category ?? null, t.isBonusEligible ?? null, t.rewardOverride ?? null, t.travelMultiplier ?? null, t.pointsRedeemed ?? null]);
+    const record = findCycleRecord(cardBillingCycles, card.id, g.cycleStart);
+    const confirmed = record ? [record.actualRewardCredited ?? null, record.pointsConfirmedAt != null] : null;
+    chain = hashString(`${chain}|${g.cycleStart}|${JSON.stringify(txns)}|${JSON.stringify(confirmed)}`);
+    const result = ledger.cycleRewards[g.cycleStart];
+    return {
+      cardId: card.id,
+      cycleStart: g.cycleStart,
+      cycleEnd: g.cycleEnd,
+      unit: result?.unit ?? ledger.unit,
+      txnCount: g.txns.length,
+      spend: round2(g.txns.reduce((sum, t) => sum + t.amount, 0)),
+      bill: round2(ledger.cycleBills[g.cycleStart]?.statement ?? 0),
+      reward: round2(result?.totalReward ?? 0),
+      fingerprint: chain,
+    };
+  });
+}
+
+// What to write, and what is wrong. `toWrite`: summaries missing, out of date (fingerprint
+// changed) or different. `drift`: same fingerprint but different numbers - the maths gave a
+// different answer for identical inputs, which means a dependency the fingerprint does not cover.
+export function diffStatementSummaries(live, stored) {
+  const key = (x) => `${x.cardId}|${x.cycleStart}`;
+  const byKey = new Map((stored || []).map((x) => [key(x), x]));
+  const same = (a, b) => ['txnCount', 'spend', 'bill', 'reward'].every((f) => Math.abs((a[f] ?? 0) - (b[f] ?? 0)) < 0.005);
+  const toWrite = [];
+  const drift = [];
+  for (const item of live) {
+    const old = byKey.get(key(item));
+    if (!old || old.fingerprint !== item.fingerprint) toWrite.push(item);
+    else if (!same(old, item)) {
+      toWrite.push(item);
+      drift.push({ live: item, stored: old });
+    }
+  }
+  return { toWrite, drift };
 }
 
 // --- Export / backup ---

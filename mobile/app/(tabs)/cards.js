@@ -19,8 +19,8 @@ import {
   getQuarterlyMilestoneCreditDate,
   getQuarterStartingSpend,
   getAnnualStartingSpend,
-  getAnnualMilestoneWindow,
-  getCardAnniversaryMonth,
+  getCardYearWindow,
+  cycleLastDay,
   computeCardCapStatus,
   getQuarterBounds,
   computeCardDueReminders,
@@ -28,6 +28,7 @@ import {
 } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import { useCardRewards } from '../../lib/useCardRewards';
+import { useStatementSummaries } from '../../lib/useStatementSummaries';
 import { useUndoDelete } from '../../lib/useUndoDelete';
 import { useSettingsModal } from '../../lib/SettingsModalContext';
 import Card from '../../components/Card';
@@ -74,9 +75,13 @@ export default function Cards() {
     reportError(err, 'Could not delete transaction'),
   );
 
-  useEffect(() => subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')), []);
-  useEffect(() => subscribeToCardTransactions(setCardTransactions, (err) => reportError(err, 'Could not load card transactions')), []);
-  useEffect(() => subscribeToCardBillingCycles(setCardBillingCycles, (err) => reportError(err, 'Could not load billing cycles')), []);
+  // Which of the three feeds have delivered their first snapshot - the statement-summary check
+  // must not run on a half-loaded picture.
+  const [loadedFeeds, setLoadedFeeds] = useState({ cards: false, txns: false, cycles: false });
+  const markLoaded = (feed) => setLoadedFeeds((prev) => (prev[feed] ? prev : { ...prev, [feed]: true }));
+  useEffect(() => subscribeToCreditCards((d) => { setCreditCards(d); markLoaded('cards'); }, (err) => reportError(err, 'Could not load credit cards')), []);
+  useEffect(() => subscribeToCardTransactions((d) => { setCardTransactions(d); markLoaded('txns'); }, (err) => reportError(err, 'Could not load card transactions')), []);
+  useEffect(() => subscribeToCardBillingCycles((d) => { setCardBillingCycles(d); markLoaded('cycles'); }, (err) => reportError(err, 'Could not load billing cycles')), []);
 
   const selectedCard = creditCards.find((c) => c.id === selectedCardId) || creditCards[0] || null;
   const statementOnly = isStatementOnlyCard(selectedCard);
@@ -88,6 +93,7 @@ export default function Cards() {
   );
 
   const today = todayISO();
+  useStatementSummaries({ ready: loadedFeeds.cards && loadedFeeds.txns && loadedFeeds.cycles, creditCards, cardTransactions, cardBillingCycles, today });
   const currentCycle = selectedCard ? getCardCycleForDate(today, selectedCard.billingCycleDay ?? 1) : null;
   const currentCycleTxns = currentCycle ? getTransactionsInCycle(cardTxns, selectedCard.id, currentCycle.cycleStart, currentCycle.cycleEnd) : [];
   // Everything is computed statement by statement (caps and the Diners slab
@@ -113,10 +119,9 @@ export default function Cards() {
   const quarterlyMilestoneCreditDate = selectedCard && params.quarterlyMilestoneTarget
     ? getQuarterlyMilestoneCreditDate(selectedCard, quarterEnd)
     : null;
-  const { periodStart: annualPeriodStart, periodEnd: annualPeriodEnd } = getAnnualMilestoneWindow(
-    getCardAnniversaryMonth(selectedCard),
-    today,
-  );
+  // The annual milestone runs on the same year as the card-year tile: the anniversary month,
+  // starting on the card's statement day.
+  const { periodStart: annualPeriodStart, periodEnd: annualPeriodEnd } = getCardYearWindow(selectedCard, today);
   const quarterlyMilestone = params.quarterlyMilestoneTarget
     ? computeCardMilestoneProgress(
         cardTxns,
@@ -276,7 +281,7 @@ export default function Cards() {
                   </Text>
                   <View className="self-start px-2.5 py-1 rounded-full bg-ledger-green/10">
                     <Text className="font-body-semibold text-2xs text-ledger-green">
-                      Cycle: {currentCycle.cycleStart} – {currentCycle.cycleEnd}
+                      Cycle: {currentCycle.cycleStart} – {cycleLastDay(currentCycle.cycleEnd)}
                     </Text>
                   </View>
                 </View>
@@ -309,7 +314,7 @@ export default function Cards() {
                     }
                   />
                 )}
-                {!statementOnly && rewards.pending.length > 0 && (
+                {!statementOnly && ledger.unit === 'points' && rewards.pending.length > 0 && (
                   <View className="rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5 mb-3">
                     <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider mb-1">Still to be credited</Text>
                     {rewards.pending.map((p) => (
@@ -351,7 +356,7 @@ export default function Cards() {
                 <Card className="p-4">
                   <Text className="font-display text-sm text-ink mb-2">Annual Fee & Value</Text>
                   <Text className="font-body text-2xs text-muted-text mb-2">
-                    {annualValue.periodStart} – {annualValue.periodEnd}
+                    {annualValue.periodStart} – {annualValue.periodLastDay}
                   </Text>
                   <View className="flex-row gap-3">
                     <View className="flex-1">
@@ -389,7 +394,7 @@ export default function Cards() {
                       {quarterlyMilestone && (
                         <View>
                           <View className="flex-row items-center justify-between mb-1">
-                            <Text className="font-body-medium text-xs text-ink">This quarter ({quarterStart} – {quarterEnd})</Text>
+                            <Text className="font-body-medium text-xs text-ink">This quarter ({quarterStart} – {cycleLastDay(quarterEnd)})</Text>
                             <Text className="font-body text-xs text-muted-text">{Math.round(quarterlyMilestone.pctUsed * 100)}%</Text>
                           </View>
                           <ProgressBar pctUsed={quarterlyMilestone.pctUsed} />
@@ -406,7 +411,7 @@ export default function Cards() {
                       {annualMilestone && (
                         <View>
                           <View className="flex-row items-center justify-between mb-1">
-                            <Text className="font-body-medium text-xs text-ink">This year ({annualPeriodStart} – {annualPeriodEnd})</Text>
+                            <Text className="font-body-medium text-xs text-ink">This year ({annualPeriodStart} – {cycleLastDay(annualPeriodEnd)})</Text>
                             <Text className="font-body text-xs text-muted-text">{Math.round(annualMilestone.pctUsed * 100)}%</Text>
                           </View>
                           <ProgressBar pctUsed={annualMilestone.pctUsed} />

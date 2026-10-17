@@ -167,7 +167,7 @@ export default function TripPicker({
         }}
         className="min-h-9 px-3 rounded-lg bg-ledger-green items-center justify-center shrink-0"
       >
-        <Text className="font-body-semibold text-xs text-white">Switch to it</Text>
+        <Text className="font-body-semibold text-xs text-white">Switch to It</Text>
       </Pressable>
     </View>
   );

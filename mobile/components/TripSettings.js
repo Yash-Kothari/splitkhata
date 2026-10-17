@@ -410,7 +410,7 @@ export default function TripSettings({
                 />
               </View>
               <View className="w-full sm:w-[calc(50%-6px)]">
-                <Text className={fieldLabel}>INR cost (required)</Text>
+                <Text className={fieldLabel}>INR Cost (required)</Text>
                 <TextInput
                   value={withdrawalInr}
                   onChangeText={setWithdrawalInr}
@@ -429,7 +429,7 @@ export default function TripSettings({
               <View className="w-full">
                 {withdrawalInstruments.length ? (
                   <PickerField
-                    label="Card / method used"
+                    label="Card / Method Used"
                     value={withdrawalPaymentMethod}
                     options={withdrawalInstruments.map((i) => i.label)}
                     onChange={setWithdrawalPaymentMethod}

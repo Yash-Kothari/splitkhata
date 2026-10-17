@@ -93,7 +93,7 @@ export default function CardRewardCredits({ rewards, yearRewards, format, onSave
                         value={draft}
                         onChangeText={setDraft}
                         keyboardType="numbers-and-punctuation"
-                        placeholder="Amount the bank credited"
+                        placeholder="Amount the Bank Credited"
                         className="flex-1 font-mono-bold text-sm text-ink border border-ink/15 rounded-xl px-3 py-2 bg-paper"
                       />
                       <Pressable onPress={() => setEditingKey(null)} className="px-3 min-h-10 rounded-xl border border-ink/15 items-center justify-center">

@@ -12,6 +12,7 @@ import {
   isStatementOnlyCard,
   parseAmountInput,
   getRewardCreditDate,
+  cycleLastDay,
 } from '../lib/utils';
 
 function formatReward(amount, unit) {
@@ -23,8 +24,9 @@ function formatDate(dateStr) {
 }
 
 function formatCycleMonthLabel(cycle) {
-  const monthName = new Date(`${cycle.cycleEnd}T00:00:00`).toLocaleDateString('en-IN', { month: 'long' });
-  return `${monthName} (${formatDate(cycle.cycleStart)} – ${formatDate(cycle.cycleEnd)})`;
+  const last = cycleLastDay(cycle.cycleEnd);
+  const monthName = new Date(`${last}T00:00:00`).toLocaleDateString('en-IN', { month: 'long' });
+  return `${monthName} (${formatDate(cycle.cycleStart)} – ${formatDate(last)})`;
 }
 
 // RN port of web's BillingCycleRow (inside CardsManager.jsx).
@@ -99,7 +101,7 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
   return (
     <View className={bare ? '' : 'rounded-xl border border-ink/10 bg-paper/60 px-3.5 py-3'}>
       <Text className="font-body-semibold text-sm text-ink mb-2">
-        {formatDate(cycle.cycleStart)} – {formatDate(cycle.cycleEnd)}
+        {formatDate(cycle.cycleStart)} – {formatDate(cycleLastDay(cycle.cycleEnd))}
       </Text>
       <View className={bare ? 'gap-3' : 'flex-col sm:flex-row gap-3'}>
         <View className={bare ? '' : 'sm:flex-1'}>
@@ -197,7 +199,7 @@ export function LastStatementCard({ card, cardTxns, cardBillingCycles, today, le
     <Card className="p-4">
       <View className="flex-row items-baseline justify-between mb-0.5">
         <Text className="font-display text-base text-ink">Last Statement</Text>
-        <Text className="font-body text-2xs text-muted-text">Closed {formatDate(cycle.cycleEnd)}</Text>
+        <Text className="font-body text-2xs text-muted-text">Closed {formatDate(cycleLastDay(cycle.cycleEnd))}</Text>
       </View>
       {isStatementOnlyCard(card) ? null : (
         <Text className={`font-body-semibold text-2xs mb-2 ${credited ? 'text-ledger-green' : 'text-muted-text'}`}>

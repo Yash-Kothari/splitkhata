@@ -460,7 +460,7 @@ export default function AddEntryForm({
         >
           {splitAcrossMonths && <Text className="text-white text-xs">✓</Text>}
         </View>
-        <Text className="font-body-semibold text-sm text-ink flex-1">Split across multiple months</Text>
+        <Text className="font-body-semibold text-sm text-ink flex-1">Split Across Multiple Months</Text>
       </Pressable>
       <Text className="font-body text-2xs text-muted-text mt-1 ml-7">
         For lump-sum payments that cover several months - spreads the amount evenly across one entry per month.

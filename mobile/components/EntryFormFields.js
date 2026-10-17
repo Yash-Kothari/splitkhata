@@ -19,7 +19,7 @@ export const SPLIT_TYPE_OPTIONS = [
   { value: 'shared', label: 'Split' },
   { value: 'owed', label: 'Owed' },
   { value: 'personal', label: 'Personal' },
-  { value: 'custom', label: 'Custom amounts' },
+  { value: 'custom', label: 'Custom Amounts' },
 ];
 
 const labelClass = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
@@ -214,7 +214,7 @@ export default function EntryFormFields({
 
       <Pressable onPress={() => f.setMoreToggle(!f.moreOpen)} className="mt-3 flex-row items-center">
         <Text className="font-body-semibold text-xs text-muted-text">
-          {f.moreOpen ? '▾' : '▸'} More details <Text className="font-body text-2xs">({moreParts.join(', ')})</Text>
+          {f.moreOpen ? '▾' : '▸'} More Details <Text className="font-body text-2xs">({moreParts.join(', ')})</Text>
         </Text>
       </Pressable>
 

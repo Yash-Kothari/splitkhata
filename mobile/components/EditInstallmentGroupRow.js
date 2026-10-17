@@ -97,7 +97,7 @@ export default function EditInstallmentGroupRow({ groupId, sampleEntry, categori
           <PickerField
             label="Split Type"
             value={splitType}
-            options={splitType === 'custom' ? [{ value: 'custom', label: 'Custom amounts (unchanged)' }, ...SPLIT_TYPE_OPTIONS] : SPLIT_TYPE_OPTIONS}
+            options={splitType === 'custom' ? [{ value: 'custom', label: 'Custom Amounts (unchanged)' }, ...SPLIT_TYPE_OPTIONS] : SPLIT_TYPE_OPTIONS}
             onChange={setSplitType}
           />
         </View>

@@ -160,6 +160,7 @@ const currenciesRef = collection(dbInstance, 'currencies');
 const creditCardsRef = collection(dbInstance, 'creditCards');
 const cardTransactionsRef = collection(dbInstance, 'cardTransactions');
 const cardBillingCyclesRef = collection(dbInstance, 'cardBillingCycles');
+const cardStatementSummariesRef = collection(dbInstance, 'cardStatementSummaries');
 
 // Always true on mobile - the Firebase config above is hardcoded, not
 // environment-gated the way web's "no config, run in a local-only demo
@@ -1646,6 +1647,21 @@ export function subscribeToCardBillingCycles(onData, onError) {
     (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
     onError,
   );
+}
+
+// Closed statements' headline numbers (shadow phase - written and checked, not yet shown). Its own
+// collection, not cardBillingCycles, so it can never shadow a bill/reward you confirmed there.
+export function subscribeToStatementSummaries(onData, onError) {
+  return onSnapshot(cardStatementSummariesRef, (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
+}
+
+export async function saveStatementSummaries(summaries) {
+  if (!summaries.length) return;
+  const batch = writeBatch(dbInstance);
+  summaries.forEach((item) => {
+    batch.set(doc(dbInstance, 'cardStatementSummaries', getCardBillingCycleKey(item.cardId, item.cycleStart)), { ...item, computedAt: serverTimestamp() });
+  });
+  await track(batch.commit(), 'Could not save statement summaries');
 }
 
 export async function saveCardBillingCycle(cardId, cycleStart, updates) {

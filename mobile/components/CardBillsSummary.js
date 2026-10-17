@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import Card from './Card';
-import { formatCurrency } from '../lib/utils';
+import { formatCurrency, cycleLastDay } from '../lib/utils';
 
 function shortDate(dateStr) {
   return new Date(`${dateStr}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
@@ -110,7 +110,7 @@ export default function CardBillsSummary({ summary, onMarkPaid }) {
                       <Text className="font-mono-bold text-xs text-ink">{formatCurrency(c.next.amount)}</Text>
                     </View>
                     <View className="flex-row items-center justify-between">
-                      <Text className="font-body text-2xs text-muted-text">Next statement, closes {shortDate(c.next.closesOn)}</Text>
+                      <Text className="font-body text-2xs text-muted-text">Next statement, closes {shortDate(cycleLastDay(c.next.closesOn))}</Text>
                     </View>
                     {c.billed ? (
                       <View className="flex-row items-center justify-between">

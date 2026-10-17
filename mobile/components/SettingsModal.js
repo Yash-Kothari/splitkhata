@@ -71,7 +71,7 @@ import {
   buildPaymentInstruments,
   resolveInstrument,
   getQuarterBounds,
-  getAnnualMilestoneWindow,
+  getCardYearWindow,
   getCardAnniversaryMonth,
   getAnnualStartingSpend,
   checkCustomSharesTotal,
@@ -968,7 +968,7 @@ export default function SettingsModal({ visible, onClose }) {
         // Keyed by period (quarterlyStartingSpend / annualStartingSpend), not
         // one shared field per card - see getQuarterStartingSpend.
         annualStartingSpend: {
-          [getAnnualMilestoneWindow(getCardAnniversaryMonth({ renewalDate: newCardRenewalDate }), todayISO()).periodStart]:
+          [getCardYearWindow({ renewalDate: newCardRenewalDate, billingCycleDay: Math.min(31, Math.max(1, Math.round(Number(newCardBillingDay)) || 1)) }, todayISO()).periodStart]:
             Math.max(0, parseAmountInput(newCardAnnualStartingSpend) || 0),
         },
         ...(CARD_STRATEGY_DEFAULTS[newCardStrategy]?.quarterlyMilestoneTarget
@@ -1004,7 +1004,7 @@ export default function SettingsModal({ visible, onClose }) {
       // month's start so the field is not blank, and saving makes it the card's date.
       renewalDate:
         card.renewalDate ||
-        (card.annualMilestoneAnchorMonth ? getAnnualMilestoneWindow(card.annualMilestoneAnchorMonth, todayISO()).periodStart : ''),
+        (card.annualMilestoneAnchorMonth ? getCardYearWindow(card, todayISO()).periodStart : ''),
     });
   }
   async function saveEditCard(cardId) {
@@ -1015,10 +1015,12 @@ export default function SettingsModal({ visible, onClose }) {
       const newAnchorMonth = editCardDrafts.renewalDate ? getCardAnniversaryMonth({ renewalDate: editCardDrafts.renewalDate }) : oldAnchorMonth;
       // "Spend counted so far" is a one-time catch-up for the period the card was added in, set when adding
       // the card. Moving the anniversary month moves that period, so carry its figure to the new one.
-      const oldPeriodStart = getAnnualMilestoneWindow(oldAnchorMonth, todayISO()).periodStart;
-      const newPeriodStart = getAnnualMilestoneWindow(newAnchorMonth, todayISO()).periodStart;
+      const newBillingDay = Math.min(31, Math.max(1, Math.round(Number(editCardDrafts.billingCycleDay)) || 1));
+      const oldPeriodStart = getCardYearWindow(card, todayISO()).periodStart;
+      const newPeriodStart = getCardYearWindow({ ...card, renewalDate: editCardDrafts.renewalDate || card?.renewalDate, annualMilestoneAnchorMonth: newAnchorMonth, billingCycleDay: newBillingDay }, todayISO()).periodStart;
       const annualStartingSpend = { ...(card?.annualStartingSpend || {}) };
-      if (newPeriodStart !== oldPeriodStart && annualStartingSpend[newPeriodStart] == null) {
+      // Same card year (same month): the lookup matches by month, nothing to move.
+      if (newPeriodStart.slice(0, 7) !== oldPeriodStart.slice(0, 7) && annualStartingSpend[newPeriodStart] == null) {
         annualStartingSpend[newPeriodStart] = getAnnualStartingSpend(card, oldPeriodStart);
       }
       await updateCreditCardInDb(cardId, {

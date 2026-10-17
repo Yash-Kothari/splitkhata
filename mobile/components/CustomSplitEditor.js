@@ -53,10 +53,10 @@ export default function CustomSplitEditor({ members, total, shares, onChange, mo
       ) : null}
       <View className="flex-row items-center justify-between mb-2">
         <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text">
-          {isRatio ? "Each person's parts" : "Each person's share"}
+          {isRatio ? "Each Person's Parts" : "Each Person's Share"}
         </Text>
         <Pressable onPress={splitEqually} disabled={!isRatio && !hasTotal} hitSlop={6} className="disabled:opacity-50">
-          <Text className="font-body-semibold text-xs text-ledger-green">{isRatio ? 'Equal parts' : 'Split equally'}</Text>
+          <Text className="font-body-semibold text-xs text-ledger-green">{isRatio ? 'Equal Parts' : 'Split Equally'}</Text>
         </Pressable>
       </View>
       <View className="flex-row flex-wrap" style={{ gap: 8 }}>
