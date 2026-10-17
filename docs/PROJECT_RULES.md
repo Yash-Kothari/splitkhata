@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.8.0**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.8.1**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -320,9 +320,9 @@ local testing predicted.
   year, the annual milestone window and the fee year (`getCardAnniversaryMonth`); cards that only have the
   old "Annual Milestone from" month keep working through that fallback, and saving the card turns it into a
   date. The one-time "spend counted so far" figures are set in Add Card only, never in Edit.
-- **A card's cycle starts the day after its statement date**: statement date 15th -> billing day 16 (Axis).
-  A cycle's end is therefore statement date + 1, and credit-timing offsets in `CARD_CREDIT_TIMING` are measured
-  from it (HSBC Live+ is still on billing day 10 = its statement date; moving it to 11 also needs its offset 2 -> 1). Saved bill/reward confirmations are found by cycle start within
+- **A card's cycle starts the day after its statement date**: statement date 15th -> billing day 16 (Axis),
+  10th -> 11 (HSBC Live+). A cycle's end is therefore statement date + 1, and credit-timing offsets in
+  `CARD_CREDIT_TIMING` are measured from it. Saved bill/reward confirmations are found by cycle start within
   one day (`findCycleRecord`), so moving a billing day by one does not orphan them.
 - **The card year is the card's, not the financial year** (`getCardYearWindow`): it starts in the anniversary
   month (renewal date's month, else "Annual Milestone from", else January) on the card's statement-cycle start
