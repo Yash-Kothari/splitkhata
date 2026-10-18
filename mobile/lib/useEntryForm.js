@@ -48,16 +48,17 @@ export function useEntryForm({
   );
   const paymentMethodOptions = instruments.map((i) => i.label);
 
-  // Money received (instead of spent) is stored as a minus, but typed and shown as a plain positive
-  // number with the Money Received switch on - nobody wants to type a minus on a phone keypad.
-  // Typing a leading "-" by hand switches it on too. Settlements are transfers, never "received".
-  const [received, setReceived] = useState(entry ? Number(entry.amount) < 0 || Number(entry.localAmount) < 0 : false);
+  // A refund / money received is stored as a minus, but typed and shown as a plain positive number
+  // with the Refund / Reversal box ticked (same wording as a card transaction) - nobody wants to type
+  // a minus on a phone keypad.
+  // Typing a leading "-" by hand switches it on too. Settlements are transfers, never refunds.
+  const [refund, setRefund] = useState(entry ? Number(entry.amount) < 0 || Number(entry.localAmount) < 0 : false);
   const unsigned = (v) => (v == null ? '' : String(Math.abs(Number(v))));
   const [amount, setAmount] = useState(entry ? unsigned(entry.amount ?? '') : '');
   const [localAmount, setLocalAmount] = useState(entry?.localAmount != null ? unsigned(entry.localAmount) : '');
-  const isReceived = (received || /^\s*-/.test(amount)) && entry?.splitType !== 'settlement';
-  const amountValue = parseSignedAmountInput(amount, isReceived);
-  const localValue = parseSignedAmountInput(localAmount, isReceived);
+  const isRefund = (refund || /^\s*-/.test(amount)) && entry?.splitType !== 'settlement';
+  const amountValue = parseSignedAmountInput(amount, isRefund);
+  const localValue = parseSignedAmountInput(localAmount, isRefund);
   const [rewardPoints, setRewardPoints] = useState(entry?.rewardPoints != null ? String(entry.rewardPoints) : '');
 
   // Who paid and how. Editing: what the entry has. Adding: what the user picked,
@@ -143,12 +144,12 @@ export function useEntryForm({
   const entryId = entry?.id ?? null;
   const entryCreatedAt = entry?.createdAt ?? null;
   const fifoResult = useMemo(() => {
-    // Money coming in does not use up any ATM withdrawal.
-    if (isReceived) return null;
+    // A refund does not use up any ATM withdrawal.
+    if (isRefund) return null;
     const parsedLocal = parseAmountInput(localAmount);
     if (!parsedLocal || parsedLocal <= 0) return null;
     return computeFifoCashAmount(tripWithdrawals, otherCashEntries, { id: entryId, date, createdAt: entryCreatedAt, localAmount: parsedLocal });
-  }, [tripWithdrawals, otherCashEntries, date, localAmount, entryId, entryCreatedAt, isReceived]);
+  }, [tripWithdrawals, otherCashEntries, date, localAmount, entryId, entryCreatedAt, isRefund]);
   const fifoBreakdownText = useMemo(
     () => (fifoResult ? formatFifoBreakdownSummary(fifoResult.breakdown, currentCurrency) : ''),
     [fifoResult, currentCurrency],
@@ -212,7 +213,7 @@ export function useEntryForm({
     instruments,
     paymentMethodOptions,
     amount, setAmount,
-    received, setReceived, isReceived, amountValue, localValue,
+    refund, setRefund, isRefund, amountValue, localValue,
     localAmount, setLocalAmount,
     rewardPoints, setRewardPoints,
     payer, setPayer,

@@ -974,7 +974,7 @@ test('groupByPaymentMethod: totals match the Category Breakdown, biggest first, 
   assert.deepEqual(groupByPaymentMethod([], null, 'travel'), []);
 });
 
-test('parseSignedAmountInput: Money Received and a typed minus both store a minus; 0 stays 0', () => {
+test('parseSignedAmountInput: the Refund / Reversal box and a typed minus both store a minus; 0 stays 0', () => {
   assert.equal(parseSignedAmountInput('500'), 500);
   assert.equal(parseSignedAmountInput('500', true), -500);
   assert.equal(parseSignedAmountInput('-500'), -500);
@@ -985,7 +985,7 @@ test('parseSignedAmountInput: Money Received and a typed minus both store a minu
   assert.equal(parseSignedAmountInput(''), null);
 });
 
-test('money received (a negative amount) flows through balances, custom splits and installments', () => {
+test('a refund (a negative amount) flows through balances, custom splits and installments', () => {
   const members = ['Yash', 'Kruti'];
   // Yash paid 1,000 for something shared, then got 400 back for half of it from a shop (shared).
   const entries = [

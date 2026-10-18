@@ -74,7 +74,7 @@ const EntryRow = memo(function EntryRow({
                     <Text className={`font-mono-bold text-base ${item.amount < 0 ? 'text-ledger-green' : 'text-ink'}`}>{formatCurrency(item.amount, 'INR')}</Text>
                   ) : null}
                   {item.amount < 0 && !isSettlement ? (
-                    <Text className="font-body-semibold text-2xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">Received</Text>
+                    <Text className="font-body-semibold text-2xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">Refund</Text>
                   ) : null}
                   {isTravel && item.localAmount != null && (
                     <Text className="font-mono text-xs text-muted-text">

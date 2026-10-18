@@ -1209,7 +1209,7 @@ export function parseAmountInput(text, { allowNegative = false } = {}) {
   return Math.round(value * 100) / 100;
 }
 
-// An entry's amount as typed plus the "Money Received" switch: money received is stored as a
+// An entry's amount as typed plus the "Refund / Reversal" box: a refund (money received) is stored as a
 // minus (an expense of -500 is 500 coming in), so balances, category totals and card refunds all
 // follow without special cases. A leading "-" typed by hand means the same as the switch. 0 stays 0.
 export function parseSignedAmountInput(text, received = false) {

@@ -97,14 +97,14 @@ export default function AddEntryForm({
       rankCardsForEntry(
         creditCards,
         cardTransactions,
-        // Money coming in earns nothing, so no card is ranked for it.
-        f.isReceived ? 0 : Math.abs(f.amountValue || 0),
+        // A refund earns nothing, so no card is ranked for it.
+        f.isRefund ? 0 : Math.abs(f.amountValue || 0),
         category,
         date,
         f.effectiveTravelMultiplier ? { cardId: f.selectedCardId, multiplier: f.effectiveTravelMultiplier } : null,
         { bookings: !isTravel },
       ),
-    [creditCards, cardTransactions, f.amountValue, f.isReceived, category, date, f.effectiveTravelMultiplier, f.selectedCardId, isTravel],
+    [creditCards, cardTransactions, f.amountValue, f.isRefund, category, date, f.effectiveTravelMultiplier, f.selectedCardId, isTravel],
   );
 
   // Real household spending repeats far more than a blank form assumes -
@@ -251,7 +251,7 @@ export default function AddEntryForm({
 
     const resetForm = () => {
       f.setAmount('');
-      f.setReceived(false);
+      f.setRefund(false);
       f.setLocalAmount('');
       f.setRewardPoints('');
       f.setNote('');
