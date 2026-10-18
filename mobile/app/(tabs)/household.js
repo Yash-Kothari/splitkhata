@@ -120,6 +120,17 @@ export default function Household() {
     />
   );
 
+  // The cards that sit in the side rail on a wide screen. On a phone they come above the passbook
+  // instead (the charts folded to one line), so the passbook is never buried under them.
+  const budgetAlerts = entries && <BudgetAlerts entries={entries} ledger="household" month={getMonthKey(todayISO())} budgets={budgets} />;
+  const forecast = entries && (
+    <MonthForecast entries={entries} recurringRules={recurringRules} budgets={budgets} overallBudget={overallBudget} />
+  );
+  const monthChart = entries && <MonthChart entries={entries} ledger="household" collapsible={!wide} />;
+  const personSpend = entries && (
+    <PersonSpendCard entries={entries} members={members} deviceMemberName={memberForUser(user, members)} collapsible={!wide} />
+  );
+
   return (
     <View className="flex-1 bg-paper">
       <AppHeader badge="🏠 Household Ledger" />
@@ -140,7 +151,7 @@ export default function Household() {
         {/* Two-column shell above 1024px: the ledger (add entry + passbook)
             on the left, a context rail (alerts, forecast, charts) on the
             right. Stacked on a phone the ledger comes first, so Add Entry is
-            right under the balance and the charts sit below the passbook. */}
+            right under the balance, then the alerts and folded charts, then the passbook. */}
         <View className="flex-col lg:flex-row" style={{ gap: 20 }}>
           <View className="lg:flex-1">
             <View className="px-4">
@@ -156,7 +167,17 @@ export default function Household() {
               />
             </View>
 
-            <View className="px-4">{!wide && categoryChart}</View>
+            <View className="px-4">
+              {!wide && (
+                <>
+                  {budgetAlerts}
+                  {forecast}
+                  {categoryChart}
+                  {monthChart}
+                  {personSpend}
+                </>
+              )}
+            </View>
 
             <EntryList
               title="Passbook Entries"
@@ -178,17 +199,15 @@ export default function Household() {
             />
           </View>
 
-          <View className="w-full lg:w-96 px-4" style={{ gap: 16 }}>
-            {entries && <BudgetAlerts entries={entries} ledger="household" month={getMonthKey(todayISO())} budgets={budgets} />}
-            {entries && (
-              <MonthForecast entries={entries} recurringRules={recurringRules} budgets={budgets} overallBudget={overallBudget} />
-            )}
-            {entries && <MonthChart entries={entries} ledger="household" />}
-            {wide && categoryChart}
-            {entries && (
-              <PersonSpendCard entries={entries} members={members} deviceMemberName={memberForUser(user, members)} />
-            )}
-          </View>
+          {wide && (
+            <View className="w-full lg:w-96 px-4" style={{ gap: 16 }}>
+              {budgetAlerts}
+              {forecast}
+              {monthChart}
+              {categoryChart}
+              {personSpend}
+            </View>
+          )}
         </View>
       </ScrollView>
       </KeyboardAvoidingView>

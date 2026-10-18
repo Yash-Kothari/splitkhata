@@ -176,6 +176,9 @@ export default function Travel() {
     />
   );
 
+  const budgetAlerts = selectedTripObj && (
+    <BudgetAlerts entries={tripEntries} ledger="travel" month={null} budgets={selectedTripObj.categoryBudgets || {}} />
+  );
   const paymentChart = selectedTripObj && <PaymentMethodChart entries={tripEntries} ledger="travel" collapsible={!wide} />;
 
   return (
@@ -244,8 +247,13 @@ export default function Travel() {
               </View>
 
               <View className="px-4">
-                {!wide && categoryChart}
-                {!wide && paymentChart}
+                {!wide && (
+                  <>
+                    {budgetAlerts}
+                    {categoryChart}
+                    {paymentChart}
+                  </>
+                )}
               </View>
 
               <EntryList
@@ -263,12 +271,13 @@ export default function Travel() {
               />
             </View>
 
-            <View className="w-full lg:w-96 px-4" style={{ gap: 16 }}>
-              <BudgetAlerts entries={tripEntries} ledger="travel" month={null} budgets={selectedTripObj.categoryBudgets || {}} />
-
-              {wide && categoryChart}
-              {wide && paymentChart}
-            </View>
+            {wide && (
+              <View className="w-full lg:w-96 px-4" style={{ gap: 16 }}>
+                {budgetAlerts}
+                {categoryChart}
+                {paymentChart}
+              </View>
+            )}
           </View>
         )}
       </ScrollView>

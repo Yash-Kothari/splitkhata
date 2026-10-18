@@ -3,6 +3,7 @@ import { View, Text } from 'react-native';
 import { useColorScheme } from 'nativewind';
 import Card from './Card';
 import PickerField from './PickerField';
+import FoldHeader from './FoldHeader';
 import { computeMemberTotalsForPeriod, getAvailableYears, getDefaultYear, formatCurrency, getMonthKey, todayISO, PERSON_COLORS } from '../lib/utils';
 import { themeColor } from '../lib/theme';
 
@@ -13,9 +14,12 @@ import { themeColor } from '../lib/theme';
 // computeMemberTotalsForPeriod) rather than a second way to attribute a
 // shared expense - "my share" of a 50/50 dinner is half of it, not the
 // whole amount just because I happened to pay.
-export default function PersonSpendCard({ entries, members, deviceMemberName }) {
+export default function PersonSpendCard({ entries, members, deviceMemberName, collapsible = false }) {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
+  // On a phone the card folds to one line (my share and the year's total) like the Category Breakdown.
+  const [openState, setOpenState] = useState(false);
+  const isOpen = !collapsible || openState;
 
   const currentMonthKey = getMonthKey(todayISO());
   const monthTotals = useMemo(
@@ -39,9 +43,16 @@ export default function PersonSpendCard({ entries, members, deviceMemberName }) 
 
   return (
     <Card className="p-4 mb-4">
-      <Text className="font-display text-lg text-ink mb-3">Household Spending</Text>
+      <FoldHeader
+        title="Household Spending"
+        subtitle="Each person's share of what was spent"
+        summary={`${myShare != null ? `My share ${formatCurrency(myShare)} this month · ` : ''}${selectedYear}: ${formatCurrency(yearTotal)}`}
+        collapsible={collapsible}
+        open={isOpen}
+        onToggle={() => setOpenState((v) => !v)}
+      />
 
-      {myShare != null && (
+      {isOpen && myShare != null && (
         <View className="rounded-xl bg-ledger-green/10 px-3.5 py-2.5 mb-4">
           <Text className="font-body-semibold text-2xs text-ledger-green uppercase tracking-wider">My Share This Month</Text>
           <Text className="font-mono-bold text-ledger-green text-2xl">{formatCurrency(myShare)}</Text>
@@ -49,14 +60,14 @@ export default function PersonSpendCard({ entries, members, deviceMemberName }) 
         </View>
       )}
 
-      <View className="flex-row items-center justify-between mb-3">
+      {isOpen && <View className="flex-row items-center justify-between mb-3">
         <Text className="font-body-semibold text-sm text-ink">Yearly breakdown</Text>
         <View style={{ width: 110 }}>
           <PickerField value={selectedYear} options={availableYears} onChange={setYearChoice} label="Year" />
         </View>
-      </View>
+      </View>}
 
-      {yearTotal === 0 ? (
+      {!isOpen ? null : yearTotal === 0 ? (
         <View className="border-2 border-dashed border-ink/20 rounded-xl py-8 items-center justify-center bg-paper/50">
           <Text className="font-body text-sm text-muted-text text-center px-4">No household expenses recorded in {selectedYear}.</Text>
         </View>

@@ -3,6 +3,7 @@ import { useColorScheme } from 'nativewind';
 import { View, Text, Pressable } from 'react-native';
 import Svg, { Path, Line, Text as SvgText } from 'react-native-svg';
 import Card from './Card';
+import FoldHeader from './FoldHeader';
 import { getLast6MonthsData, formatCurrency } from '../lib/utils';
 import { themeColor } from '../lib/theme';
 
@@ -53,7 +54,7 @@ function roundedTopBarPath(x, y, width, height, radius) {
 // RN port of web's MonthChart.jsx. recharts has no RN equivalent, so this is
 // a hand-rolled bar chart on react-native-svg - tap a bar for the same MoM
 // tooltip web shows on hover.
-export default function MonthChart({ entries, ledger }) {
+export default function MonthChart({ entries, ledger, collapsible = false }) {
   // SVG fills don't follow the Tailwind colour tokens - match --color-ink and
   // --color-muted-text by hand so the axis stays visible in dark mode.
   const { colorScheme } = useColorScheme();
@@ -67,6 +68,9 @@ export default function MonthChart({ entries, ledger }) {
   const data = useMemo(() => getLast6MonthsData(entries, ledger), [entries, ledger]);
   const [width, setWidth] = useState(0);
   const [selected, setSelected] = useState(null);
+  // On a phone the card folds to one line (the latest month) like the Category Breakdown.
+  const [openState, setOpenState] = useState(false);
+  const isOpen = !collapsible || openState;
 
   const latestMonth = data[data.length - 1];
   const hasSpend = data.some((d) => d.total > 0);
@@ -89,13 +93,15 @@ export default function MonthChart({ entries, ledger }) {
 
   return (
     <Card className="p-4 mb-4">
-      <View className="flex-row items-center justify-between gap-2 mb-1">
-        <View className="flex-1">
-          <Text className="font-display text-lg text-ink">Monthly Spend (Last 6 Months)</Text>
-          <Text className="font-body text-xs text-muted-text">Total spend month over month</Text>
-        </View>
-      </View>
-      {latestMonth && latestMonth.total > 0 && (
+      <FoldHeader
+        title={collapsible ? 'Monthly Spend' : 'Monthly Spend (Last 6 Months)'}
+        subtitle={collapsible ? 'Last 6 months, month over month' : 'Total spend month over month'}
+        summary={latestMonth && latestMonth.total > 0 ? `${latestMonth.label}: ${formatCurrency(latestMonth.total)}${latestMonth.prevTotal > 0 ? ` (${latestMonth.pctChange > 0 ? '+' : ''}${latestMonth.pctChange}%)` : ''}` : null}
+        collapsible={collapsible}
+        open={isOpen}
+        onToggle={() => setOpenState((v) => !v)}
+      />
+      {isOpen && latestMonth && latestMonth.total > 0 && (
         <View className="flex-row items-center gap-2 bg-paper px-3 py-1.5 rounded-xl border border-ink/10 self-start mb-3 mt-2">
           <Text className="font-body-medium text-xs text-muted-text">{latestMonth.label}:</Text>
           <Text className="font-mono-bold text-xs text-ink">{formatCurrency(latestMonth.total)}</Text>
@@ -118,7 +124,7 @@ export default function MonthChart({ entries, ledger }) {
         </View>
       )}
 
-      {!hasSpend ? (
+      {!isOpen ? null : !hasSpend ? (
         <View className="border-2 border-dashed border-ink/20 rounded-xl py-10 items-center justify-center bg-paper/50 mt-2">
           <Text className="font-body text-sm text-muted-text">No monthly spend data recorded yet.</Text>
         </View>

@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.10.1**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.10.2**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -356,6 +356,9 @@ local testing predicted.
 - The browser's NetInfo probe (`HEAD /`) 404s on GitHub Pages, so it is switched off on the web
   (`ConnectionBanner`); the app only uses the browser's online signal.
 - Pins sort within the currently shown list (for Household, the selected month).
+- **On a phone the charts sit above the passbook, folded to one line** (Category Breakdown, By Payment Method, Monthly
+  Spend, Household Spending - `FoldHeader`), with Budget Alerts and the Forecast above them; nothing is left below the
+  history. On a wide screen they stay in the side rail, open. A new chart card should follow the same pattern.
 - **A refund is a negative amount** (money received rather than spent). Add/Edit Entry have a "Refund / Reversal (enters it
   as a minus)" box - the same wording as a card transaction - and a typed leading "-" does the same: the amount is typed positive and saved as a minus (`parseSignedAmountInput`), local amount too. Balances,
   budgets, Monthly Spend and category totals are all net, and a card-paid one becomes a card refund. Custom-split shares
