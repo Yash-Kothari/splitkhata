@@ -10,6 +10,7 @@ import {
   isValidISODate,
   isWithdrawalEntry,
   parseAmountInput,
+  parseSignedAmountInput,
   resolveInstrument,
   todayISO,
 } from './utils';
@@ -47,8 +48,16 @@ export function useEntryForm({
   );
   const paymentMethodOptions = instruments.map((i) => i.label);
 
-  const [amount, setAmount] = useState(entry ? String(entry.amount ?? '') : '');
-  const [localAmount, setLocalAmount] = useState(entry?.localAmount != null ? String(entry.localAmount) : '');
+  // Money received (instead of spent) is stored as a minus, but typed and shown as a plain positive
+  // number with the Money Received switch on - nobody wants to type a minus on a phone keypad.
+  // Typing a leading "-" by hand switches it on too. Settlements are transfers, never "received".
+  const [received, setReceived] = useState(entry ? Number(entry.amount) < 0 || Number(entry.localAmount) < 0 : false);
+  const unsigned = (v) => (v == null ? '' : String(Math.abs(Number(v))));
+  const [amount, setAmount] = useState(entry ? unsigned(entry.amount ?? '') : '');
+  const [localAmount, setLocalAmount] = useState(entry?.localAmount != null ? unsigned(entry.localAmount) : '');
+  const isReceived = (received || /^\s*-/.test(amount)) && entry?.splitType !== 'settlement';
+  const amountValue = parseSignedAmountInput(amount, isReceived);
+  const localValue = parseSignedAmountInput(localAmount, isReceived);
   const [rewardPoints, setRewardPoints] = useState(entry?.rewardPoints != null ? String(entry.rewardPoints) : '');
 
   // Who paid and how. Editing: what the entry has. Adding: what the user picked,
@@ -134,10 +143,12 @@ export function useEntryForm({
   const entryId = entry?.id ?? null;
   const entryCreatedAt = entry?.createdAt ?? null;
   const fifoResult = useMemo(() => {
+    // Money coming in does not use up any ATM withdrawal.
+    if (isReceived) return null;
     const parsedLocal = parseAmountInput(localAmount);
     if (!parsedLocal || parsedLocal <= 0) return null;
     return computeFifoCashAmount(tripWithdrawals, otherCashEntries, { id: entryId, date, createdAt: entryCreatedAt, localAmount: parsedLocal });
-  }, [tripWithdrawals, otherCashEntries, date, localAmount, entryId, entryCreatedAt]);
+  }, [tripWithdrawals, otherCashEntries, date, localAmount, entryId, entryCreatedAt, isReceived]);
   const fifoBreakdownText = useMemo(
     () => (fifoResult ? formatFifoBreakdownSummary(fifoResult.breakdown, currentCurrency) : ''),
     [fifoResult, currentCurrency],
@@ -149,15 +160,15 @@ export function useEntryForm({
   const [moreToggle, setMoreToggle] = useState(null);
   const moreOpen = moreToggle ?? Boolean(tagsText.trim() || rewardPoints.trim() || extraMoreOpen);
 
-  const customSharesCheck = checkCustomSharesTotal(customShares, parseAmountInput(amount) || 0, splitMode);
+  const customSharesCheck = checkCustomSharesTotal(customShares, Math.abs(amountValue || 0), splitMode);
   const customSplitInvalid = splitType === 'custom' && !customSharesCheck.ok;
 
   // Shown under each field and block saving - bad input used to either save
   // wrong ("1,200" as ₹1, a typed date that no month view could find) or make
   // the button silently do nothing. 0 is a valid amount: a stay paid entirely
   // with reward points still gets logged (with its points).
-  const amountInvalid = amount !== '' && parseAmountInput(amount) == null;
-  const localAmountInvalid = isTravel && localAmount !== '' && !(parseAmountInput(localAmount) > 0);
+  const amountInvalid = amount !== '' && amountValue == null;
+  const localAmountInvalid = isTravel && localAmount !== '' && !(Math.abs(localValue || 0) > 0);
   const pointsInvalid = hasPoints && rewardPoints !== '' && parseAmountInput(rewardPoints, { allowNegative: true }) == null;
   const dateInvalid = !isValidISODate(date);
   const inputInvalid = amountInvalid || localAmountInvalid || pointsInvalid || dateInvalid;
@@ -201,6 +212,7 @@ export function useEntryForm({
     instruments,
     paymentMethodOptions,
     amount, setAmount,
+    received, setReceived, isReceived, amountValue, localValue,
     localAmount, setLocalAmount,
     rewardPoints, setRewardPoints,
     payer, setPayer,

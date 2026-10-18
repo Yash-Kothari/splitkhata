@@ -1209,6 +1209,16 @@ export function parseAmountInput(text, { allowNegative = false } = {}) {
   return Math.round(value * 100) / 100;
 }
 
+// An entry's amount as typed plus the "Money Received" switch: money received is stored as a
+// minus (an expense of -500 is 500 coming in), so balances, category totals and card refunds all
+// follow without special cases. A leading "-" typed by hand means the same as the switch. 0 stays 0.
+export function parseSignedAmountInput(text, received = false) {
+  const value = parseAmountInput(text, { allowNegative: true });
+  if (value == null) return null;
+  if (value === 0) return 0;
+  return received || value < 0 ? -Math.abs(value) : value;
+}
+
 // Comma-separated free text ("vacation, reimbursable") into a clean tag
 // list - trimmed, empties dropped, duplicates (case-insensitive) collapsed
 // to the first spelling seen.
@@ -1436,6 +1446,25 @@ export function groupByCategory(entries = [], monthKey, ledger, customCategories
   return allCategoryNames
     .filter((c) => groups[c])
     .map((category) => ({ category, amount: groups[category] }));
+}
+
+// Spend split by how it was paid ("Axis Supermoney", "Cash", "UPI · Yash"...), biggest first. Same
+// countable-spend basis as the Category Breakdown, so the two totals always agree; an entry with no
+// method recorded is grouped as "Not specified".
+export function groupByPaymentMethod(entries = [], monthKey, ledger) {
+  const targetLedger = ledger ? normalizeLedger(ledger) : null;
+  const groups = new Map();
+  for (const entry of entries) {
+    if (!isCountableSpend(entry, monthKey, targetLedger)) continue;
+    const amount = Number(entry.amount || 0);
+    if (!amount) continue;
+    const method = String(entry.paymentMethod || '').trim() || 'Not specified';
+    const group = groups.get(method) || { method, amount: 0, count: 0 };
+    group.amount += amount;
+    group.count += 1;
+    groups.set(method, group);
+  }
+  return [...groups.values()].sort((a, b) => b.amount - a.amount || a.method.localeCompare(b.method));
 }
 
 // A category never appears here unless it has an explicit limit set (the

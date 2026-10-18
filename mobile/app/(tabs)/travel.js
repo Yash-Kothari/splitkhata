@@ -28,6 +28,7 @@ import BudgetAlerts from '../../components/BudgetAlerts';
 import AddEntryForm from '../../components/AddEntryForm';
 import EntryList from '../../components/EntryList';
 import CategoryChart from '../../components/CategoryChart';
+import PaymentMethodChart from '../../components/PaymentMethodChart';
 import UndoToast from '../../components/UndoToast';
 
 export default function Travel() {
@@ -175,6 +176,8 @@ export default function Travel() {
     />
   );
 
+  const paymentChart = selectedTripObj && <PaymentMethodChart entries={tripEntries} ledger="travel" collapsible={!wide} />;
+
   return (
     <View className="flex-1 bg-paper">
       <AppHeader badge={selectedTripObj ? `✈️ ${selectedTripObj.name}` : '✈️ Travel'} />
@@ -240,7 +243,10 @@ export default function Travel() {
                 />
               </View>
 
-              <View className="px-4">{!wide && categoryChart}</View>
+              <View className="px-4">
+                {!wide && categoryChart}
+                {!wide && paymentChart}
+              </View>
 
               <EntryList
                 entries={tripEntries}
@@ -261,6 +267,7 @@ export default function Travel() {
               <BudgetAlerts entries={tripEntries} ledger="travel" month={null} budgets={selectedTripObj.categoryBudgets || {}} />
 
               {wide && categoryChart}
+              {wide && paymentChart}
             </View>
           </View>
         )}

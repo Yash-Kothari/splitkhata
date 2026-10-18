@@ -97,13 +97,14 @@ export default function AddEntryForm({
       rankCardsForEntry(
         creditCards,
         cardTransactions,
-        parseAmountInput(f.amount) || 0,
+        // Money coming in earns nothing, so no card is ranked for it.
+        f.isReceived ? 0 : Math.abs(f.amountValue || 0),
         category,
         date,
         f.effectiveTravelMultiplier ? { cardId: f.selectedCardId, multiplier: f.effectiveTravelMultiplier } : null,
         { bookings: !isTravel },
       ),
-    [creditCards, cardTransactions, f.amount, category, date, f.effectiveTravelMultiplier, f.selectedCardId, isTravel],
+    [creditCards, cardTransactions, f.amountValue, f.isReceived, category, date, f.effectiveTravelMultiplier, f.selectedCardId, isTravel],
   );
 
   // Real household spending repeats far more than a blank form assumes -
@@ -228,7 +229,7 @@ export default function AddEntryForm({
   }
 
   async function handleSubmit() {
-    const parsed = parseAmountInput(f.amount);
+    const parsed = f.amountValue;
     if (parsed == null || f.inputInvalid) return;
     if (splitType === 'owed' && (!owedBy || owedBy === payer)) {
       notify('Pick who owes', 'The person who owes must be different from who paid.');
@@ -250,6 +251,7 @@ export default function AddEntryForm({
 
     const resetForm = () => {
       f.setAmount('');
+      f.setReceived(false);
       f.setLocalAmount('');
       f.setRewardPoints('');
       f.setNote('');
@@ -280,11 +282,11 @@ export default function AddEntryForm({
   }
 
   async function doSave() {
-    const parsed = parseAmountInput(f.amount);
+    const parsed = f.amountValue;
     const trimmedNote = note.trim();
     const tags = parseTagsInput(f.tagsText);
     const months = !isTravel && splitAcrossMonths ? Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2)) : 1;
-    const parsedLocal = isTravel && f.localAmount ? parseAmountInput(f.localAmount) : null;
+    const parsedLocal = isTravel && f.localAmount ? f.localValue : null;
     const parsedPoints = isTravel && f.rewardPoints ? parseAmountInput(f.rewardPoints, { allowNegative: true }) : null;
     const effectiveSplitAmong =
       splitType === 'shared' && splitAmong.length > 0 && splitAmong.length < membersList.length ? splitAmong : null;
@@ -401,11 +403,11 @@ export default function AddEntryForm({
   const cashHint =
     isTravel && cashBalance != null && selectedInstrument?.type === 'cash'
       ? (() => {
-          const afterThis = cashBalance - (parseAmountInput(f.localAmount) || 0);
+          const afterThis = cashBalance - (f.localValue || 0);
           return (
             <Text className={`font-mono-bold text-xs mt-2 ${afterThis < 0 ? 'text-stamp-red' : 'text-ledger-green'}`}>
               💵 Cash left: {currentCurrency} {cashBalance.toFixed(2)}
-              {parseAmountInput(f.localAmount) > 0 ? ` → ${afterThis.toFixed(2)} after this` : ''}
+              {f.localValue ? ` → ${afterThis.toFixed(2)} after this` : ''}
             </Text>
           );
         })()
@@ -475,9 +477,9 @@ export default function AddEntryForm({
             keyboardType="number-pad"
             className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2 bg-paper shadow-2xs"
           />
-          {parseAmountInput(f.amount) > 0 && (
+          {Math.abs(f.amountValue || 0) > 0 && (
             <Text className="font-body text-2xs text-muted-text mt-1">
-              ~{(parseAmountInput(f.amount) / Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2))).toFixed(2)} / month
+              ~{(Math.abs(f.amountValue) / Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2))).toFixed(2)} / month
             </Text>
           )}
         </View>

@@ -2,7 +2,6 @@ import { View, Text, TextInput, Pressable, Keyboard } from 'react-native';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import CustomSplitEditor from './CustomSplitEditor';
-import { parseAmountInput } from '../lib/utils';
 
 // The fields of Add Entry and Edit Entry, in one place: change the layout or
 // add a field here and both forms get it. `f` is the object from useEntryForm.
@@ -85,6 +84,19 @@ export default function EntryFormFields({
           />
           {f.amountLocked && f.fifoBreakdownText ? <Text className="font-body text-2xs text-muted-text mt-1">{f.fifoBreakdownText}</Text> : null}
           {f.amountInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter an amount like 1200 or 1200.50</Text> : null}
+          <Pressable
+            onPress={() => f.setReceived(!f.isReceived)}
+            hitSlop={6}
+            className="self-start flex-row items-center mt-1.5"
+            style={{ gap: 6 }}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: f.isReceived }}
+          >
+            <View className={`w-4 h-4 rounded border items-center justify-center ${f.isReceived ? 'bg-ledger-green border-ledger-green' : 'border-ink/25 bg-paper'}`}>
+              {f.isReceived ? <Text className="text-white text-2xs">✓</Text> : null}
+            </View>
+            <Text className="font-body text-xs text-muted-text">Money Received (as a minus)</Text>
+          </Pressable>
         </View>
 
         {isTravel ? (
@@ -190,7 +202,7 @@ export default function EntryFormFields({
       {f.splitType === 'custom' && (
         <CustomSplitEditor
           members={members}
-          total={parseAmountInput(f.amount) || 0}
+          total={Math.abs(f.amountValue || 0)}
           shares={f.customShares}
           onChange={f.setCustomShares}
           mode={f.splitMode}

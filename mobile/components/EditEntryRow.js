@@ -110,7 +110,7 @@ export default function EditEntryRow({
   async function handleSave() {
     // Bad input used to make Save silently do nothing, or save wrong
     // ("1,200" as ₹1, a typed date that no month view could find).
-    const parsed = parseAmountInput(amount);
+    const parsed = isSettlement ? parseAmountInput(amount) : f.amountValue;
     // 0 is allowed (a stay paid entirely with reward points).
     if (parsed == null) {
       notify('Check the amount', 'Enter an amount like 1200 or 1200.50.');
@@ -124,8 +124,8 @@ export default function EditEntryRow({
       notify('Pick who owes', 'The person who owes must be different from who paid.');
       return;
     }
-    const parsedLocal = isTravel && f.localAmount ? parseAmountInput(f.localAmount) : null;
-    if (isTravel && f.localAmount && !(parsedLocal > 0)) {
+    const parsedLocal = isTravel && f.localAmount ? f.localValue : null;
+    if (isTravel && f.localAmount && !parsedLocal) {
       notify('Check the local amount', 'Enter an amount like 1200 or 1200.50, or leave it empty.');
       return;
     }

@@ -3,6 +3,7 @@ import { View, Text, Pressable, Modal, ScrollView, Platform, useWindowDimensions
 import Svg, { Path } from 'react-native-svg';
 import Card from './Card';
 import PickerField from './PickerField';
+import { MAX_DONUT_SIZE, MIN_DONUT_SIZE, OUTER_R_RATIO, INNER_R_RATIO, PAD_DEG, donutSlicePath } from './donut';
 import {
   getCategoryMoMComparison,
   getCategoryEntries,
@@ -12,43 +13,6 @@ import {
   CATEGORY_COLORS,
   DEFAULT_CATEGORIES as CATEGORIES,
 } from '../lib/utils';
-
-// Web's donut is fluid (recharts ResponsiveContainer inside a h-56/224px
-// container, outerRadius 85%) rather than a fixed pixel size - fixed at
-// 190px here made mobile's chart visibly smaller than web's once the two
-// charts sit side by side on a wide screen (lg:grid-cols-2). Sized from the
-// card's actual measured width instead, capped at web's own 224px ceiling,
-// keeping the same 0.432/0.279 outer/inner radius ratios either way.
-const MAX_DONUT_SIZE = 224;
-const MIN_DONUT_SIZE = 160;
-const OUTER_R_RATIO = 82 / 190;
-const INNER_R_RATIO = 53 / 190;
-const PAD_DEG = 2;
-
-function polarToCartesian(cx, cy, r, angleDeg) {
-  const rad = ((angleDeg - 90) * Math.PI) / 180;
-  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
-}
-
-function donutSlicePath(cx, cy, innerR, outerR, startAngle, rawEndAngle) {
-  // A sweep of exactly 360deg (a single category holding the whole total)
-  // puts the arc's start and end points on the same coordinate, which SVG
-  // renders as a zero-length degenerate path instead of a full ring - clamp
-  // just short of a full turn so the two points stay distinct.
-  const endAngle = rawEndAngle - startAngle >= 360 ? startAngle + 359.99 : rawEndAngle;
-  const largeArc = endAngle - startAngle <= 180 ? 0 : 1;
-  const startOuter = polarToCartesian(cx, cy, outerR, endAngle);
-  const endOuter = polarToCartesian(cx, cy, outerR, startAngle);
-  const startInner = polarToCartesian(cx, cy, innerR, startAngle);
-  const endInner = polarToCartesian(cx, cy, innerR, endAngle);
-  return [
-    `M ${startOuter.x} ${startOuter.y}`,
-    `A ${outerR} ${outerR} 0 ${largeArc} 0 ${endOuter.x} ${endOuter.y}`,
-    `L ${startInner.x} ${startInner.y}`,
-    `A ${innerR} ${innerR} 0 ${largeArc} 1 ${endInner.x} ${endInner.y}`,
-    'Z',
-  ].join(' ');
-}
 
 function CategoryDrilldownModal({ category, entries, currency, isTravel, selectedMonth, budgetStatus, onClose }) {
   const { height: windowHeight } = useWindowDimensions();
@@ -146,6 +110,9 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
     [entries, selectedMonth, ledger, isTravel],
   );
   const total = useMemo(() => data.reduce((sum, d) => sum + d.amount, 0), [data]);
+  // Money received can leave a category net negative; a donut can only draw what was spent, so the
+  // slices and percentages use the positive categories while the centre and legend show the net.
+  const spentTotal = useMemo(() => data.reduce((sum, d) => sum + Math.max(d.amount, 0), 0), [data]);
   const currency = 'INR';
   const totalLabel = formatCurrency(total, currency);
 
@@ -155,7 +122,8 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
   const isOpen = !collapsible || openState;
   const topSummary = data
     .slice(0, 2)
-    .map((d) => `${d.category} ${total > 0 ? Math.round((d.amount / total) * 100) : 0}%`)
+    .filter((d) => d.amount > 0)
+    .map((d) => `${d.category} ${spentTotal > 0 ? Math.round((d.amount / spentTotal) * 100) : 0}%`)
     .join(', ');
 
   const [cardWidth, setCardWidth] = useState(0);
@@ -181,12 +149,13 @@ export default function CategoryChart({ entries, selectedMonth, onMonthChange, a
   const sliceProps = (category) => (Platform.OS === 'web' ? {} : { onPress: () => setSelectedCategory(category) });
 
   let cursor = 0;
-  const slices = data.map((entry) => {
-    const rawAngle = total > 0 ? (entry.amount / total) * 360 : 0;
+  const spentTotalCount = data.filter((d) => d.amount > 0).length;
+  const slices = data.filter((d) => d.amount > 0).map((entry) => {
+    const rawAngle = spentTotal > 0 ? (entry.amount / spentTotal) * 360 : 0;
     const startAngle = cursor;
     const endAngle = cursor + rawAngle;
     cursor = endAngle;
-    const gap = data.length > 1 ? PAD_DEG / 2 : 0;
+    const gap = spentTotalCount > 1 ? PAD_DEG / 2 : 0;
     const inset = Math.min(gap, rawAngle / 2);
     return { entry, startAngle: startAngle + inset, endAngle: endAngle - inset };
   });

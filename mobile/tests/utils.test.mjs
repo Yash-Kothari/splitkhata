@@ -17,6 +17,8 @@ import {
   resolveInstrument,
   DEFAULT_PERSONS as PERSONS,
   computeBalance,
+  classifyEntryForBalance,
+  splitAmountEvenly,
   computeMemberTotals,
   computeMemberTotalsForPeriod,
   getAvailableYears,
@@ -44,6 +46,8 @@ import {
   getHouseholdBudgets,
   setHouseholdBudgets,
   groupByCategory,
+  groupByPaymentMethod,
+  parseSignedAmountInput,
   getRecurringRules,
   setRecurringRules,
   buildRecurringEntryDate,
@@ -948,6 +952,57 @@ test('computeBudgetAlerts ranks worst (highest % used) first', () => {
   ];
   const alerts = computeBudgetAlerts(totals, { Food: 10000, Hotel: 20000 });
   assert.deepEqual(alerts.map((a) => a.category), ['Hotel', 'Food']);
+});
+
+test('groupByPaymentMethod: totals match the Category Breakdown, biggest first, blanks grouped', () => {
+  const entries = [
+    { id: '1', ledger: 'travel', date: '2026-05-01', amount: 500, category: 'Food', paymentMethod: 'Axis Supermoney' },
+    { id: '2', ledger: 'travel', date: '2026-05-02', amount: 300, category: 'Food', paymentMethod: 'Cash' },
+    { id: '3', ledger: 'travel', date: '2026-05-03', amount: 250, category: 'Hotel', paymentMethod: 'Axis Supermoney' },
+    { id: '4', ledger: 'travel', date: '2026-05-04', amount: 40, category: 'Misc' },
+    { id: '5', ledger: 'travel', date: '2026-05-05', amount: 900, category: 'Misc', paymentMethod: 'Cash', splitType: 'settlement' },
+    { id: '6', ledger: 'household', date: '2026-05-06', amount: 70, category: 'Food', paymentMethod: 'Cash' },
+  ];
+  const result = groupByPaymentMethod(entries, null, 'travel');
+  assert.deepEqual(result, [
+    { method: 'Axis Supermoney', amount: 750, count: 2 },
+    { method: 'Cash', amount: 300, count: 1 },
+    { method: 'Not specified', amount: 40, count: 1 },
+  ]);
+  const categoryTotal = groupByCategory(entries, null, 'travel').reduce((sum, c) => sum + c.amount, 0);
+  assert.equal(result.reduce((sum, r) => sum + r.amount, 0), categoryTotal, 'same basis as the category chart');
+  assert.deepEqual(groupByPaymentMethod([], null, 'travel'), []);
+});
+
+test('parseSignedAmountInput: Money Received and a typed minus both store a minus; 0 stays 0', () => {
+  assert.equal(parseSignedAmountInput('500'), 500);
+  assert.equal(parseSignedAmountInput('500', true), -500);
+  assert.equal(parseSignedAmountInput('-500'), -500);
+  assert.equal(parseSignedAmountInput('-500', true), -500, 'never a double negative');
+  assert.equal(parseSignedAmountInput('1,200.50', true), -1200.5);
+  assert.equal(Object.is(parseSignedAmountInput('0', true), 0), true, 'no -0 in the database');
+  assert.equal(parseSignedAmountInput('abc'), null);
+  assert.equal(parseSignedAmountInput(''), null);
+});
+
+test('money received (a negative amount) flows through balances, custom splits and installments', () => {
+  const members = ['Yash', 'Kruti'];
+  // Yash paid 1,000 for something shared, then got 400 back for half of it from a shop (shared).
+  const entries = [
+    { id: 'a', ledger: 'household', split: true, splitType: 'shared', payer: 'Yash', amount: 1000, date: '2026-10-01' },
+    { id: 'b', ledger: 'household', split: true, splitType: 'shared', payer: 'Yash', amount: -400, date: '2026-10-02' },
+  ];
+  // net spend 600, shared: Yash fronted 600, each owes 300 -> Kruti owes Yash 300
+  assert.deepEqual(computeBalance(entries, 'household', members), { status: 'owes', amount: 300, debtor: 'Kruti', creditor: 'Yash' });
+  // a custom 1:3 split of money received is split in the same 1:3
+  const custom = [{ id: 'c', ledger: 'household', split: true, splitType: 'custom', splitShares: { Yash: 1, Kruti: 3 }, payer: 'Yash', amount: -400, date: '2026-10-03' }];
+  const classified = classifyEntryForBalance(custom[0], members);
+  assert.equal(Object.values(classified.debits).reduce((a, b) => a + b, 0), -40000, 'portions add back up to the amount');
+  assert.deepEqual(classified.debits, { Yash: -10000, Kruti: -30000 });
+  // installments of money received add up exactly too
+  const parts = splitAmountEvenly(-100, 3);
+  assert.equal(Math.round(parts.reduce((a, b) => a + b, 0) * 100), -10000);
+  assert.deepEqual(parts, [-33.33, -33.33, -33.34]);
 });
 
 test('computeBudgetAlerts works directly with groupByCategory\'s output shape', () => {

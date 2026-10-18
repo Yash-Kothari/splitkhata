@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.9.2**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.10.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -356,6 +356,13 @@ local testing predicted.
 - The browser's NetInfo probe (`HEAD /`) 404s on GitHub Pages, so it is switched off on the web
   (`ConnectionBanner`); the app only uses the browser's online signal.
 - Pins sort within the currently shown list (for Household, the selected month).
+- **Money received is a negative amount.** Add/Edit Entry have a "Money Received" switch (and a typed leading "-" does
+  the same): the amount is typed positive and saved as a minus (`parseSignedAmountInput`), local amount too. Balances,
+  budgets, Monthly Spend and category totals are all net, and a card-paid one becomes a card refund. Custom-split shares
+  stay positive proportions. Donuts draw only what was spent; the centre total and legend show the net. Settlements are
+  never "received", and money received does not use up an ATM withdrawal.
+- The Travel tab's "By Payment Method" donut (`PaymentMethodChart`, `groupByPaymentMethod`) counts exactly what the
+  Category Breakdown counts (`isCountableSpend`), so the two totals match; entries with no method are "Not specified".
 - `EntryList` draws 100 rows at a time (`PAGE_SIZE`) with a "Show N More" button; the count in its header
   still covers every match, and a jump-to-entry highlight floats to the top so it is always drawn.
 - GitHub's "AI Scan for PRs" is explicitly **disabled** on all repos

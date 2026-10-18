@@ -71,7 +71,10 @@ const EntryRow = memo(function EntryRow({
               <View className="flex-row items-baseline justify-between gap-2">
                 <View className="flex-row items-baseline flex-wrap gap-1.5 flex-1">
                   {item.amount ? (
-                    <Text className="font-mono-bold text-base text-ink">{formatCurrency(item.amount, 'INR')}</Text>
+                    <Text className={`font-mono-bold text-base ${item.amount < 0 ? 'text-ledger-green' : 'text-ink'}`}>{formatCurrency(item.amount, 'INR')}</Text>
+                  ) : null}
+                  {item.amount < 0 && !isSettlement ? (
+                    <Text className="font-body-semibold text-2xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">Received</Text>
                   ) : null}
                   {isTravel && item.localAmount != null && (
                     <Text className="font-mono text-xs text-muted-text">
