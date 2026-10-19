@@ -10,13 +10,16 @@ import { initializeApp } from 'firebase/app';
 // (AsyncStorage-backed persistence is meaningless in a browser, which
 // already has its own storage), so auth init below branches on Platform.
 import {
-  getAuth,
   initializeAuth,
   // @ts-expect-error - getReactNativePersistence is a real, documented
   // export of @firebase/auth's "react-native" build (see above), but TS's
   // own module resolution here picks a different conditional export whose
   // .d.ts doesn't declare it - a types-only gap, not a runtime one.
   getReactNativePersistence,
+  browserLocalPersistence,
+  browserPopupRedirectResolver,
+  browserSessionPersistence,
+  indexedDBLocalPersistence,
   connectAuthEmulator,
   GoogleAuthProvider,
   onAuthStateChanged,
@@ -82,9 +85,16 @@ const ALLOWED_EMAILS = new Set([
 ]);
 
 const app = initializeApp(firebaseConfig);
+// Web: no popupRedirectResolver here on purpose. getAuth() installs one, and on startup the SDK
+// then waits for Google's hidden sign-in iframe (firebaseapp.com/__/auth/iframe) before it will
+// say whether you are signed in - always for the redirect check, and proactively on Safari and
+// phones. This app only ever signs in with a popup, so that wait bought nothing, and when the
+// iframe never answers (Safari blocking third-party frames, a content blocker) the app stayed
+// blank forever. The resolver is handed to signInWithPopup at the moment you sign in instead.
+// Persistence is the list getAuth() would have used.
 const auth =
   Platform.OS === 'web'
-    ? getAuth(app)
+    ? initializeAuth(app, { persistence: [indexedDBLocalPersistence, browserLocalPersistence, browserSessionPersistence] })
     : initializeAuth(app, { persistence: getReactNativePersistence(AsyncStorage) });
 // persistentLocalCache is backed by IndexedDB, which only exists in a real
 // browser - on true React Native (Hermes, no DOM globals) the SDK detects
@@ -327,7 +337,7 @@ export function subscribeToAuth(callback) {
 // expo-auth-session redirect goes to the bare origin (yash-kothari.github.io,
 // a 404 - the app lives under /splitkhata) and can never complete there.
 export async function signInWithGooglePopup() {
-  return signInWithPopup(auth, new GoogleAuthProvider());
+  return signInWithPopup(auth, new GoogleAuthProvider(), browserPopupRedirectResolver);
 }
 
 export async function signInWithGoogleIdToken(idToken) {

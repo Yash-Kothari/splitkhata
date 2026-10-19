@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.11.0**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.11.1**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -356,6 +356,11 @@ local testing predicted.
 - The browser's NetInfo probe (`HEAD /`) 404s on GitHub Pages, so it is switched off on the web
   (`ConnectionBanner`); the app only uses the browser's online signal.
 - Pins sort within the currently shown list (for Household, the selected month).
+- **Startup must never wait on Google's sign-in iframe.** On web, auth is created with `initializeAuth` and no
+  `popupRedirectResolver`; `signInWithGooglePopup` passes `browserPopupRedirectResolver` itself. With `getAuth()` the SDK
+  waits for `firebaseapp.com/__/auth/iframe` before it will say whether you are signed in (always for the redirect check,
+  proactively on Safari/phones), and when Safari left that request pending the app stayed blank forever. If startup is
+  still slow the blank screen turns into a "Still starting up..." message with a Reload button (`StartupWait`).
 - **Expo packages move together, one SDK at a time.** `expo-router` 58 needs `expo-constants` 58 and the rest of SDK 58, so a
   Dependabot PR that bumps only one of them fails `npm ci` (ERESOLVE). Upgrade with `npx expo install expo@~X` then
   `npx expo install --check`, and verify the app in the browser before merging. `@sentry/react-native` stays on `^8.30` on

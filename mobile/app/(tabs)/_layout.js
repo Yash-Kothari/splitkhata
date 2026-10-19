@@ -11,6 +11,7 @@ import { useLock } from '../../lib/LockContext';
 import { useAuth } from '../../lib/AuthContext';
 import PinLockScreen from '../../components/PinLockScreen';
 import AskQuestion from '../../components/AskQuestion';
+import StartupWait from '../../components/StartupWait';
 
 // A plain color-change on the emoji (the old behavior) is subtle enough
 // that it wasn't reading as "this is the selected tab" - a filled pill
@@ -205,7 +206,7 @@ export default function TabsLayout() {
   // empty app whose every listener failed with permission-denied - and the
   // recurring runner and PIN gate below ran signed out too.
   const { user, allowed, initializing } = useAuth();
-  if (initializing) return <View className="flex-1 bg-paper" />;
+  if (initializing) return <StartupWait />;
   if (!user || !allowed) return <Redirect href="/" />;
 
   return (

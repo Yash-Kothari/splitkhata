@@ -1,21 +1,15 @@
-import { View, Text, ActivityIndicator, Pressable } from 'react-native';
+import { View, Text, Pressable } from 'react-native';
 import { Redirect } from 'expo-router';
 import { useAuth } from '../lib/AuthContext';
 import { signOutUser } from '../lib/firebase';
 import { reportError } from '../lib/errorReporting';
 import SignInScreen from '../components/SignInScreen';
-import { themeColor } from '../lib/theme';
+import StartupWait from '../components/StartupWait';
 
 export default function Index() {
   const { user, allowed, initializing } = useAuth();
 
-  if (initializing) {
-    return (
-      <View className="flex-1 items-center justify-center bg-paper">
-        <ActivityIndicator color={themeColor('ledgerGreen', false)} />
-      </View>
-    );
-  }
+  if (initializing) return <StartupWait />;
 
   if (user && !allowed) {
     return (
