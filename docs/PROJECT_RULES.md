@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.10.2**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.11.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -32,15 +32,15 @@ no `src/` or `/legacy` tree. Never recreate one or mirror changes into one.
 
 | Area | Choice |
 |---|---|
-| Framework | Expo `~57.0.15`, React Native `0.86.2`, React `19.2.3` |
+| Framework | Expo `~58.0.14` (SDK 58), React Native `0.88.0`, React `19.3.0` |
 | Web target | `react-native-web ^0.21.2`, Metro bundler, `output: "single"` (SPA), `experiments.baseUrl: "/splitkhata"` |
-| Routing | `expo-router ~57.0.15` (real client routes: `/household`, `/travel`, ...) |
+| Routing | `expo-router ~58.0.23` (real client routes: `/household`, `/travel`, ...) |
 | Styling | NativeWind `^4.2.6` on **Tailwind v3** (`tailwindcss ^3.4.19`) |
 | Fonts | Fraunces (display), Inter (body), IBM Plex Mono (numbers) via `@expo-google-fonts/*` |
 | Backend | Firebase `^12.18.0`: Firestore + Auth (Google sign-in only) |
-| Animation | `react-native-reanimated 4.5.1` |
+| Animation | `react-native-reanimated 4.7.1` |
 | Types | TypeScript `^6.0.3`, **checking JS** (`checkJs`) on `lib/**/*.js` only, `strict: false` |
-| Lint | ESLint `^9` + `eslint-config-expo ~57.0.2` |
+| Lint | ESLint `^9` + `eslint-config-expo ~58.0.4` |
 | Errors | `@sentry/react-native ^8.28.0` |
 | Tests | Node's built-in `node --test` (no Jest/Vitest) |
 | CI node | Node 24 (GitHub Actions) |
@@ -356,6 +356,10 @@ local testing predicted.
 - The browser's NetInfo probe (`HEAD /`) 404s on GitHub Pages, so it is switched off on the web
   (`ConnectionBanner`); the app only uses the browser's online signal.
 - Pins sort within the currently shown list (for Household, the selected month).
+- **Expo packages move together, one SDK at a time.** `expo-router` 58 needs `expo-constants` 58 and the rest of SDK 58, so a
+  Dependabot PR that bumps only one of them fails `npm ci` (ERESOLVE). Upgrade with `npx expo install expo@~X` then
+  `npx expo install --check`, and verify the app in the browser before merging. `@sentry/react-native` stays on `^8.30` on
+  purpose; `expo install --check` suggesting an older one is informational.
 - **On a phone the charts sit above the passbook, folded to one line** (Category Breakdown, By Payment Method, Monthly
   Spend, Household Spending - `FoldHeader`), with Budget Alerts and the Forecast above them; nothing is left below the
   history. On a wide screen they stay in the side rail, open. A new chart card should follow the same pattern.
