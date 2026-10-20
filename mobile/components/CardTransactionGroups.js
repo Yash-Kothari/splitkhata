@@ -33,7 +33,7 @@ export default function CardTransactionGroups({ card, cardTxns, shownTxns, searc
 
   const groups = all.filter((g) => !searching || (shownByCycle.get(g.cycleStart) || []).length > 0);
   if (groups.length === 0) {
-    return <Text className="font-body text-sm text-muted-text text-center py-6">{searching ? 'No transactions match.' : 'No transactions yet.'}</Text>;
+    return <Text className="font-body text-sm text-muted-text text-center py-6">{searching ? 'No transactions match.' : statementOnly ? 'No statements yet.' : 'No transactions yet.'}</Text>;
   }
 
   // Entering the bank's cashback figure is the same write as the Reward box in Last Statement.
@@ -95,7 +95,7 @@ export default function CardTransactionGroups({ card, cardTxns, shownTxns, searc
           <View className="flex-row items-center justify-between mt-1" style={{ gap: 8 }}>
             <Text className="font-mono-bold text-xs text-ink">
               {formatCurrency(billShown)}
-              <Text className="font-body text-2xs text-muted-text"> · {g.txns.length} {g.txns.length === 1 ? 'transaction' : 'transactions'}</Text>
+              <Text className="font-body text-2xs text-muted-text"> · {g.txns.length} {statementOnly ? (g.txns.length === 1 ? 'statement' : 'statements') : g.txns.length === 1 ? 'transaction' : 'transactions'}</Text>
             </Text>
             {!statementOnly && result ? (
               <Text className="font-body text-2xs text-muted-text">
@@ -103,10 +103,15 @@ export default function CardTransactionGroups({ card, cardTxns, shownTxns, searc
               </Text>
             ) : null}
           </View>
+          {!statementOnly && result?.carryOut > 0 ? (
+            <Text className="font-body text-2xs text-muted-text mt-0.5">
+              {formatCurrency(result.carryOut)} left over after the last line, carried into the next statement
+            </Text>
+          ) : null}
         </Pressable>
         {open ? (
           items.length === 0 ? (
-            <Text className="font-body text-xs text-muted-text pb-3">No transactions in this cycle yet.</Text>
+            <Text className="font-body text-xs text-muted-text pb-3">{statementOnly ? 'No statement for this cycle yet.' : 'No transactions in this cycle yet.'}</Text>
           ) : (
             items.map((item, i) =>
               item.credit ? (

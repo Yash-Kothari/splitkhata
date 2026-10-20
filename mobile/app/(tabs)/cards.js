@@ -155,12 +155,13 @@ export default function Cards() {
   );
 
   const filteredTxns = useMemo(() => {
-    const term = txnSearch.trim().toLowerCase();
+    // Every row on a statement-only card is just "Statement", so there is nothing to search.
+    const term = statementOnly ? '' : txnSearch.trim().toLowerCase();
     return cardTxns
       .filter((t) => !pendingDeletes[t.id])
       .filter((t) => !term || (t.description || t.note)?.toLowerCase().includes(term) || String(t.amount).includes(term))
       .sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
-  }, [cardTxns, txnSearch, pendingDeletes]);
+  }, [cardTxns, txnSearch, pendingDeletes, statementOnly]);
 
   if (creditCards.length === 0) {
     return (
@@ -250,19 +251,21 @@ export default function Cards() {
 
               <Card className="p-4 mb-4">
                 <View className="flex-row items-center justify-between gap-2 mb-3">
-                  <Text className="font-display text-base text-ink">Transactions</Text>
-                  <TextInput
-                    value={txnSearch}
-                    onChangeText={setTxnSearch}
-                    placeholder="Search..."
-                    className="h-9 px-3 text-xs font-body rounded-lg border border-ink/15 bg-paper text-ink w-36 shadow-2xs"
-                  />
+                  <Text className="font-display text-base text-ink">{statementOnly ? 'Statements' : 'Transactions'}</Text>
+                  {statementOnly ? null : (
+                    <TextInput
+                      value={txnSearch}
+                      onChangeText={setTxnSearch}
+                      placeholder="Search..."
+                      className="h-9 px-3 text-xs font-body rounded-lg border border-ink/15 bg-paper text-ink w-36 shadow-2xs"
+                    />
+                  )}
                 </View>
                 <CardTransactionGroups
                   card={selectedCard}
                   cardTxns={cardTxns}
                   shownTxns={filteredTxns}
-                  searching={txnSearch.trim() !== ''}
+                  searching={!statementOnly && txnSearch.trim() !== ''}
                   ledger={ledger}
                   cardBillingCycles={cardBillingCycles}
                   today={today}
@@ -327,20 +330,22 @@ export default function Cards() {
                     ))}
                   </View>
                 )}
-                <View className="flex-row gap-3">
-                  <View className="flex-1">
-                    <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Spent so far</Text>
-                    <Text className="font-mono-bold text-ink text-lg">{formatCurrency(currentCycleSpend)}</Text>
+                {/* A statement-only card has no running spend: the one amount in a cycle is the statement you
+                    typed for it, which is not "spent so far" (and it dropped to 0 the day the cycle rolled). */}
+                {!statementOnly && (
+                  <View className="flex-row gap-3">
+                    <View className="flex-1">
+                      <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Spent so far</Text>
+                      <Text className="font-mono-bold text-ink text-lg">{formatCurrency(currentCycleSpend)}</Text>
+                    </View>
+                    <View className="flex-1">
+                      <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Estimated reward</Text>
+                      <Text className="font-mono-bold text-ink text-lg">
+                        {formatReward(currentCycleReward.totalReward, currentCycleReward.unit)}
+                      </Text>
+                    </View>
                   </View>
-                  {!statementOnly && (
-                  <View className="flex-1">
-                    <Text className="font-body-semibold text-2xs text-muted-text uppercase tracking-wider">Estimated reward</Text>
-                    <Text className="font-mono-bold text-ink text-lg">
-                      {formatReward(currentCycleReward.totalReward, currentCycleReward.unit)}
-                    </Text>
-                  </View>
-                  )}
-                </View>
+                )}
               </Card>
 
               <LastStatementCard

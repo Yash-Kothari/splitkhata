@@ -3,7 +3,7 @@ import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-nativ
 import CardStrategyFields from './CardStrategyFields';
 import DateField from './DateField';
 import { updateCardTransaction } from '../lib/firebase';
-import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward, isStatementOnlyCard, parseAmountInput, isValidISODate, defaultCardTxnFields } from '../lib/utils';
+import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward, isStatementOnlyCard, isSavableCardTxnAmount, parseAmountInput, isValidISODate, defaultCardTxnFields, describeRewardCalculation } from '../lib/utils';
 import { notify } from '../lib/dialogs';
 import { reportError } from '../lib/errorReporting';
 
@@ -46,6 +46,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
   const [draft, setDraft] = useState(draftFromTxn);
   const [draftRewardOverride, setDraftRewardOverride] = useState(txn.rewardOverride != null ? String(txn.rewardOverride) : '');
   const [saving, setSaving] = useState(false);
+  const [showHow, setShowHow] = useState(false);
   const statementOnly = isStatementOnlyCard(card);
 
   // The row stays mounted while the transaction changes elsewhere (its linked
@@ -66,6 +67,12 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
 
   const perTxn = cycleReward?.perTransaction?.find((p) => p.id === txn.id);
   const isAggregate = card.rewardStrategy === 'hsbc_tiered_cashback_aggregate';
+  // HSBC lines depend on other lines (a carried-over leftover, a shared cap), and any line you overrode
+  // says what the calculation gave - one plain-language walk-through for both.
+  // Live+ lines show what actually counts once the shared bonus limit is used up in date order (so the
+  // pills add up to the statement), not the uncapped estimate.
+  const aggregateValue = perTxn ? (perTxn.detail && perTxn.detail.counted != null ? perTxn.detail.counted : perTxn.detail && perTxn.detail.raw != null ? perTxn.detail.raw : perTxn.estimated) : 0;
+  const howLines = statementOnly ? [] : describeRewardCalculation(perTxn, cycleReward?.unit, isAggregate ? cycleReward?.statement : null);
 
   const editPreview = editing
     ? previewTransactionReward(card, cardTxns, {
@@ -95,15 +102,20 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
 
   async function handleSave() {
     const amountValue = parseAmountInput(draftAmount, { allowNegative: true });
-    if (!amountValue) {
-      notify('Check the amount', 'Enter an amount like 1200 or 1,200.50.');
+    const overrideValue = draftRewardOverride === '' ? null : parseAmountInput(draftRewardOverride, { allowNegative: true });
+    if (!isSavableCardTxnAmount(amountValue, overrideValue, statementOnly)) {
+      notify(
+        'Check the amount',
+        amountValue === 0 && !statementOnly
+          ? 'A ₹0 line is for points only: type the points in the Override box, or enter an amount.'
+          : 'Enter an amount like 1200 or 1,200.50.',
+      );
       return;
     }
     if (!isValidISODate(draftDate)) {
       notify('Check the date', 'Use the format YYYY-MM-DD.');
       return;
     }
-    const overrideValue = draftRewardOverride === '' ? null : parseAmountInput(draftRewardOverride, { allowNegative: true });
     if (draftRewardOverride !== '' && overrideValue == null) {
       notify('Check the override', 'Enter a number like 250, or leave it empty to use the calculated reward.');
       return;
@@ -215,9 +227,9 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
                 💳 {perTxn.earned >= 0 ? '+' : ''}{formatReward(perTxn.earned, cycleReward.unit)}
               </Text>
             )}
-            {perTxn && !perTxn.overridden && isAggregate && perTxn.estimated > 0 && (
+            {perTxn && !perTxn.overridden && isAggregate && Math.round(aggregateValue) !== 0 && (
               <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-ledger-green/10 text-ledger-green/80">
-                💳 ~{formatReward(perTxn.estimated, 'inr')}
+                💳 ~{formatReward(Math.round(aggregateValue), 'inr')}
               </Text>
             )}
             {(txn.category === 'travel_bonus' || txn.category === 'smartbuy_hotel') && (
@@ -240,6 +252,20 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
           {txn.description || txn.note || 'No description'}
           {isGroceryPosting ? ` · posts ${formatShortDate(nextMonthFirst(txn.date))}` : ''}
         </Text>
+        {howLines.length > 0 && (
+          <>
+            <Pressable onPress={() => setShowHow((v) => !v)} hitSlop={6} className="mt-1 self-start">
+              <Text className="font-body-semibold text-2xs text-muted-text underline">{showHow ? 'Hide how it was worked out' : 'How was this worked out?'}</Text>
+            </Pressable>
+            {showHow && (
+              <View className="mt-1.5 rounded-lg bg-paper border border-ink/10 px-3 py-2" style={{ gap: 4 }}>
+                {howLines.map((line, i) => (
+                  <Text key={i} className="font-body text-2xs text-ink">{line}</Text>
+                ))}
+              </View>
+            )}
+          </>
+        )}
         {isStatementOnlyCard(card) && txn.amount > 0 && (
           <Pressable onPress={togglePaid} hitSlop={6} className="mt-1 self-start">
             <Text className={`font-body-semibold text-xs ${txn.paidAt ? 'text-ledger-green' : 'text-muted-text underline'}`}>

@@ -17,6 +17,8 @@ import {
   resolveInstrument,
   DEFAULT_PERSONS as PERSONS,
   computeBalance,
+  isSavableCardTxnAmount,
+  describeRewardCalculation,
   classifyEntryForBalance,
   splitAmountEvenly,
   computeMemberTotals,
@@ -1568,6 +1570,132 @@ test('computeCardDueReminders marks a bill past its due date as overdue', () => 
   const reminders = computeCardDueReminders(cards, txns, [], '2026-08-20', 5);
   assert.equal(reminders[0].overdue, true);
   assert.equal(reminders[0].daysUntilDue, -5);
+});
+
+test('computeCardAnnualValue is null for a statement-only card even with a fee and anniversary set', () => {
+  const card = { id: 's', name: 'Statement card', rewardStrategy: 'annual_milestone_only', billingCycleDay: 18, annualFee: 1180, renewalDate: '2025-04-18', strategyParamsHistory: [] };
+  assert.equal(computeCardAnnualValue(card, [{ id: 't', cardId: 's', date: '2026-09-17', amount: 20524 }], '2026-10-20'), null);
+  // the same card on a tracked strategy still gets the fee-vs-rewards tile
+  const tracked = { ...card, rewardStrategy: 'sbi_two_channel_cashback', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.sbi_two_channel_cashback }] };
+  assert.notEqual(computeCardAnnualValue(tracked, [], '2026-10-20'), null);
+});
+
+test('a ₹0 card line is savable only when it carries a reward override, and never on a statement-only card', () => {
+  assert.equal(isSavableCardTxnAmount(0, null), false, 'nothing to record');
+  assert.equal(isSavableCardTxnAmount(0, 160), true, 'points with no purchase');
+  assert.equal(isSavableCardTxnAmount(0, 160, true), false, 'statement-only has no rewards');
+  assert.equal(isSavableCardTxnAmount(null, 160), false, 'not a number');
+  assert.equal(isSavableCardTxnAmount(250, null), true);
+  assert.equal(isSavableCardTxnAmount(-250, null), true, 'a refund');
+});
+
+test('a ₹0 line with a reward override adds exactly that reward on every strategy and leaves the bill alone', () => {
+  const strategies = [
+    ['hdfc_diners_slab_milestone', { category: 'regular' }],
+    ['hsbc_premier_flat_capped', { category: 'regular' }],
+    ['sbi_two_channel_cashback', { channel: 'online' }],
+    ['hsbc_tiered_cashback_aggregate', { isBonusEligible: true }],
+    ['axis_supermoney_dual_pool', { isBonusEligible: false }],
+  ];
+  for (const [key, fields] of strategies) {
+    const card = { id: 'c', billingCycleDay: 10, rewardStrategy: key, strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS[key] }] };
+    const real = { id: 'a', cardId: 'c', date: '2026-09-15', amount: 5000, ...fields };
+    const zero = { id: 'z', cardId: 'c', date: '2026-09-20', amount: 0, ...fields, rewardOverride: 160 };
+    const base = computeCardRewardLedger(card, [real], '2026-10-20');
+    const withZero = computeCardRewardLedger(card, [real, zero], '2026-10-20');
+    assert.equal(Math.round((withZero.total - base.total) * 100) / 100, 160, `${key}: +160 exactly`);
+    const cycle = Object.keys(withZero.cycleBills)[0];
+    assert.equal(withZero.cycleBills[cycle].statement, 5000, `${key}: the bill does not move`);
+  }
+});
+
+test('HSBC Premier explains each line: the sub-₹100 leftover (130 -> 3 pts + 30 carried, then 270 + 30 = 300 -> 9 pts)', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped;
+  const txns = [
+    { id: 'a', date: '2026-09-01', amount: 130, category: 'regular' },
+    { id: 'b', date: '2026-09-02', amount: 270, category: 'regular' },
+    { id: 'c', date: '2026-09-03', amount: 50, category: 'regular' },
+  ];
+  const r = computeHsbcPremierCycleReward(params, txns);
+  const [a, b, c] = r.perTransaction;
+  assert.deepEqual([a.earned, a.detail.carryIn, a.detail.units, a.detail.carryOut], [3, 0, 1, 30]);
+  assert.deepEqual([b.earned, b.detail.carryIn, b.detail.total, b.detail.units, b.detail.carryOut], [9, 30, 300, 3, 0]);
+  assert.deepEqual([c.earned, c.detail.carryIn, c.detail.carryOut], [0, 0, 50]);
+  assert.equal(r.carryOut, 50, 'what is left after the last line');
+  const lines = describeRewardCalculation(b).join(' | ');
+  assert.match(lines, /Left over from before: ₹30\.00/);
+  assert.match(lines, /together ₹300\.00/);
+  assert.match(lines, /3 × 3 = 9 pts/, 'units x rate shown');
+});
+
+test('HSBC Premier: the sub-₹100 leftover carries from one statement into the next, in the ledger and in the form preview', () => {
+  const card = { id: 'p', billingCycleDay: 10, rewardStrategy: 'hsbc_premier_flat_capped', strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped }] };
+  const txns = [
+    { id: 'a', cardId: 'p', date: '2026-09-12', amount: 130, category: 'regular' }, // statement 1: 3 pts, 30 left over
+    { id: 'b', cardId: 'p', date: '2026-10-12', amount: 80, category: 'regular' }, // statement 2: 30 + 80 = 110 -> 3 pts, 10 left
+    { id: 'c', cardId: 'p', date: '2026-10-13', amount: 95, category: 'regular' }, // 10 + 95 = 105 -> 3 pts, 5 left
+  ];
+  const ledger = computeCardRewardLedger(card, txns, '2026-10-20');
+  const cycles = Object.keys(ledger.cycleRewards).sort();
+  assert.equal(cycles.length, 2);
+  const [first, second] = cycles.map((c) => ledger.cycleRewards[c]);
+  assert.equal(first.carryOut, 30);
+  const [b, c] = second.perTransaction;
+  assert.deepEqual([b.earned, b.detail.carryIn, b.detail.total, b.detail.carryOut], [3, 30, 110, 10]);
+  assert.deepEqual([c.earned, c.detail.carryIn, c.detail.carryOut], [3, 10, 5]);
+  assert.equal(ledger.total, 9);
+  assert.match(describeRewardCalculation(b).join(' | '), /Left over from before: ₹30\.00/);
+  // a new line typed into statement 2 is previewed with the same carry
+  const preview = previewTransactionReward(card, txns.slice(0, 2), { date: '2026-10-14', amount: 95, category: 'regular' });
+  assert.equal(preview.earned, 3, '10 carried + 95 = 105');
+  assert.equal(preview.detail.carryIn, 10);
+  // and with no earlier statement the carry starts from nothing
+  assert.equal(computeHsbcPremierCycleReward(CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped, [{ id: 'z', date: '2026-10-12', amount: 80, category: 'regular' }]).perTransaction[0].earned, 0);
+});
+
+test('HSBC Premier explanation covers the capped category, Travel with Points and a refund', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hsbc_premier_flat_capped;
+  const cap = params.categoryMonthlyCap;
+  const capped = computeHsbcPremierCycleReward(params, [
+    { id: 'x', date: '2026-09-01', amount: cap - 100, category: 'capped_category' },
+    { id: 'y', date: '2026-09-02', amount: 500, category: 'capped_category' },
+  ]).perTransaction[1];
+  assert.equal(capped.detail.eligibleAmount, 100);
+  assert.match(describeRewardCalculation(capped).join(' | '), /past the limit and earns nothing/);
+  const travel = computeHsbcPremierCycleReward(params, [{ id: 't', date: '2026-09-01', amount: 1000, category: 'travel_bonus', travelMultiplier: 5 }]).perTransaction[0];
+  assert.equal(travel.detail.kind, 'travel');
+  assert.match(describeRewardCalculation(travel).join(' | '), /Travel with Points ×5/);
+  const refund = computeHsbcPremierCycleReward(params, [{ id: 'r', date: '2026-09-01', amount: -250, category: 'regular' }]).perTransaction[0];
+  assert.equal(refund.detail.kind, 'refund');
+  assert.match(describeRewardCalculation(refund).join(' | '), /Refund/);
+});
+
+test('HSBC Live+ explains the shared bonus cap line by line, in date order, and an override says what the calculation gave', () => {
+  const params = { ...CARD_STRATEGY_DEFAULTS.hsbc_tiered_cashback_aggregate, bonusMonthlyCap: 100, bonusCapScope: 'statement_cycle' };
+  const txns = [
+    { id: 'a', date: '2026-09-01', amount: 600, isBonusEligible: true },
+    { id: 'b', date: '2026-09-02', amount: 600, isBonusEligible: true },
+    { id: 'c', date: '2026-09-03', amount: 1000, isBonusEligible: false },
+    { id: 'd', date: '2026-09-04', amount: 80, channel: 'excluded' },
+  ];
+  const r = computeHsbcCycleReward(params, txns);
+  const [a, b, c, d] = r.perTransaction.map((p) => p.detail);
+  assert.deepEqual([a.kind, a.raw, a.capUsedBefore, a.counted], ['bonus', 60, 0, 60]);
+  assert.deepEqual([b.kind, b.raw, b.capUsedBefore, b.counted], ['bonus', 60, 60, 40], 'only 40 of the cap is left');
+  assert.deepEqual([c.kind, c.raw], ['base', 15]);
+  assert.equal(d.kind, 'excluded');
+  assert.equal(r.statement.bonusEarned, 100);
+  assert.equal(r.statement.baseEarned, 15);
+  assert.equal(r.totalReward, 115);
+  assert.match(describeRewardCalculation(r.perTransaction[1], 'inr', r.statement).join(' | '), /lines before this one used ₹60\.00[\s\S]*the limit cut it[\s\S]*Statement total/);
+  // an override takes its own line out of the pool and says what the calculation gave
+  const card = { id: 'l', rewardStrategy: 'hsbc_tiered_cashback_aggregate', billingCycleDay: 1, strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params }] };
+  const overridden = applyRewardOverrides(r, txns.map((t) => (t.id === 'a' ? { ...t, rewardOverride: 5 } : t)), card, '2026-09-30', {});
+  const pa = overridden.perTransaction.find((p) => p.id === 'a');
+  assert.equal(pa.overridden, true);
+  assert.equal(pa.earned, 5);
+  assert.match(describeRewardCalculation(pa, 'inr').join(' '), /You set this line to ₹5\.00; the calculation gave/);
+  assert.equal(overridden.perTransaction.find((p) => p.id === 'b').detail.capUsedBefore, 0, 'b no longer sees a\'s share of the cap');
 });
 
 test('computeCardAnnualValue returns null when the card has no fee or renewal date set', () => {

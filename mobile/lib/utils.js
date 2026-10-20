@@ -1219,6 +1219,15 @@ export function parseSignedAmountInput(text, received = false) {
   return received || value < 0 ? -Math.abs(value) : value;
 }
 
+// Whether a card transaction's amount can be saved. ₹0 is allowed for exactly one purpose: a line that
+// carries only points / cashback (a bank bonus, a lump from spending before tracking began) - so it
+// needs a reward override typed in, and never applies to a statement-only card (no rewards there).
+export function isSavableCardTxnAmount(amount, rewardOverride, statementOnly = false) {
+  if (amount == null || !Number.isFinite(amount)) return false;
+  if (amount !== 0) return true;
+  return !statementOnly && rewardOverride != null && Number.isFinite(rewardOverride);
+}
+
 // Comma-separated free text ("vacation, reimbursable") into a clean tag
 // list - trimmed, empties dropped, duplicates (case-insensitive) collapsed
 // to the first spelling seen.
@@ -2442,6 +2451,8 @@ export function getCardYearRewards(card, credits, today = todayISO()) {
 export function computeCardAnnualValue(card, cardTxns, today = todayISO(), cardBillingCycles = []) {
   const fee = Number(card?.annualFee);
   if (!card?.renewalDate || !(fee > 0)) return null;
+  // A statement-only card tracks no rewards, so "earned vs fee" would always read "earned 0, net -fee".
+  if (isStatementOnlyCard(card)) return null;
   const { periodStart, periodEnd } = getCardYearWindow(card, today);
   const ledger = computeCardRewardLedger(card, cardTxns, today);
   const earned = applyConfirmedRewards(card, ledger, cardBillingCycles, today)
@@ -2656,11 +2667,33 @@ export function computeHsbcCycleReward(params, transactions, ctx) {
     const bonusRaw = Math.round((eligibleAll * params.bonusRate) / 100);
     const bonusEarned = bonusRaw < 0 ? bonusRaw : applyCycleCap(bonusRaw, 0, params.bonusMonthlyCap);
     const baseEarned = Math.round((baseAll * params.baseRate) / 100);
+    // How the cap gets used up, in date order: each bonus line is shown with what the lines before it
+    // already used and what it adds. HSBC rounds once on the whole statement, so these unrounded
+    // amounts line up with the total to within a rupee.
+    const detailById = new Map();
+    let bonusCounted = 0;
+    const byDate = transactions.map((t, i) => ({ t, i })).sort((a, b) => a.t.date.localeCompare(b.t.date) || a.i - b.i);
+    for (const { t } of byDate) {
+      if (t.channel === 'excluded') {
+        detailById.set(t.id, { kind: 'excluded', amount: t.amount });
+      } else if (t.isBonusEligible) {
+        const raw = (t.amount * params.bonusRate) / 100;
+        const counted = raw < 0
+          ? Math.max(raw, -bonusCounted)
+          : params.bonusMonthlyCap == null ? raw : Math.max(0, Math.min(raw, params.bonusMonthlyCap - bonusCounted));
+        detailById.set(t.id, { kind: 'bonus', amount: t.amount, rate: params.bonusRate, raw, capUsedBefore: bonusCounted, cap: params.bonusMonthlyCap ?? null, counted });
+        bonusCounted += counted;
+      } else {
+        detailById.set(t.id, { kind: 'base', amount: t.amount, rate: params.baseRate, raw: (t.amount * params.baseRate) / 100 });
+      }
+    }
     const perTransaction = transactions.map((t) => ({
       id: t.id,
       estimated: t.channel === 'excluded' ? 0 : Math.round((t.amount * (t.isBonusEligible ? params.bonusRate : params.baseRate)) / 100),
+      detail: detailById.get(t.id),
     }));
-    return { totalReward: bonusEarned + baseEarned, bonusEarned, baseEarned, eligibleSum: eligibleAll, baseSum: baseAll, perTransaction, unit: 'inr' };
+    const statement = { eligibleSum: eligibleAll, baseSum: baseAll, bonusRaw, bonusEarned, baseEarned, cap: params.bonusMonthlyCap ?? null, bonusRate: params.bonusRate, baseRate: params.baseRate };
+    return { totalReward: bonusEarned + baseEarned, bonusEarned, baseEarned, eligibleSum: eligibleAll, baseSum: baseAll, perTransaction, statement, unit: 'inr' };
   }
 
   const byMonth = {};
@@ -2793,9 +2826,10 @@ export function computeHsbcPremierCycleReward(params, transactions, ctx) {
   // shared by regular, capped-category and Travel with Points spend since all
   // earn at the same baseRate (for Travel with Points only the 1X base uses
   // the pool - its accelerated part never earns on carried rupees).
-  // Call-local, same as before: it's a rounding carry within this cycle's
-  // own statement, not a calendar-month cap.
-  let carry = 0;
+  // The leftover carries on into the NEXT statement too (confirmed against HSBC): `ctx` is shared across
+  // statements in date order, so a statement starts with whatever the previous one ended on. Without a
+  // shared ctx (a lone call) it simply starts from 0.
+  let carry = ctx.premierCarry || 0;
   const perTransaction = [];
 
   for (const txn of [...transactions].sort((a, b) => a.date.localeCompare(b.date))) {
@@ -2806,8 +2840,13 @@ export function computeHsbcPremierCycleReward(params, transactions, ctx) {
     // the base itself is always earned. capCounted is what a transaction
     // charged that limit, which the Caps card sums.
     let capCounted = 0;
+    // What went into this line's points, for the "How was this worked out" view: the leftover rupees
+    // carried in, what the line itself added, what is left for the next line, and any limit used.
+    /** @type {Record<string, any>} */
+    let detail = { kind: 'regular', amount: txn.amount, carryIn: carry, baseRate: params.baseRate };
     if (txn.category === 'fuel_excluded') {
       points = 0;
+      detail = { kind: 'fuel', amount: txn.amount };
     } else if (txn.amount < 0) {
       // A refund reverses points at the base rate (rounded toward zero),
       // skipping the carry pool. For Travel with Points the base part comes
@@ -2824,10 +2863,13 @@ export function computeHsbcPremierCycleReward(params, transactions, ctx) {
         points = baseRaw;
       }
       if (txn.category === 'capped_category') setCapped(month, getCapped(month) + txn.amount);
+      detail = { kind: 'refund', amount: txn.amount, baseRate: params.baseRate, basePoints: baseRaw, acceleratedBack: txn.category === 'travel_bonus' ? capCounted : 0 };
     } else if (txn.category === 'travel_bonus') {
       const multiplier = txn.travelMultiplier || 1;
       // The 1X base rides the shared sub-₹100 carry pool like any other
       // spend (carried-forward rupees can tip a booking into one more unit)...
+      const carryInTravel = carry;
+      const travelUsedBefore = getTravel(month);
       const total = carry + txn.amount;
       const wholeUnits = Math.floor(total / 100);
       carry = total - wholeUnits * 100;
@@ -2838,10 +2880,17 @@ export function computeHsbcPremierCycleReward(params, transactions, ctx) {
       capCounted = applyCycleCap(acceleratedRaw, getTravel(month), params.travelBonusMonthlyCap);
       setTravel(month, getTravel(month) + capCounted);
       points = baseTravelPoints + capCounted;
+      detail = {
+        kind: 'travel', amount: txn.amount, carryIn: carryInTravel, total, units: wholeUnits, baseRate: params.baseRate,
+        basePoints: baseTravelPoints, carryOut: carry, multiplier, acceleratedRaw, acceleratedCounted: capCounted,
+        travelUsedBefore, travelLimit: params.travelBonusMonthlyCap ?? null,
+      };
     } else {
       let eligibleAmount = txn.amount;
+      let cappedUsedBefore = null;
       if (txn.category === 'capped_category') {
         const spentSoFar = getCapped(month);
+        cappedUsedBefore = spentSoFar;
         // A blank/cleared categoryMonthlyCap means "no cap," not "no room
         // left" - `null - spentSoFar` would otherwise coerce to a negative
         // number and Math.max(0, ...) would floor allowedSpend at 0, silently
@@ -2854,14 +2903,22 @@ export function computeHsbcPremierCycleReward(params, transactions, ctx) {
       }
       const total = carry + eligibleAmount;
       const wholeUnits = Math.floor(total / 100);
+      const carryIn = carry;
       carry = total - wholeUnits * 100;
       points = wholeUnits * params.baseRate;
+      detail = {
+        kind: txn.category === 'capped_category' ? 'capped' : 'regular', amount: txn.amount, carryIn, eligibleAmount,
+        total, units: wholeUnits, baseRate: params.baseRate, basePoints: points, carryOut: carry,
+        cappedUsedBefore, cappedLimit: params.categoryMonthlyCap ?? null,
+      };
     }
     totalPoints += points;
-    perTransaction.push({ id: txn.id, earned: points, capCounted });
+    perTransaction.push({ id: txn.id, earned: points, capCounted, detail });
   }
 
-  return { totalReward: totalPoints, perTransaction, unit: 'points' };
+  // `carryOut`: rupees left over after the last line (under ₹100); the next statement starts with them.
+  ctx.premierCarry = carry;
+  return { totalReward: totalPoints, perTransaction, unit: 'points', carryOut: carry };
 }
 
 // A card's reward rules aren't fixed forever - banks revise rates and caps
@@ -3608,13 +3665,16 @@ export function applyRewardOverrides(cycleReward, transactions, card, asOfDate, 
   if (card?.rewardStrategy === 'hsbc_tiered_cashback_aggregate') {
     const params = resolveCardParams(card, asOfDate ?? todayISO());
     const nonOverridden = transactions.filter((t) => !overrides.has(t.id));
-    const { totalReward: recomputedTotal } = computeHsbcCycleReward(params, nonOverridden, ctx);
+    const recomputed = computeHsbcCycleReward(params, nonOverridden, ctx);
     const overrideTotal = [...overrides.values()].reduce((sum, v) => sum + v, 0);
+    // A line you did not override is explained against the pool WITHOUT the overridden ones, which is
+    // the figure that actually counts.
+    const recomputedById = new Map(recomputed.perTransaction.map((p) => [p.id, p]));
     const perTransaction = cycleReward.perTransaction.map((p) => {
       const override = overrides.get(p.id);
-      return override != null ? { ...p, earned: override, overridden: true } : p;
+      return override != null ? { ...p, earned: override, overridden: true, calculated: p.estimated ?? p.earned } : recomputedById.get(p.id) || p;
     });
-    return { ...cycleReward, perTransaction, totalReward: recomputedTotal + overrideTotal };
+    return { ...cycleReward, perTransaction, statement: recomputed.statement ?? cycleReward.statement, totalReward: recomputed.totalReward + overrideTotal };
   }
 
   let totalReward = 0;
@@ -3622,9 +3682,79 @@ export function applyRewardOverrides(cycleReward, transactions, card, asOfDate, 
     const override = overrides.get(p.id);
     const value = override != null ? override : (p.earned ?? p.estimated ?? 0);
     totalReward += value;
-    return override != null ? { ...p, earned: value, overridden: true } : p;
+    return override != null ? { ...p, earned: value, overridden: true, calculated: p.earned ?? p.estimated ?? 0 } : p;
   });
   return { ...cycleReward, perTransaction, totalReward };
+}
+
+// "How was this line's reward worked out" as plain sentences, for the Cards screen. Only HSBC
+// (Premier points, Live+ cashback) carry a `detail`, because only they depend on other lines: Premier
+// carries a sub-₹100 leftover from line to line and has monthly limits; Live+ shares one bonus cap
+// across the statement. Returns [] for anything else. `unit` is 'points' or 'inr'.
+export function describeRewardCalculation(perTxn, unit = 'points', statement = null) {
+  if (!perTxn) return [];
+  const money = (n) => formatCurrency(n);
+  const pts = (n) => `${Math.round(n).toLocaleString('en-IN')} pts`;
+  const lines = [];
+  if (perTxn.overridden) {
+    lines.push(`You set this line to ${unit === 'points' ? pts(perTxn.earned) : money(perTxn.earned)}${perTxn.calculated != null ? `; the calculation gave ${unit === 'points' ? pts(perTxn.calculated) : money(perTxn.calculated)}` : ''}.`);
+  }
+  const d = perTxn.detail;
+  if (!d) return lines;
+  const round2 = (n) => Math.round(n * 100) / 100;
+  switch (d.kind) {
+    case 'fuel':
+      lines.push('Fuel earns no points.');
+      break;
+    case 'refund':
+      lines.push(`Refund: ${money(Math.abs(d.amount))} ÷ ₹100 (whole units, rounded toward zero) × ${d.baseRate} = ${pts(Math.abs(d.basePoints))} taken back. The leftover pool is not touched.`);
+      if (d.acceleratedBack) lines.push(`The Travel with Points extra comes back too: ${pts(Math.abs(d.acceleratedBack))}, limited to what that month actually earned.`);
+      break;
+    case 'regular':
+    case 'capped':
+    case 'travel': {
+      if (d.carryIn > 0) lines.push(`Left over from before: ${money(d.carryIn)} (from the line before, or the previous statement)`);
+      if (d.kind === 'capped') {
+        const used = d.cappedUsedBefore ?? 0;
+        const over = round2(d.amount - d.eligibleAmount);
+        lines.push(
+          `Capped category: ${money(used)}${d.cappedLimit != null ? ` of ${money(d.cappedLimit)}` : ''} already used this month. ${money(d.eligibleAmount)} of this line earns points${over > 0 ? `; the other ${money(over)} is past the limit and earns nothing` : ''}.`,
+        );
+      }
+      lines.push(`This line: ${money(d.amount)}${d.carryIn > 0 ? ` → together ${money(d.total ?? d.carryIn + d.eligibleAmount)}` : ''}`);
+      lines.push(`Every full ₹100 earns ${d.baseRate} pts: ${d.units} × ${d.baseRate} = ${pts(d.basePoints)}.`);
+      if (d.kind === 'travel') {
+        lines.push(
+          `Travel with Points ×${d.multiplier}: ${pts(d.acceleratedRaw)} extra on this booking alone, ${pts(d.acceleratedCounted)} counted${d.travelLimit != null ? ` (this month ${pts(d.travelUsedBefore)} of ${pts(d.travelLimit)} used before)` : ''}.`,
+        );
+      }
+      lines.push(`Left over, carried forward: ${money(d.carryOut)}`);
+      break;
+    }
+    case 'excluded':
+      lines.push('Marked excluded: earns nothing.');
+      break;
+    case 'bonus': {
+      const capText = d.cap != null ? ` The statement's bonus limit is ${money(d.cap)}; the lines before this one used ${money(round2(d.capUsedBefore))}.` : '';
+      if (d.amount < 0) {
+        lines.push(`Refund: takes back ${money(Math.abs(round2(d.raw)))} of bonus (${d.rate}% of ${money(Math.abs(d.amount))}), never more than the statement has earned so far.`);
+      } else {
+        lines.push(`Bonus tier: ${d.rate}% of ${money(d.amount)} = ${money(round2(d.raw))}.${capText} Counted: ${money(round2(d.counted))}${d.counted < d.raw ? ' (the limit cut it)' : ''}.`);
+      }
+      break;
+    }
+    case 'base':
+      lines.push(`Everything else earns ${d.rate}%: ${d.rate}% of ${money(d.amount)} = ${money(round2(d.raw))}, no limit.`);
+      break;
+    default:
+      break;
+  }
+  if (statement && statement.bonusRate != null) {
+    lines.push(
+      `Statement total: bonus ${statement.bonusRate}% of ${money(statement.eligibleSum)} = ${money(statement.bonusRaw)}${statement.cap != null ? `, limited to ${money(statement.cap)}` : ''} → ${money(statement.bonusEarned)}; the rest ${money(statement.baseSum)} × ${statement.baseRate}% = ${money(statement.baseEarned)}. HSBC rounds once on these totals, so lines can differ by a rupee.`,
+    );
+  }
+  return lines;
 }
 
 function addDaysISO(dateStr, days) {

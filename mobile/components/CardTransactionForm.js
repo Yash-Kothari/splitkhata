@@ -4,7 +4,7 @@ import Card from './Card';
 import DateField from './DateField';
 import CardStrategyFields from './CardStrategyFields';
 import { addCardTransaction } from '../lib/firebase';
-import { todayISO, CARD_REWARD_STRATEGIES, previewTransactionReward, formatCurrency, isStatementOnlyCard, parseAmountInput, isValidISODate, defaultCardTxnFields, statementDateToCycleDate } from '../lib/utils';
+import { todayISO, CARD_REWARD_STRATEGIES, previewTransactionReward, formatCurrency, isStatementOnlyCard, isSavableCardTxnAmount, parseAmountInput, isValidISODate, defaultCardTxnFields, statementDateToCycleDate } from '../lib/utils';
 import { notify } from '../lib/dialogs';
 
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
@@ -42,7 +42,10 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
   // A refund is a negative amount: typed with a minus, or with the Refund
   // toggle (phone keypads often have no minus key).
   const typedAmount = parseAmountInput(amount, { allowNegative: true });
-  const parsedAmount = isRefund && Number.isFinite(typedAmount) ? -Math.abs(typedAmount) : typedAmount;
+  // `+ 0` turns a refund-signed zero (-0) back into a plain 0.
+  const parsedAmount = isRefund && Number.isFinite(typedAmount) ? -Math.abs(typedAmount) + 0 : typedAmount;
+  const overrideParsed = rewardOverride === '' ? null : parseAmountInput(rewardOverride, { allowNegative: true });
+  const canSubmit = isSavableCardTxnAmount(parsedAmount, overrideParsed, statementOnly);
   const preview = previewTransactionReward(card, cardTxns, {
     date: isValidISODate(date) ? date : null,
     amount: parsedAmount,
@@ -56,15 +59,20 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
 
   async function handleSubmit() {
     const parsed = parsedAmount;
-    if (!parsed) {
-      notify('Check the amount', 'Enter an amount like 1200 or 1,200.50.');
+    if (!canSubmit) {
+      notify(
+        'Check the amount',
+        parsed === 0 && !statementOnly
+          ? 'A ₹0 line is for points only: type the points in the Override box, or enter an amount.'
+          : 'Enter an amount like 1200 or 1,200.50.',
+      );
       return;
     }
     if (!isValidISODate(date)) {
       notify('Check the date', 'Use the format YYYY-MM-DD.');
       return;
     }
-    const overrideValue = rewardOverride === '' ? null : parseAmountInput(rewardOverride, { allowNegative: true });
+    const overrideValue = overrideParsed;
     if (rewardOverride !== '' && overrideValue == null) {
       notify('Check the override', 'Enter a number like 250, or leave it empty to use the calculated reward.');
       return;
@@ -174,11 +182,14 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
                 placeholder={calculatedReward != null ? String(calculatedReward) : 'auto'}
                 className={input}
               />
+              <Text className="font-body text-2xs text-muted-text mt-1">
+                Points with no purchase behind them (a bank bonus)? Enter ₹0 as the amount and the points here.
+              </Text>
             </View>
           </View>
           </>)}
 
-          <Pressable onPress={handleSubmit} disabled={saving || !parsedAmount} className={`mt-3.5 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && !parsedAmount ? 'opacity-40' : ''}`}>
+          <Pressable onPress={handleSubmit} disabled={saving || !canSubmit} className={`mt-3.5 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && !canSubmit ? 'opacity-40' : ''}`}>
             {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-white">{statementOnly ? 'Add Statement' : isRefund || parsedAmount < 0 ? 'Add Refund' : 'Add Transaction'}</Text>}
           </Pressable>
         </View>

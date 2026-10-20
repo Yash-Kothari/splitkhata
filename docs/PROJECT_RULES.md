@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.11.3**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.12.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -348,10 +348,24 @@ local testing predicted.
   transactions and cycle confirmations have all loaded, 4 s after the last change, 25 items per pass. A summary
   whose fingerprint is unchanged but whose numbers differ is reported quietly to Sentry as drift (no banner).
   Bump `STATEMENT_SUMMARY_ENGINE` whenever the reward/bill maths changes so every summary is rewritten.
-- **A statement-only card has no Last Statement tile and no Billing Cycle History.** There is no "expected" bill to
-  confirm (you typed the statement amount), and "paid" lives on each statement row (`txn.paidAt`, which Estimated Card
-  Bills reads) - the tile's own paid box wrote a cycle record nothing read. Both components return null for
-  `isStatementOnlyCard`.
+- **A statement-only card shows only what a typed statement amount can support.** No Last Statement tile, Billing Cycle
+  History, "Spent so far" / "Estimated reward" tiles, Annual Fee & Value tile (`computeCardAnnualValue` returns null) or
+  search box. There is no "expected" bill to confirm (you typed it), no running spend (the one amount in a cycle is the
+  statement), and "paid" lives on each statement row (`txn.paidAt`, which Estimated Card Bills reads) - the tile's own
+  paid box wrote a cycle record nothing read. The list says "Statements" / "1 statement". Milestone Progress stays: the
+  fee-waiver spend is built from the statement amounts. A new card-screen feature needs an `isStatementOnlyCard` check.
+- **A ₹0 card line is allowed when it carries points.** Enter ₹0 as the amount and the points (or cashback) in the Override
+  box - for a bank bonus or a lump from spending before tracking began (`isSavableCardTxnAmount`). Without an override a
+  zero amount is rejected, and a statement-only card never takes one. The bill does not move; the statement's reward
+  moves by exactly the override.
+- **HSBC lines explain themselves** ("How was this worked out?" on the Cards screen, `describeRewardCalculation`; every
+  engine line that depends on other lines carries a `detail`). Premier: the sub-₹100 leftover is carried from line to
+  line AND from one statement into the next (confirmed against HSBC; shown as "left over after the last line, carried into
+  the next statement"), the capped-category
+  and Travel-with-Points monthly limits show what was used before. Live+: the ₹1,200 statement bonus cap is used up in
+  date order, so a line shows what the lines before it used and what actually counts, and the pills add up to the
+  statement total (HSBC rounds once on the totals, so lines can differ by a rupee). A line you overrode says what the
+  calculation gave; that note works on every card. Add `detail` to a new engine only if its lines depend on each other.
 - A statement-only card entered with the statement date falls inside the open cycle,
   which is why it's tracked per statement (paid/unpaid) and never as a "next statement".
 - An old "Cash withdrawal" checkbox once let ordinary cash purchases be flagged as
