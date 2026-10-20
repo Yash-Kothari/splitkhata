@@ -188,7 +188,12 @@ const cycleRecordOf = (cardBillingCycles, cardId, cycle) => findCycleRecord(card
 // and reward (expected, then the bank's figure once you Confirm it), whether it
 // is paid, and the day the reward lands. It writes the same fields as the
 // Billing Cycle History row, which keeps the older statements.
+//
+// Not for a statement-only card: there you type each statement's amount yourself, so there is
+// no "expected" figure to confirm, and a statement is marked paid on its own row in the list
+// (the Estimated Card Bills summary reads that, not this tile's box).
 export function LastStatementCard({ card, cardTxns, cardBillingCycles, today, ledger, onSaveError }) {
+  if (isStatementOnlyCard(card)) return null;
   const cycle = listPastCycles(card, cardTxns, today)[0];
   if (!cycle) return null;
   const creditDate = getRewardCreditDate(card, cycle.cycleEnd);
@@ -232,7 +237,9 @@ export default function CardBillingHistory({ card, cardTxns, cardBillingCycles, 
   // this keeps the older ones (so each statement has exactly one set of boxes).
   const pastCycles = listPastCycles(card, cardTxns, today).slice(skipLatest ? 1 : 0);
 
-  if (pastCycles.length === 0) return null;
+  // Same reason as the Last Statement tile: a statement-only card has no expected bill to
+  // confirm, and its paid mark lives on each statement row.
+  if (pastCycles.length === 0 || isStatementOnlyCard(card)) return null;
 
   const cyclesByYear = {};
   pastCycles.forEach((cyc) => {

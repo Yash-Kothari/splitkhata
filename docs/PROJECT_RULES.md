@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.11.2**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.11.3**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -348,6 +348,10 @@ local testing predicted.
   transactions and cycle confirmations have all loaded, 4 s after the last change, 25 items per pass. A summary
   whose fingerprint is unchanged but whose numbers differ is reported quietly to Sentry as drift (no banner).
   Bump `STATEMENT_SUMMARY_ENGINE` whenever the reward/bill maths changes so every summary is rewritten.
+- **A statement-only card has no Last Statement tile and no Billing Cycle History.** There is no "expected" bill to
+  confirm (you typed the statement amount), and "paid" lives on each statement row (`txn.paidAt`, which Estimated Card
+  Bills reads) - the tile's own paid box wrote a cycle record nothing read. Both components return null for
+  `isStatementOnlyCard`.
 - A statement-only card entered with the statement date falls inside the open cycle,
   which is why it's tracked per statement (paid/unpaid) and never as a "next statement".
 - An old "Cash withdrawal" checkbox once let ordinary cash purchases be flagged as
