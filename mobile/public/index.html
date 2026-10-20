@@ -50,6 +50,81 @@
     </noscript>
     <!-- The root element for your Expo app. -->
     <div id="root"></div>
+    <!-- Startup watchdog. This is plain HTML and a plain script on purpose: it has to work when the
+         app's own JavaScript fails, stalls or never starts - the case where the page is just an
+         empty cream screen and nothing says why. If the app has drawn nothing after 10 seconds it
+         shows what went wrong (the errors it saw) and a "Reset app" button that clears the offline
+         copy of the app (service worker + its cache) but never touches your data or sign-in. -->
+    <div id="boot-fallback" hidden style="position:fixed;inset:0;background:#f3ebdd;color:#1f2a37;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:none;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;z-index:2147483647">
+      <div style="max-width:420px;width:100%;text-align:center">
+        <div style="font-size:20px;font-weight:700;margin-bottom:8px">Splitkhata is taking too long to start</div>
+        <div style="font-size:14px;line-height:1.45;margin-bottom:14px;color:#4b5563">Check your connection, and that nothing is blocking this site or google.com. If it keeps happening, reset the app below. Your data and sign-in are not touched.</div>
+        <pre id="boot-fallback-detail" style="font-size:11px;text-align:left;white-space:pre-wrap;word-break:break-word;background:rgba(0,0,0,0.05);border-radius:8px;padding:10px;margin:0 0 14px;max-height:160px;overflow:auto"></pre>
+        <button id="boot-fallback-reload" style="font-size:15px;font-weight:600;padding:10px 18px;border-radius:12px;border:1px solid rgba(0,0,0,0.2);background:#fff;margin:0 6px 8px">Reload</button>
+        <button id="boot-fallback-reset" style="font-size:15px;font-weight:600;padding:10px 18px;border-radius:12px;border:0;background:#3d7068;color:#fff;margin:0 6px 8px">Reset app and reload</button>
+      </div>
+    </div>
+    <script>
+      (function () {
+        var seen = [];
+        function note(message) {
+          message = String(message || 'Unknown error').slice(0, 300);
+          if (seen.indexOf(message) === -1 && seen.length < 6) seen.push(message);
+        }
+        // Capture phase: a script or font that fails to load does not bubble to window.
+        window.addEventListener(
+          'error',
+          function (e) {
+            if (e.target && e.target !== window) note('Could not load ' + (e.target.src || e.target.href || e.target.tagName));
+            else note(e.message || 'Script error');
+          },
+          true,
+        );
+        window.addEventListener('unhandledrejection', function (e) {
+          note((e.reason && (e.reason.message || e.reason)) || 'Unhandled error');
+        });
+        var started = Date.now();
+        var timer = setInterval(function () {
+          var root = document.getElementById('root');
+          var box = document.getElementById('boot-fallback');
+          if (!box) return clearInterval(timer);
+          // React Native mounts an empty wrapper inside #root straight away, so "has children" would
+          // count a blank page as started - what counts is that something readable is on screen.
+          if (root && (root.innerText || '').replace(/\s+/g, '').length > 0) {
+            box.style.display = 'none';
+            if (Date.now() - started > 1500) clearInterval(timer);
+            return;
+          }
+          if (Date.now() - started < 10000) return;
+          document.getElementById('boot-fallback-detail').textContent =
+            (seen.length ? seen.join('\n') : 'No error was reported - the app started but drew nothing.') + '\n\n' + navigator.userAgent;
+          box.style.display = 'flex';
+        }, 1000);
+        document.getElementById('boot-fallback-reload').onclick = function () {
+          location.reload();
+        };
+        document.getElementById('boot-fallback-reset').onclick = function () {
+          var jobs = [];
+          if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+            jobs.push(
+              navigator.serviceWorker.getRegistrations().then(function (regs) {
+                return Promise.all(regs.map(function (r) { return r.unregister(); }));
+              }),
+            );
+          }
+          if (window.caches && caches.keys) {
+            jobs.push(
+              caches.keys().then(function (keys) {
+                return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+              }),
+            );
+          }
+          Promise.all(jobs).catch(function () {}).then(function () {
+            location.reload();
+          });
+        };
+      })();
+    </script>
     <!-- Offline support: registers sw.js (see public/sw.js). Only on https, so
          the local dev server is never cached. The base path (/splitkhata) is
          read off the app bundle's own URL instead of being hardcoded. -->

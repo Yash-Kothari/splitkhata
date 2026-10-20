@@ -1,5 +1,5 @@
 import '../global.css';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, Pressable, Platform } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Stack, ThemeProvider, DefaultTheme, DarkTheme } from 'expo-router';
@@ -80,8 +80,13 @@ const DARK_NAV_THEME = {
   colors: { ...DarkTheme.colors, background: themeColor('paper', true), card: themeColor('paper', true) },
 };
 
+// How long the app waits for its fonts before it draws anyway. Fonts are polish, not content: a font
+// that is slow, blocked or rejected by a browser must not leave the whole app blank (that is exactly
+// what a failed font load did - the layout drew nothing until every font was in, and ignored errors).
+const FONT_WAIT_MS = 4000;
+
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoadedOk, fontError] = useFonts({
     Fraunces_500Medium,
     Fraunces_700Bold,
     Inter_400Regular,
@@ -91,6 +96,13 @@ export default function RootLayout() {
     IBMPlexMono_600SemiBold,
     IBMPlexMono_700Bold,
   });
+
+  const [fontWaitOver, setFontWaitOver] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setFontWaitOver(true), FONT_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  const fontsLoaded = fontsLoadedOk || Boolean(fontError) || fontWaitOver;
 
   const { colorScheme, setColorScheme } = useColorScheme();
 

@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.11.1**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.11.2**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -356,6 +356,11 @@ local testing predicted.
 - The browser's NetInfo probe (`HEAD /`) 404s on GitHub Pages, so it is switched off on the web
   (`ConnectionBanner`); the app only uses the browser's online signal.
 - Pins sort within the currently shown list (for Household, the selected month).
+- **A blank page must never be silent.** `RootLayout` draws after the fonts load, fail, or 4 s pass - never "only when all
+  fonts are in" (a stalled/rejected font used to leave the whole app blank: no header, no message, no console error).
+  `public/index.html` also carries a plain-HTML startup watchdog: if nothing readable is on screen after 10 s it shows the
+  errors it saw (including scripts that failed to load) and a "Reset app and reload" button that clears the service worker
+  and its cache, never your data. Test changes to it with a build whose entry script 404s.
 - **Startup must never wait on Google's sign-in iframe.** On web, auth is created with `initializeAuth` and no
   `popupRedirectResolver`; `signInWithGooglePopup` passes `browserPopupRedirectResolver` itself. With `getAuth()` the SDK
   waits for `firebaseapp.com/__/auth/iframe` before it will say whether you are signed in (always for the redirect check,
