@@ -2029,7 +2029,7 @@ test('SuperMoney: an excluded-category transaction (e.g. rent, utilities) earns 
   assert.equal(totalReward, 0);
   assert.equal(baseTotal, 0);
   assert.equal(bonusRawTotal, 0);
-  assert.deepEqual(perTransaction, [
+  assert.deepEqual(perTransaction.map((p) => ({ id: p.id, earned: p.earned, pool: p.pool })), [
     { id: 't1', earned: 0, pool: null },
     { id: 't2', earned: 0, pool: null },
   ]);
@@ -4223,4 +4223,49 @@ test('computeCardAnnualValue counts the amounts you confirmed, not just the calc
   const base = computeCardAnnualValue(card, txns, '2026-10-08');
   const withActual = computeCardAnnualValue(card, txns, '2026-10-08', [{ cardId: 'c', cycleStart: '2026-08-01', actualRewardCredited: base.earned + 40, pointsConfirmedAt: 'x' }]);
   assert.equal(withActual.earned, base.earned + 40);
+});
+
+test('describeRewardCalculation: an HDFC Diners line explains the slab, the multiplier, the leftover and the cap', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const r = computeDinersCycleReward(params, [
+    { id: 'a', date: '2026-10-05', amount: 1000, category: 'regular' },
+    { id: 'b', date: '2026-10-06', amount: 100000, category: 'insurance' },
+    { id: 'c', date: '2026-10-07', amount: 100000, category: 'insurance' },
+    { id: 'g', date: '2026-10-08', amount: 3000, category: 'grocery' },
+    { id: 'x', date: '2026-10-09', amount: 500, category: 'excluded' },
+    { id: 'f', date: '2026-10-10', amount: -1500, category: 'regular' },
+  ]);
+  const by = (id) => r.perTransaction.find((p) => p.id === id);
+  const regular = describeRewardCalculation(by('a'), 'points').join(' | ');
+  assert.match(regular, /1,000\.00 holds 6 full ₹150\.00 → 6 × 5 = 30 pts/);
+  assert.match(regular, /₹100\.00 left over[\s\S]*earns nothing/);
+  assert.match(describeRewardCalculation(by('b'), 'points').join(' | '), /limit: 0 pts of 5,000 pts already used this month/);
+  const cut = describeRewardCalculation(by('c'), 'points').join(' | ');
+  assert.match(cut, /limit cut this line from/);
+  assert.match(describeRewardCalculation(by('g'), 'points').join(' | '), /arrive together on 1 Nov 2026, not with the statement/);
+  assert.match(describeRewardCalculation(by('x'), 'points').join(' | '), /earns no points/);
+  assert.match(describeRewardCalculation(by('f'), 'points').join(' | '), /Refund of ₹1,500\.00[\s\S]*taken back/);
+});
+
+test('describeRewardCalculation: a SmartBuy line says the monthly limit applies to the extra points only', () => {
+  const params = CARD_STRATEGY_DEFAULTS.hdfc_diners_slab_milestone;
+  const r = computeDinersCycleReward(params, [{ id: 's', date: '2026-10-05', amount: 1500, category: 'smartbuy_hotel' }]);
+  const text = describeRewardCalculation(r.perTransaction[0], 'points').join(' | ');
+  assert.match(text, /50 pts base is always earned; the extra 450 pts/);
+  assert.equal(r.perTransaction[0].earned, 500);
+});
+
+test('describeRewardCalculation: Axis lines explain their pool, the ₹100 minimum and the statement pool limit', () => {
+  const params = CARD_STRATEGY_DEFAULTS.axis_supermoney_dual_pool;
+  const r = computeSuperMoneyCycleReward(params, [
+    { id: 'u', date: '2026-10-01', amount: 2000, isBonusEligible: true },
+    { id: 'o', date: '2026-10-02', amount: 1000, isBonusEligible: false },
+    { id: 's', date: '2026-10-03', amount: 99, isBonusEligible: false },
+    { id: 'e', date: '2026-10-04', amount: 5000, isBonusEligible: false, channel: 'excluded' },
+  ]);
+  const by = (id) => r.perTransaction.find((p) => p.id === id);
+  assert.match(describeRewardCalculation(by('u'), 'inr', r.statement).join(' | '), /3% pool \(super\.money UPI\): 3% of ₹2,000\.00 = ₹60\.00[\s\S]*Statement total: 1% pool ₹10\.00 \+ 3% pool ₹60\.00 \(limit ₹100\.00\) → ₹70\.00/);
+  assert.match(describeRewardCalculation(by('o'), 'inr').join(' | '), /1% pool: 1% of ₹1,000\.00 = ₹10\.00/);
+  assert.match(describeRewardCalculation(by('s'), 'inr').join(' | '), /Under ₹100\.00: Axis pays nothing/);
+  assert.match(describeRewardCalculation(by('e'), 'inr').join(' | '), /Marked excluded/);
 });

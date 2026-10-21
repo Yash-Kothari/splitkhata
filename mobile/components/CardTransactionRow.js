@@ -67,12 +67,12 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
 
   const perTxn = cycleReward?.perTransaction?.find((p) => p.id === txn.id);
   const isAggregate = card.rewardStrategy === 'hsbc_tiered_cashback_aggregate';
-  // HSBC lines depend on other lines (a carried-over leftover, a shared cap), and any line you overrode
-  // says what the calculation gave - one plain-language walk-through for both.
+  // HSBC, HDFC Diners and Axis lines depend on caps, slabs or a shared pool, and any line you overrode
+  // says what the calculation gave - one plain-language walk-through for all of them.
   // Live+ lines show what actually counts once the shared bonus limit is used up in date order (so the
   // pills add up to the statement), not the uncapped estimate.
   const aggregateValue = perTxn ? (perTxn.detail && perTxn.detail.counted != null ? perTxn.detail.counted : perTxn.detail && perTxn.detail.raw != null ? perTxn.detail.raw : perTxn.estimated) : 0;
-  const howLines = statementOnly ? [] : describeRewardCalculation(perTxn, cycleReward?.unit, isAggregate ? cycleReward?.statement : null);
+  const howLines = statementOnly ? [] : describeRewardCalculation(perTxn, cycleReward?.unit, isAggregate || cycleReward?.statement?.dualPool ? cycleReward?.statement : null);
 
   const editPreview = editing
     ? previewTransactionReward(card, cardTxns, {

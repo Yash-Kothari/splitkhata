@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.12.0**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.13.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -365,7 +365,10 @@ local testing predicted.
   and Travel-with-Points monthly limits show what was used before. Live+: the ₹1,200 statement bonus cap is used up in
   date order, so a line shows what the lines before it used and what actually counts, and the pills add up to the
   statement total (HSBC rounds once on the totals, so lines can differ by a rupee). A line you overrode says what the
-  calculation gave; that note works on every card. Add `detail` to a new engine only if its lines depend on each other.
+  calculation gave; that note works on every card. HDFC Diners lines explain the ₹150 slab (and the leftover that earns
+  nothing), the category multiplier, each cap in the order it is checked, the statement limit and the grocery credit date;
+  Axis lines explain their 1% / 3% pool, the ₹100 minimum and the statement-level 3% pool limit. SBI Cashback is
+  statement-only for now, so it has none. Add `detail` to a new engine only if its lines depend on each other.
 - A statement-only card entered with the statement date falls inside the open cycle,
   which is why it's tracked per statement (paid/unpaid) and never as a "next statement".
 - An old "Cash withdrawal" checkbox once let ordinary cash purchases be flagged as

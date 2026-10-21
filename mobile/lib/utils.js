@@ -2555,18 +2555,22 @@ export function computeDinersCycleReward(params, transactions, ctx) {
     // was actually earned after every limit was applied.
     let allowed = Infinity;
     let dayOrMonthBucket = null;
+    let capUsedBefore = null;
     if (category.capAmount != null) {
       const isDay = category.capPeriod === 'day';
       const bucketKey = isDay ? `${category.key}|${txn.date}` : `${category.key}|${getMonthKey(txn.date)}`;
       const bucketTotals = isDay ? dayTotals : monthScoped ? ctx.monthBuckets : localMonthTotals;
       dayOrMonthBucket = { bucketKey, bucketTotals };
-      allowed = Math.min(allowed, category.capAmount - (bucketTotals[bucketKey] || 0));
+      capUsedBefore = bucketTotals[bucketKey] || 0;
+      allowed = Math.min(allowed, category.capAmount - capUsedBefore);
     }
     const extraKey = `${category.key}|${getMonthKey(txn.date)}`;
     const extraTotals = monthScoped ? ctx.extraMonthBuckets : localExtraTotals;
+    const extraUsedBefore = extraTotals[extraKey] || 0;
     if (category.monthlyCapAmount != null) {
-      allowed = Math.min(allowed, category.monthlyCapAmount - (extraTotals[extraKey] || 0));
+      allowed = Math.min(allowed, category.monthlyCapAmount - extraUsedBefore);
     }
+    const beforeCaps = earned;
     if (earned >= 0) {
       earned = Math.max(0, Math.min(earned, allowed));
     } else {
@@ -2590,10 +2594,34 @@ export function computeDinersCycleReward(params, transactions, ctx) {
     // for a capBasis 'accelerated' category, otherwise the full earned
     // amount. The Caps card sums this so it always matches the ledger.
     const capCounted = acceleratedBasis ? earned : null;
+    const afterCaps = earned + uncappedBase;
     earned += uncappedBase;
     earned = earned < 0 ? Math.max(earned, -cycleTotal) : applyCycleCap(earned, cycleTotal, params.cycleCap);
+    /** @type {Record<string, any>} */
+    const detail = {
+      kind: txn.amount < 0 ? 'refund' : effectiveMultiplier === 0 ? 'excluded' : 'diners',
+      amount: txn.amount,
+      categoryLabel: category.label || category.key,
+      unitAmount: params.unitAmount,
+      pointsPerUnit: params.pointsPerUnit,
+      units: Math.trunc(txn.amount / params.unitAmount),
+      leftover: Math.round((txn.amount - Math.trunc(txn.amount / params.unitAmount) * params.unitAmount) * 100) / 100,
+      basePoints,
+      multiplier: effectiveMultiplier,
+      accelerated: acceleratedBasis,
+      beforeCaps,
+      capLimit: category.capAmount ?? null,
+      capPeriod: category.capPeriod ?? null,
+      capUsedBefore,
+      monthlyCapLimit: category.monthlyCapAmount ?? null,
+      monthlyCapUsedBefore: category.monthlyCapAmount != null ? extraUsedBefore : null,
+      afterCaps,
+      cycleCap: params.cycleCap ?? null,
+      cycleUsedBefore: cycleTotal,
+      creditDate: category.creditOn === 'first_of_next_month' ? firstOfNextMonth(getMonthKey(txn.date)) : null,
+    };
     cycleTotal += earned;
-    perTransaction.push({ id: txn.id, basePoints, categoryKey: category.key, multiplier: effectiveMultiplier, earned, capCounted: capCounted ?? earned });
+    perTransaction.push({ id: txn.id, basePoints, categoryKey: category.key, multiplier: effectiveMultiplier, earned, capCounted: capCounted ?? earned, detail });
   }
 
   return { totalReward: cycleTotal, perTransaction, unit: 'points' };
@@ -2764,27 +2792,33 @@ export function computeSuperMoneyCycleReward(params, transactions) {
   const bonusFloor = params.bonusFloor ?? 0;
 
   for (const txn of transactions) {
-    if (txn.channel === 'excluded' || Math.abs(txn.amount) < minTransaction) {
-      perTransaction.push({ id: txn.id, earned: 0, pool: null });
+    if (txn.channel === 'excluded') {
+      perTransaction.push({ id: txn.id, earned: 0, pool: null, detail: { kind: 'excluded', amount: txn.amount } });
+      continue;
+    }
+    if (Math.abs(txn.amount) < minTransaction) {
+      perTransaction.push({ id: txn.id, earned: 0, pool: null, detail: { kind: 'below_min', amount: txn.amount, minTransaction } });
       continue;
     }
     // A refund reverses cashback from the pool it was earned in, rounded toward zero.
     const round = txn.amount < 0 ? Math.trunc : Math.floor;
-    if (txn.isBonusEligible) {
-      const earned = round((txn.amount * params.bonusRate) / 100);
-      bonusRawTotal += earned;
-      perTransaction.push({ id: txn.id, earned, pool: 'bonus' });
-    } else {
-      const earned = round((txn.amount * params.baseRate) / 100);
-      baseTotal += earned;
-      perTransaction.push({ id: txn.id, earned, pool: 'base' });
-    }
+    const rate = txn.isBonusEligible ? params.bonusRate : params.baseRate;
+    const earned = round((txn.amount * rate) / 100);
+    if (txn.isBonusEligible) bonusRawTotal += earned;
+    else baseTotal += earned;
+    perTransaction.push({
+      id: txn.id,
+      earned,
+      pool: txn.isBonusEligible ? 'bonus' : 'base',
+      detail: { kind: txn.isBonusEligible ? 'bonus_pool' : 'base_pool', amount: txn.amount, rate, raw: (txn.amount * rate) / 100, earned, refund: txn.amount < 0 },
+    });
   }
 
   const bonusCap = Math.max(baseTotal, bonusFloor);
   const bonusFinal = Math.min(bonusRawTotal, bonusCap);
+  const statement = { dualPool: true, baseTotal, bonusRawTotal, bonusCap, bonusFloor, bonusFinal, baseRate: params.baseRate, bonusRate: params.bonusRate };
 
-  return { totalReward: baseTotal + bonusFinal, baseTotal, bonusRawTotal, bonusFinal, perTransaction, unit: 'inr' };
+  return { totalReward: baseTotal + bonusFinal, baseTotal, bonusRawTotal, bonusFinal, perTransaction, statement, unit: 'inr' };
 }
 
 // HSBC Premier: flat 3 points per ₹100 on everything except fuel (0), with
@@ -3691,6 +3725,44 @@ export function applyRewardOverrides(cycleReward, transactions, card, asOfDate, 
 // (Premier points, Live+ cashback) carry a `detail`, because only they depend on other lines: Premier
 // carries a sub-₹100 leftover from line to line and has monthly limits; Live+ shares one bonus cap
 // across the statement. Returns [] for anything else. `unit` is 'points' or 'inr'.
+// Plain sentences for one HDFC Diners line: the slab, the category multiplier, each cap in the order
+// it is checked, the statement limit, and when the points actually land.
+function describeDinersLine(d, earned) {
+  const money = (n) => formatCurrency(n);
+  const pts = (n) => `${Math.round(n).toLocaleString('en-IN')} pts`;
+  const lines = [];
+  const perUnit = `${d.pointsPerUnit} pts per full ${money(d.unitAmount)}`;
+  if (d.kind === 'refund') {
+    lines.push(`Refund of ${money(Math.abs(d.amount))}: ${money(Math.abs(d.amount))} ÷ ${money(d.unitAmount)} (whole units, rounded toward zero) × ${d.pointsPerUnit} = ${pts(Math.abs(d.basePoints))}${d.multiplier !== 1 ? ` × ${d.multiplier} for ${d.categoryLabel}` : ''}, taken back - never more than that month and category actually earned.`);
+    lines.push(`Net effect on the statement: ${earned >= 0 ? '+' : '−'}${pts(Math.abs(earned))}.`);
+  } else {
+    lines.push(`${d.categoryLabel}: ${perUnit}. ${money(d.amount)} holds ${d.units} full ${money(d.unitAmount)} → ${d.units} × ${d.pointsPerUnit} = ${pts(d.basePoints)}.`);
+    if (d.leftover > 0) lines.push(`The ${money(d.leftover)} left over after the last full ${money(d.unitAmount)} earns nothing - Diners does not carry it to the next purchase.`);
+    if (d.accelerated) {
+      lines.push(`${d.categoryLabel} ×${d.multiplier}: the ${pts(d.basePoints)} base is always earned; the extra ${pts(d.beforeCaps)} (${d.basePoints} × ${d.multiplier - 1}) is the part the monthly limit applies to.`);
+    } else if (d.multiplier !== 1) {
+      lines.push(`${d.categoryLabel} ×${d.multiplier}: ${pts(d.basePoints)} × ${d.multiplier} = ${pts(d.beforeCaps)}.`);
+    }
+    if (d.capLimit != null) {
+      const period = d.capPeriod === 'day' ? 'today' : 'this month';
+      lines.push(`${d.categoryLabel} limit: ${pts(d.capUsedBefore)} of ${pts(d.capLimit)} already used ${period}${d.accelerated ? ' (extra points only)' : ''}.`);
+    }
+    if (d.monthlyCapLimit != null) lines.push(`Monthly limit: ${pts(d.monthlyCapUsedBefore)} of ${pts(d.monthlyCapLimit)} already used this month.`);
+    if (d.afterCaps < d.beforeCaps + (d.accelerated ? d.basePoints : 0)) {
+      lines.push(`The limit cut this line from ${pts(d.beforeCaps + (d.accelerated ? d.basePoints : 0))} to ${pts(d.afterCaps)}.`);
+    }
+    if (d.cycleCap != null && earned < d.afterCaps) {
+      lines.push(`Statement limit ${pts(d.cycleCap)}: ${pts(d.cycleUsedBefore)} already earned before this line, so it counts ${pts(earned)}.`);
+    }
+    lines.push(`Counted: ${pts(earned)}.`);
+  }
+  if (d.creditDate) {
+    const [y, m, day] = d.creditDate.split('-');
+    lines.push(`Grocery points for the whole month arrive together on ${Number(day)} ${formatMonthLabel(`${y}-${m}`)}, not with the statement.`);
+  }
+  return lines;
+}
+
 export function describeRewardCalculation(perTxn, unit = 'points', statement = null) {
   if (!perTxn) return [];
   const money = (n) => formatCurrency(n);
@@ -3707,6 +3779,10 @@ export function describeRewardCalculation(perTxn, unit = 'points', statement = n
       lines.push('Fuel earns no points.');
       break;
     case 'refund':
+      if (d.unitAmount != null) {
+        lines.push(...describeDinersLine(d, perTxn.earned));
+        break;
+      }
       lines.push(`Refund: ${money(Math.abs(d.amount))} ÷ ₹100 (whole units, rounded toward zero) × ${d.baseRate} = ${pts(Math.abs(d.basePoints))} taken back. The leftover pool is not touched.`);
       if (d.acceleratedBack) lines.push(`The Travel with Points extra comes back too: ${pts(Math.abs(d.acceleratedBack))}, limited to what that month actually earned.`);
       break;
@@ -3732,7 +3808,27 @@ export function describeRewardCalculation(perTxn, unit = 'points', statement = n
       break;
     }
     case 'excluded':
-      lines.push('Marked excluded: earns nothing.');
+      if (d.unitAmount != null) {
+        lines.push(`${d.categoryLabel}: earns no points.`);
+        break;
+      }
+      lines.push(unit === 'points' ? 'This category earns no points.' : 'Marked excluded: earns nothing.');
+      break;
+    case 'below_min':
+      lines.push(`Under ${money(d.minTransaction)}: Axis pays nothing on a purchase this small.`);
+      break;
+    case 'base_pool':
+    case 'bonus_pool': {
+      const pool = d.kind === 'bonus_pool' ? `${d.rate}% pool (super.money UPI)` : `${d.rate}% pool`;
+      lines.push(
+        d.refund
+          ? `Refund: ${d.rate}% of ${money(Math.abs(d.amount))} = ${money(Math.abs(round2(d.raw)))}, rounded toward zero, comes back out of the ${pool}.`
+          : `${pool}: ${d.rate}% of ${money(d.amount)} = ${money(round2(d.raw))}, rounded down to ${money(d.earned)}.`,
+      );
+      break;
+    }
+    case 'diners':
+      lines.push(...describeDinersLine(d, perTxn.earned));
       break;
     case 'bonus': {
       const capText = d.cap != null ? ` The statement's bonus limit is ${money(d.cap)}; the lines before this one used ${money(round2(d.capUsedBefore))}.` : '';
@@ -3749,7 +3845,14 @@ export function describeRewardCalculation(perTxn, unit = 'points', statement = n
     default:
       break;
   }
-  if (statement && statement.bonusRate != null) {
+  if (statement && statement.dualPool) {
+    const extra = statement.bonusRawTotal > statement.bonusCap
+      ? ` The ${statement.bonusRate}% pool can't be bigger than the ${statement.baseRate}% pool (with a ${money(statement.bonusFloor)} minimum), so ${money(statement.bonusRawTotal - statement.bonusFinal)} of it is cut.`
+      : '';
+    lines.push(
+      `Statement total: ${statement.baseRate}% pool ${money(statement.baseTotal)} + ${statement.bonusRate}% pool ${money(statement.bonusRawTotal)} (limit ${money(statement.bonusCap)}) → ${money(statement.baseTotal + statement.bonusFinal)}.${extra}`,
+    );
+  } else if (statement && statement.bonusRate != null) {
     lines.push(
       `Statement total: bonus ${statement.bonusRate}% of ${money(statement.eligibleSum)} = ${money(statement.bonusRaw)}${statement.cap != null ? `, limited to ${money(statement.cap)}` : ''} → ${money(statement.bonusEarned)}; the rest ${money(statement.baseSum)} × ${statement.baseRate}% = ${money(statement.baseEarned)}. HSBC rounds once on these totals, so lines can differ by a rupee.`,
     );
