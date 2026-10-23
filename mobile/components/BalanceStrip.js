@@ -34,8 +34,7 @@ export default function BalanceStrip({
   tripName = '',
   tripId = '',
   tripRollup = null,
-  cashStats = null,
-  cashCurrency = '',
+  cashByCurrency = [],
   onSaveError,
   instruments: instrumentsProp,
 }) {
@@ -333,17 +332,21 @@ export default function BalanceStrip({
         )
       ) : null}
 
-      {isTravel && cashStats && (cashStats.opening || cashStats.withdrawn || cashStats.spent) ? (
-        <Text className="font-body text-sm text-muted-text mt-1">
-          💵 Cash left:{' '}
-          <Text className={`font-mono-bold ${cashStats.balance < 0 ? 'text-stamp-red' : 'text-ink'}`}>
-            {cashCurrency} {cashStats.balance.toFixed(2)}
-          </Text>
-          <Text className="font-mono text-2xs">
-            {'  '}({(cashStats.opening + cashStats.withdrawn).toFixed(2)} in, {cashStats.spent.toFixed(2)} spent)
-          </Text>
-        </Text>
-      ) : null}
+      {isTravel
+        ? cashByCurrency
+            .filter((c) => c.opening || c.withdrawn || c.spent)
+            .map((c) => (
+              <Text key={c.currency} className="font-body text-sm text-muted-text mt-1">
+                💵 Cash left{cashByCurrency.filter((x) => x.opening || x.withdrawn || x.spent).length > 1 ? ` in ${c.currency}` : ''}:{' '}
+                <Text className={`font-mono-bold ${c.balance < 0 ? 'text-stamp-red' : 'text-ink'}`}>
+                  {c.currency} {c.balance.toFixed(2)}
+                </Text>
+                <Text className="font-mono text-2xs">
+                  {'  '}({(c.opening + c.withdrawn).toFixed(2)} in, {c.spent.toFixed(2)} spent)
+                </Text>
+              </Text>
+            ))
+        : null}
 
       {isTravel && dbMembers.length > 0 && (
         <View className="mt-3 pt-3 border-t border-ink/10 flex-row flex-wrap gap-x-4 gap-y-1.5">

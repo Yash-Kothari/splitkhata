@@ -860,23 +860,22 @@ export async function addWithdrawal(movement, entry) {
   await track(batch.commit(), 'Could not record the withdrawal');
 }
 
-// Starting cash is one value per trip: this replaces every earlier opening
-// record for the trip. Saving used to add another record each time, so
-// correcting 20,000 to 25,000 showed 45,000.
-// The opening record for a trip always lives at the deterministic id
-// `opening_${tripId}` (P1-4 - tripId is the real join key), so saving is
-// just an overwrite of that one doc - no query needed to find it. Still
-// cleans up any *other* 'opening' doc for this trip (found by tripId, not
-// name), in case one exists from before this doc-id convention - otherwise
-// the trip's cash balance would double-count two opening records.
-export async function setOpeningCash(tripId, amount) {
-  const openingRef = doc(cashMovementsRef, `opening_${tripId}`);
-  const stragglers = await getDocs(query(cashMovementsRef, where('tripId', '==', tripId), where('type', '==', 'opening')));
+// Starting cash is one value per trip AND currency: this replaces every earlier opening record for
+// that currency. Saving used to add another record each time, so correcting 20,000 to 25,000
+// showed 45,000.
+// Each currency's opening record lives at the deterministic id `opening_${tripId}_${currency}`, so
+// saving is just an overwrite. Records from before trips had several currencies sit at
+// `opening_${tripId}` with no currency, which means the trip's main currency (`primaryCurrency`) -
+// they are removed when that currency's opening is saved again, as is any other 'opening' record
+// for the same currency, or the trip's cash balance would double-count two of them.
+export async function setOpeningCash(tripId, amount, currency, primaryCurrency = currency) {
+  const openingRef = doc(cashMovementsRef, `opening_${tripId}_${currency}`);
+  const existing = await getDocs(query(cashMovementsRef, where('tripId', '==', tripId), where('type', '==', 'opening')));
   const batch = writeBatch(dbInstance);
-  stragglers.docs.forEach((d) => {
-    if (d.id !== openingRef.id) batch.delete(d.ref);
+  existing.docs.forEach((d) => {
+    if (d.id !== openingRef.id && (d.data().currency || primaryCurrency) === currency) batch.delete(d.ref);
   });
-  batch.set(openingRef, { tripId, type: 'opening', amount, createdAt: serverTimestamp() });
+  batch.set(openingRef, { tripId, type: 'opening', amount, currency, createdAt: serverTimestamp() });
   await track(batch.commit(), 'Could not save opening cash');
 }
 

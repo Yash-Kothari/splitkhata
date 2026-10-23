@@ -9,6 +9,7 @@ import {
   isStatementOnlyCard,
   isValidISODate,
   isWithdrawalEntry,
+  localCurrencyOf,
   parseAmountInput,
   parseSignedAmountInput,
   resolveInstrument,
@@ -28,6 +29,7 @@ export function useEntryForm({
   creditCards = [],
   cardTransactions = [],
   currentCurrency = 'INR',
+  tripCurrencies = null,
   tripEntries = [],
   recentEntries = [],
   deviceName,
@@ -138,9 +140,27 @@ export function useEntryForm({
   const canSkipCard = Boolean(selectedCard) && !isStatementOnlyCard(selectedCard);
   const cardSkipped = canSkipCard && skipCardTracking;
 
-  // Cash purchases on a trip are priced from the ATM withdrawals, oldest first.
-  const tripWithdrawals = useMemo(() => tripEntries.filter(isWithdrawalEntry), [tripEntries]);
-  const otherCashEntries = useMemo(() => tripEntries.filter(isCashPaid), [tripEntries]);
+  // Which of the trip's currencies the local amount is in. Editing: what the entry has. Adding: what
+  // was picked, else what the last entry used, else the trip's main currency. Derived, like payer above.
+  const baseCurrencies = tripCurrencies && tripCurrencies.length ? tripCurrencies : [currentCurrency];
+  // An entry keeps its own currency even if the trip's list no longer has it.
+  const entryOwnCurrency = entry?.localCurrency;
+  const currencyOptions = entryOwnCurrency && !baseCurrencies.includes(entryOwnCurrency) ? [...baseCurrencies, entryOwnCurrency] : baseCurrencies;
+  const [currencyChoice, setLocalCurrency] = useState(entry ? localCurrencyOf(entry, currentCurrency) : null);
+  const localCurrency = [currencyChoice, isEdit ? null : lastEntry?.localCurrency].find((c) => c && currencyOptions.includes(c)) || currentCurrency;
+  // An ATM withdrawal's currency is the one its cash record was saved with - not editable here.
+  const currencyLocked = isEdit && isWithdrawalEntry(entry);
+
+  // Cash purchases on a trip are priced from the ATM withdrawals, oldest first - each currency is its
+  // own pool, so a purchase in one currency only ever draws on withdrawals in that same currency.
+  const tripWithdrawals = useMemo(
+    () => tripEntries.filter((e) => isWithdrawalEntry(e) && localCurrencyOf(e, currentCurrency) === localCurrency),
+    [tripEntries, localCurrency, currentCurrency],
+  );
+  const otherCashEntries = useMemo(
+    () => tripEntries.filter((e) => isCashPaid(e) && localCurrencyOf(e, currentCurrency) === localCurrency),
+    [tripEntries, localCurrency, currentCurrency],
+  );
   const entryId = entry?.id ?? null;
   const entryCreatedAt = entry?.createdAt ?? null;
   const fifoResult = useMemo(() => {
@@ -151,8 +171,8 @@ export function useEntryForm({
     return computeFifoCashAmount(tripWithdrawals, otherCashEntries, { id: entryId, date, createdAt: entryCreatedAt, localAmount: parsedLocal });
   }, [tripWithdrawals, otherCashEntries, date, localAmount, entryId, entryCreatedAt, isRefund]);
   const fifoBreakdownText = useMemo(
-    () => (fifoResult ? formatFifoBreakdownSummary(fifoResult.breakdown, currentCurrency) : ''),
-    [fifoResult, currentCurrency],
+    () => (fifoResult ? formatFifoBreakdownSummary(fifoResult.breakdown, localCurrency) : ''),
+    [fifoResult, localCurrency],
   );
   const amountLocked = isTravel && selectedInstrument?.type === 'cash' && fifoResult != null;
 
@@ -215,6 +235,7 @@ export function useEntryForm({
     amount, setAmount,
     refund, setRefund, isRefund, amountValue, localValue,
     localAmount, setLocalAmount,
+    localCurrency, setLocalCurrency, currencyOptions, currencyLocked,
     rewardPoints, setRewardPoints,
     payer, setPayer,
     paymentMethod, setPaymentMethod, handlePaymentMethodChange,

@@ -30,7 +30,8 @@
  * @property {string|null} [paymentMethod] - a payment instrument's label, or a bare method name for legacy entries
  * @property {string|null} [paymentInstrumentId]
  * @property {string|null} [paymentType] - the resolved instrument's type (see INSTRUMENT_TYPES)
- * @property {number|null} [localAmount] - travel-only, the amount in the trip's local currency
+ * @property {number|null} [localAmount] - travel-only, the amount in a local currency of the trip
+ * @property {string|null} [localCurrency] - travel-only, which currency localAmount is in; absent means the trip's main currency
  * @property {number|null} [rewardPoints] - travel-only
  * @property {boolean} [isRecurring] - created by a recurring rule, not typed in by hand
  * @property {string} [recurringRuleId] - which rule created this entry, when isRecurring is true
@@ -54,7 +55,8 @@
  * @typedef {Object} Trip
  * @property {string} [id]
  * @property {string} name
- * @property {string} currency - an ISO-ish currency code, e.g. 'INR', 'USD'
+ * @property {string} currency - the trip's main currency, an ISO-ish code e.g. 'INR', 'USD'
+ * @property {string[]} [otherCurrencies] - further currencies used on the trip (see getTripCurrencies)
  * @property {number} [year]
  * @property {string|null} [startDate] - YYYY-MM-DD
  * @property {string|null} [endDate] - YYYY-MM-DD
@@ -70,13 +72,14 @@
 
 /**
  * A row in the `cashMovements` collection - a trip's opening cash balance or
- * an ATM withdrawal, in the trip's local currency.
+ * an ATM withdrawal, in one of the trip's local currencies.
  * @typedef {Object} CashMovement
- * @property {string} [id] - an 'opening'-type doc's id is always `opening_${tripId}` (see setOpeningCash)
+ * @property {string} [id] - an 'opening'-type doc's id is `opening_${tripId}_${currency}` (older ones `opening_${tripId}`, see setOpeningCash)
  * @property {string|null} [tripId] - the owning Trip's id (P1-4). See Entry.tripId for the same legacy-fallback caveat.
  * @property {string} [tripName] - legacy join key, see Entry.tripName
  * @property {'opening'|'withdrawal'} type
- * @property {number} amount - in the trip's local currency
+ * @property {number} amount - in `currency`
+ * @property {string} [currency] - absent means the trip's main currency
  * @property {string} [date] - YYYY-MM-DD, withdrawal-type only
  * @property {*} [createdAt] - a Firestore Timestamp server-side, or an ISO string once read back
  */

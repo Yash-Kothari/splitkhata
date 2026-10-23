@@ -78,7 +78,7 @@ const EntryRow = memo(function EntryRow({
                   ) : null}
                   {isTravel && item.localAmount != null && (
                     <Text className="font-mono text-xs text-muted-text">
-                      ({formatCurrency(item.localAmount, currentCurrency)})
+                      ({formatCurrency(item.localAmount, item.localCurrency || currentCurrency)})
                     </Text>
                   )}
                   {hasPoints ? (
@@ -240,6 +240,7 @@ export default function EntryList({
   creditCards = [],
   cardTransactions = [],
   currentCurrency = 'INR',
+  tripCurrencies = null,
   pendingDeletes = {},
   onDelete,
   onSaveError,
@@ -415,6 +416,7 @@ export default function EntryList({
                   cardTransactions={cardTransactions}
                   ledger={ledger}
                   currentCurrency={currentCurrency}
+                  tripCurrencies={tripCurrencies}
                   tripEntries={isTravel ? entries : []}
                   onCancel={() => setEditingId(null)}
                   onSaved={() => setEditingId(null)}

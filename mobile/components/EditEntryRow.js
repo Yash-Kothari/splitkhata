@@ -34,6 +34,7 @@ export default function EditEntryRow({
   cardTransactions = [],
   ledger = 'household',
   currentCurrency = 'INR',
+  tripCurrencies = null,
   tripEntries = [],
   onCancel,
   onSaved,
@@ -50,6 +51,7 @@ export default function EditEntryRow({
     creditCards,
     cardTransactions,
     currentCurrency,
+    tripCurrencies,
     tripEntries,
   });
   const { amount, payer, category, splitType, owedBy, splitAmong, customShares, date, note, paymentMethod, selectedInstrument } = f;
@@ -169,6 +171,7 @@ export default function EditEntryRow({
           paymentType: selectedInstrument?.type || null,
           skipCardTracking: f.cardSkipped || null,
           localAmount: parsedLocal,
+          localCurrency: parsedLocal != null ? f.localCurrency : null,
           rewardPoints: parsedPoints,
           // Withdrawals are only created from Trip Settings; editing one keeps
           // it, and a stale flag on a cash-paid entry is dropped here.

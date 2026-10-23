@@ -14,7 +14,7 @@ import {
   deleteGuestFromDb,
   renameGuestInDb,
 } from '../lib/firebase';
-import { computeBudgetStatus, formatCurrency, groupByCategory, normalizeLedger, todayISO, parseAmountInput, isValidISODate, DEFAULT_CURRENCIES } from '../lib/utils';
+import { computeBudgetStatus, formatCurrency, getTripCurrencies, groupByCategory, localCurrencyOf, normalizeLedger, todayISO, parseAmountInput, isValidISODate, DEFAULT_CURRENCIES } from '../lib/utils';
 
 function Tag({ label, onRemove, onEdit, removable = true }) {
   return (
@@ -53,6 +53,7 @@ export default function TripSettings({
   dbGuests = [],
   guestRawDocs = [],
   currentCurrency,
+  cashMovements = [],
   onSaveError,
   onTripDeleted,
 }) {
@@ -68,6 +69,10 @@ export default function TripSettings({
   const [datesStart, setDatesStart] = useState('');
   const [datesEnd, setDatesEnd] = useState('');
   const [openingCash, setOpeningCash] = useState('');
+  // Which of the trip's currencies the starting cash / ATM withdrawal below is in (null = the main one).
+  const [openingCurrencyChoice, setOpeningCurrencyChoice] = useState(null);
+  const [withdrawalCurrencyChoice, setWithdrawalCurrencyChoice] = useState(null);
+  const [newCurrency, setNewCurrency] = useState('');
   const [withdrawalAmount, setWithdrawalAmount] = useState('');
   const [withdrawalInr, setWithdrawalInr] = useState('');
   const [withdrawalDate, setWithdrawalDate] = useState(todayISO());
@@ -106,6 +111,17 @@ export default function TripSettings({
   }, [withdrawalLabels]);
 
   const tripGuests = trip?.guests || [];
+  const tripCurrencies = getTripCurrencies(trip);
+  const mainCurrency = tripCurrencies[0];
+  const pickCurrency = (choice) => (choice && tripCurrencies.includes(choice) ? choice : mainCurrency);
+  const openingCurrency = pickCurrency(openingCurrencyChoice);
+  const withdrawalCurrency = pickCurrency(withdrawalCurrencyChoice);
+  const addableCurrencies = currencies.filter((c) => !tripCurrencies.includes(c));
+  // A currency can only be taken off the trip while nothing is in it.
+  const currencyInUse = (c) =>
+    (entries || []).some(
+      (e) => normalizeLedger(e.ledger) === 'travel' && (e.tripId ? e.tripId === trip?.id : e.tripName === trip?.name) && e.localAmount != null && localCurrencyOf(e, mainCurrency) === c,
+    ) || (cashMovements || []).some((m) => (m.tripId ? m.tripId === trip?.id : m.tripName === trip?.name) && localCurrencyOf(m, mainCurrency) === c);
 
   const tripCategoryTotals = useMemo(
     () =>
@@ -156,7 +172,30 @@ export default function TripSettings({
     if (!trip) return;
     setCurrencyDraft(nextCurrency);
     try {
-      await updateTripInDb(trip.id, { currency: nextCurrency });
+      await updateTripInDb(trip.id, { currency: nextCurrency, otherCurrencies: (trip.otherCurrencies || []).filter((c) => c !== nextCurrency) });
+    } catch (err) {
+      onSaveError?.(err);
+    }
+  }
+
+  async function handleAddCurrency(code) {
+    if (!trip || !code || tripCurrencies.includes(code)) return;
+    setNewCurrency('');
+    try {
+      await updateTripInDb(trip.id, { otherCurrencies: [...(trip.otherCurrencies || []), code] });
+    } catch (err) {
+      onSaveError?.(err);
+    }
+  }
+
+  async function handleRemoveCurrency(code) {
+    if (!trip) return;
+    if (currencyInUse(code)) {
+      notify(`${code} is in use`, `${code} has entries or cash records on this trip, so it can't be removed.`);
+      return;
+    }
+    try {
+      await updateTripInDb(trip.id, { otherCurrencies: (trip.otherCurrencies || []).filter((c) => c !== code) });
     } catch (err) {
       onSaveError?.(err);
     }
@@ -196,9 +235,9 @@ export default function TripSettings({
       return;
     }
     try {
-      await setOpeningCashInDb(trip.id, parsed);
+      await setOpeningCashInDb(trip.id, parsed, openingCurrency, mainCurrency);
       setOpeningCash('');
-      notify('Starting cash set', `Starting cash for this trip is now ${parsed.toLocaleString('en-IN')} ${currentCurrency || ''}.`.trim());
+      notify('Starting cash set', `Starting cash for this trip is now ${parsed.toLocaleString('en-IN')} ${openingCurrency || ''}.`.trim());
     } catch (err) {
       onSaveError?.(err);
     }
@@ -221,15 +260,16 @@ export default function TripSettings({
       return;
     }
     try {
-      await addWithdrawal({ tripId: trip.id, type: 'withdrawal', amount: parsedWithdrawal, date: withdrawalDate }, {
+      await addWithdrawal({ tripId: trip.id, type: 'withdrawal', amount: parsedWithdrawal, currency: withdrawalCurrency, date: withdrawalDate }, {
         amount: parsedInr,
         localAmount: parsedWithdrawal,
+        localCurrency: withdrawalCurrency,
         payer: withdrawalPayer,
         category: 'Misc',
         split: true,
         splitType: 'shared',
         owedBy: null,
-        note: `${currentCurrency || 'Local'} ATM Withdrawal`,
+        note: `${withdrawalCurrency || 'Local'} ATM Withdrawal`,
         date: withdrawalDate,
         ledger: 'travel',
         tripId: trip.id,
@@ -360,6 +400,24 @@ export default function TripSettings({
             </Text>
           </View>
 
+          <Text className={`${sectionTitle} mt-5`}>Other Currencies</Text>
+          <Text className="font-body text-2xs text-muted-text mb-2">
+            A trip that crosses borders can use more than one foreign currency. Add the extra ones here, then pick the
+            currency on each entry, starting cash and ATM withdrawal. Each currency keeps its own cash balance, and cash
+            in one never pays for purchases in another.
+          </Text>
+          <View className="flex-row flex-wrap">
+            {(trip.otherCurrencies || []).map((c) => (
+              <Tag key={c} label={c} onRemove={() => handleRemoveCurrency(c)} />
+            ))}
+            {(trip.otherCurrencies || []).length === 0 && (
+              <Text className="font-body text-xs text-muted-text mb-1.5">None - {mainCurrency} only.</Text>
+            )}
+          </View>
+          {addableCurrencies.length > 0 && (
+            <PickerField label="Add a currency" value={newCurrency || 'Select...'} options={addableCurrencies} onChange={handleAddCurrency} />
+          )}
+
           <Text className={`${sectionTitle} mt-5`}>Trip Dates</Text>
           <View className="flex-row flex-wrap" style={{ gap: 12 }}>
             <View className="w-full sm:w-[calc(50%-6px)]">
@@ -380,7 +438,12 @@ export default function TripSettings({
 
           <View className="border-t border-ink/10 pt-4 mt-5 mb-5">
             <Text className={sectionTitle}>Starting Cash</Text>
-            <Text className={fieldLabel}>Amount ({currentCurrency || 'Local'})</Text>
+            {tripCurrencies.length > 1 && (
+              <View className="mb-2">
+                <PickerField label="Currency" value={openingCurrency} options={tripCurrencies} onChange={setOpeningCurrencyChoice} />
+              </View>
+            )}
+            <Text className={fieldLabel}>Amount ({openingCurrency || 'Local'})</Text>
             <View className="flex-row items-center" style={{ gap: 12 }}>
               <TextInput
                 value={openingCash}
@@ -399,8 +462,13 @@ export default function TripSettings({
           <View className="border-t border-ink/10 pt-4 mb-5">
             <Text className={sectionTitle}>ATM Cash Withdrawal</Text>
             <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+              {tripCurrencies.length > 1 && (
+                <View className="w-full">
+                  <PickerField label="Currency" value={withdrawalCurrency} options={tripCurrencies} onChange={setWithdrawalCurrencyChoice} />
+                </View>
+              )}
               <View className="w-full sm:w-[calc(50%-6px)]">
-                <Text className={fieldLabel}>Amount withdrawn ({currentCurrency || 'Local'})</Text>
+                <Text className={fieldLabel}>Amount withdrawn ({withdrawalCurrency || 'Local'})</Text>
                 <TextInput
                   value={withdrawalAmount}
                   onChangeText={setWithdrawalAmount}

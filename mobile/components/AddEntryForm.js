@@ -50,9 +50,10 @@ export default function AddEntryForm({
   dbCategories,
   dbMembers = [],
   currentCurrency = 'INR',
+  tripCurrencies = null,
   instruments: instrumentsProp,
   tripEntries = [],
-  cashBalance = null,
+  cashBalances = null,
   creditCards = [],
   cardTransactions = [],
   recentEntries = [],
@@ -72,6 +73,7 @@ export default function AddEntryForm({
     creditCards,
     cardTransactions,
     currentCurrency,
+    tripCurrencies,
     tripEntries,
     recentEntries,
     deviceName,
@@ -368,6 +370,7 @@ export default function AddEntryForm({
         paymentInstrumentId: selectedInstrument?.id || null,
         paymentType: selectedInstrument?.type || null,
         localAmount: parsedLocal,
+        localCurrency: parsedLocal != null ? f.localCurrency : null,
         rewardPoints: parsedPoints,
         skipCardTracking: cardSkipped || null,
         deviceName: deviceName || payer,
@@ -400,13 +403,15 @@ export default function AddEntryForm({
     }
   }
 
+  // The cash left in the currency being entered (each currency is its own pool of cash).
+  const cashBalance = cashBalances ? cashBalances[f.localCurrency] ?? 0 : null;
   const cashHint =
     isTravel && cashBalance != null && selectedInstrument?.type === 'cash'
       ? (() => {
           const afterThis = cashBalance - (f.localValue || 0);
           return (
             <Text className={`font-mono-bold text-xs mt-2 ${afterThis < 0 ? 'text-stamp-red' : 'text-ledger-green'}`}>
-              💵 Cash left: {currentCurrency} {cashBalance.toFixed(2)}
+              💵 Cash left: {f.localCurrency} {cashBalance.toFixed(2)}
               {f.localValue ? ` → ${afterThis.toFixed(2)} after this` : ''}
             </Text>
           );

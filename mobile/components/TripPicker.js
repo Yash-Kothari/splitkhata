@@ -5,7 +5,7 @@ import Card from './Card';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import { addTripToDb } from '../lib/firebase';
-import { DEFAULT_CURRENCIES, sortTripsRecentFirst, isTripActive, todayISO, isValidISODate, computeTripCashStats } from '../lib/utils';
+import { DEFAULT_CURRENCIES, sortTripsRecentFirst, isTripActive, todayISO, isValidISODate, computeTripCashByCurrency, getTripCurrencies } from '../lib/utils';
 
 function currentYear() {
   return new Date().getFullYear();
@@ -51,10 +51,11 @@ export default function TripPicker({
 
   const selectedTripObj = trips.find((t) => t.id === selectedTripId);
 
-  const cashStats = useMemo(() => {
-    if (!selectedTripId) return { balance: 0, withdrawn: 0 };
-    const stats = computeTripCashStats(entries, cashMovements, selectedTripId, selectedTripObj?.name);
-    return { balance: stats.balance, withdrawn: stats.opening + stats.withdrawn };
+  // One cash pool per currency the trip handles; only currencies with any cash activity are listed.
+  const cashPools = useMemo(() => {
+    if (!selectedTripId) return [];
+    const pools = computeTripCashByCurrency(entries, cashMovements, selectedTripId, selectedTripObj?.name, selectedTripObj?.currency);
+    return pools.map((p) => ({ currency: p.currency, balance: p.balance, withdrawn: p.opening + p.withdrawn }));
   }, [cashMovements, entries, selectedTripId, selectedTripObj]);
 
   async function handleCreate() {
@@ -291,18 +292,24 @@ export default function TripPicker({
             </View>
             <View className="flex-1 rounded-lg bg-paper-card border border-ink/10 px-3.5 py-2.5">
               <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-muted-text">Currency</Text>
-              <Text className="font-body-semibold text-sm text-ink mt-0.5">{selectedTripObj.currency}</Text>
+              <Text className="font-body-semibold text-sm text-ink mt-0.5">{getTripCurrencies(selectedTripObj).join(' · ')}</Text>
             </View>
             <View className="flex-1 rounded-lg bg-paper-card border border-ink/10 px-3.5 py-2.5">
               <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-muted-text">Cash Balance</Text>
-              <Text className="font-mono-bold text-sm text-ink mt-0.5">
-                {cashStats.balance.toFixed(2)} {selectedTripObj.currency}
-              </Text>
-              {cashStats.withdrawn > 0 && (
-                <Text className="font-mono text-2xs text-muted-text mt-0.5">
-                  {cashStats.withdrawn.toFixed(2)} {selectedTripObj.currency} withdrawn
-                </Text>
-              )}
+              {cashPools
+                .filter((p, i) => i === 0 || p.balance !== 0 || p.withdrawn > 0)
+                .map((p) => (
+                  <View key={p.currency}>
+                    <Text className="font-mono-bold text-sm text-ink mt-0.5">
+                      {p.balance.toFixed(2)} {p.currency}
+                    </Text>
+                    {p.withdrawn > 0 && (
+                      <Text className="font-mono text-2xs text-muted-text mt-0.5">
+                        {p.withdrawn.toFixed(2)} {p.currency} withdrawn
+                      </Text>
+                    )}
+                  </View>
+                ))}
             </View>
           </View>
           <Pressable onPress={onOpenSettings} className="min-h-10 rounded-xl border border-ink/15 items-center justify-center">

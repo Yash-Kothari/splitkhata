@@ -101,7 +101,7 @@ export default function EntryFormFields({
 
         {isTravel ? (
           <View className={FIELD_HALF}>
-            <Text className={labelClass}>Local Amount ({currentCurrency})</Text>
+            <Text className={labelClass}>Local Amount ({f.localCurrency || currentCurrency})</Text>
             <TextInput
               value={f.localAmount}
               onChangeText={f.setLocalAmount}
@@ -109,6 +109,25 @@ export default function EntryFormFields({
               placeholder="Optional"
               className={monoInputClass}
             />
+            {f.currencyOptions && f.currencyOptions.length > 1 && !f.currencyLocked ? (
+              <View className="flex-row flex-wrap mt-1.5" style={{ gap: 6 }}>
+                {f.currencyOptions.map((c) => {
+                  const on = c === f.localCurrency;
+                  return (
+                    <Pressable
+                      key={c}
+                      onPress={() => f.setLocalCurrency(c)}
+                      hitSlop={4}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: on }}
+                      className={`px-2.5 py-1 rounded-md border ${on ? 'bg-ledger-green border-ledger-green' : 'bg-paper border-ink/15'}`}
+                    >
+                      <Text className={`font-body-semibold text-2xs ${on ? 'text-white' : 'text-muted-text'}`}>{c}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : null}
             {f.localAmountInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter an amount like 1200 or 1200.50</Text> : null}
           </View>
         ) : (

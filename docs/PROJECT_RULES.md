@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.13.0**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.14.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -369,6 +369,13 @@ local testing predicted.
   nothing), the category multiplier, each cap in the order it is checked, the statement limit and the grocery credit date;
   Axis lines explain their 1% / 3% pool, the ₹100 minimum and the statement-level 3% pool limit. SBI Cashback is
   statement-only for now, so it has none. Add `detail` to a new engine only if its lines depend on each other.
+- **A trip can use several foreign currencies.** `trip.currency` stays the main one; `trip.otherCurrencies` holds the
+  rest (`getTripCurrencies`). An entry's `localCurrency` and a cash record's `currency` say which one an amount is in;
+  absent means the main currency, so older data needs no migration. Each currency is its own pool of cash: opening cash
+  is stored per currency (`opening_${tripId}_${currency}`), ATM withdrawals only fund cash purchases in the same
+  currency (the FIFO in `useEntryForm` filters by currency), and cash balances are listed per currency
+  (`computeTripCashByCurrency`; `computeTripCashStats` is the main currency only). A currency can't be removed from a
+  trip while anything in it exists. Rupee totals, splits and balances never look at the local currency.
 - A statement-only card entered with the statement date falls inside the open cycle,
   which is why it's tracked per statement (paid/unpaid) and never as a "next statement".
 - An old "Cash withdrawal" checkbox once let ordinary cash purchases be flagged as

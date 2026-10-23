@@ -770,18 +770,53 @@ export function isCashPaid(entry) {
 // tripId is the real join key (P1-4); legacyTripName is a fallback for any
 // entry/cashMovement the backfill hasn't (yet, or couldn't confidently)
 // tag with a tripId.
-export function computeTripCashStats(entries, cashMovements, tripId, legacyTripName) {
+export function computeTripCashStats(entries, cashMovements, tripId, legacyTripName, primaryCurrency = '') {
+  const { opening, withdrawn, spent, balance } = computeTripCashByCurrency(entries, cashMovements, tripId, legacyTripName, primaryCurrency)[0];
+  return { opening, withdrawn, spent, balance };
+}
+
+// A trip can handle more than one foreign currency (a Malaysia + Singapore trip): its currencies are
+// the main one (`trip.currency`) plus `trip.otherCurrencies`, main first. A trip with no others is
+// exactly what it always was.
+export function getTripCurrencies(trip) {
+  const primary = trip?.currency || 'INR';
+  const extra = Array.isArray(trip?.otherCurrencies) ? trip.otherCurrencies : [];
+  return [primary, ...extra.filter((c, i) => c && c !== primary && extra.indexOf(c) === i)];
+}
+
+// The currency an entry's local amount (or a cash record's amount) is in. Anything saved before trips
+// had several currencies carries none, and means the trip's main currency.
+export function localCurrencyOf(item, primaryCurrency = '') {
+  return item?.localCurrency || item?.currency || primaryCurrency || '';
+}
+
+// Cash on hand, one row per currency: the main currency first (always, even with no activity), then
+// any other currency the trip has cash records or cash purchases in. Each currency is its own pool -
+// ATM withdrawals in one never fund purchases in another.
+export function computeTripCashByCurrency(entries, cashMovements, tripId, legacyTripName, primaryCurrency = '') {
   const matchesTrip = (x) => (x.tripId ? x.tripId === tripId : x.tripName === legacyTripName);
   const tripEntries = (entries || []).filter((e) => normalizeLedger(e.ledger) === 'travel' && matchesTrip(e));
   const tripMovements = (cashMovements || []).filter(matchesTrip);
-  const sumLocal = (list, field) => list.reduce((sum, x) => sum + toPaise(x[field]), 0) / 100;
-  const opening = sumLocal(tripMovements.filter((m) => m.type === 'opening'), 'amount');
+  const pools = new Map();
+  const pool = (currency) => {
+    if (!pools.has(currency)) pools.set(currency, { currency, openingP: 0, withdrawnP: 0, spentP: 0 });
+    return pools.get(currency);
+  };
+  pool(primaryCurrency);
+  for (const m of tripMovements.filter((x) => x.type === 'opening')) pool(localCurrencyOf(m, primaryCurrency)).openingP += toPaise(m.amount);
   const withdrawalEntries = tripEntries.filter(isWithdrawalEntry);
-  const withdrawn = withdrawalEntries.length
-    ? sumLocal(withdrawalEntries, 'localAmount')
-    : sumLocal(tripMovements.filter((m) => m.type === 'withdrawal'), 'amount');
-  const spent = sumLocal(tripEntries.filter(isCashPaid), 'localAmount');
-  return { opening, withdrawn, spent, balance: Math.round((opening + withdrawn - spent) * 100) / 100 };
+  if (withdrawalEntries.length) {
+    for (const e of withdrawalEntries) pool(localCurrencyOf(e, primaryCurrency)).withdrawnP += toPaise(e.localAmount);
+  } else {
+    for (const m of tripMovements.filter((x) => x.type === 'withdrawal')) pool(localCurrencyOf(m, primaryCurrency)).withdrawnP += toPaise(m.amount);
+  }
+  for (const e of tripEntries.filter(isCashPaid)) pool(localCurrencyOf(e, primaryCurrency)).spentP += toPaise(e.localAmount);
+  return [...pools.values()].map(({ currency, openingP, withdrawnP, spentP }) => {
+    const opening = openingP / 100;
+    const withdrawn = withdrawnP / 100;
+    const spent = spentP / 100;
+    return { currency, opening, withdrawn, spent, balance: Math.round((opening + withdrawn - spent) * 100) / 100 };
+  });
 }
 
 export function computeTripTotalSpend(entries, members = null) {
@@ -3293,6 +3328,7 @@ export function getLastEntryDefaults(entries) {
   }
   if (!best) return null;
   const defaults = { payer: best.e.payer, paymentMethod: best.e.paymentMethod || null };
+  if (best.e.localCurrency) defaults.localCurrency = best.e.localCurrency;
   if (bestShared) defaults.splitAmong = entrySplitAmong(bestShared.e);
   return defaults;
 }
@@ -4226,6 +4262,7 @@ export const LEDGER_CSV_COLUMNS = [
   'category',
   'amount',
   'localAmount',
+  'localCurrency',
   'payer',
   'splitType',
   'owedBy',

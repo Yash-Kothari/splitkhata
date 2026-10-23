@@ -18,7 +18,7 @@ import { useAuth } from '../../lib/AuthContext';
 import { useJump } from '../../lib/JumpContext';
 import { useUndoDelete } from '../../lib/useUndoDelete';
 import { usePaymentInstruments } from '../../lib/usePaymentInstruments';
-import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger, formatCurrency, memberForUser, pickDefaultTrip, computeTripCashStats } from '../../lib/utils';
+import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger, formatCurrency, memberForUser, pickDefaultTrip, computeTripCashByCurrency, getTripCurrencies } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import AppHeader from '../../components/AppHeader';
 import TripPicker from '../../components/TripPicker';
@@ -125,10 +125,13 @@ export default function Travel() {
 
   // Cash on the trip (local currency): shown in Trip Summary and, when
   // paying with cash, in Add Entry as what it will be after this entry.
-  const cashStats = useMemo(
-    () => (selectedTripObj ? computeTripCashStats(allTravelEntries || [], cashMovements, selectedTripObj.id, selectedTripObj.name) : null),
+  // Cash on hand, one pool per currency the trip handles (the main one first).
+  const cashByCurrency = useMemo(
+    () => (selectedTripObj ? computeTripCashByCurrency(allTravelEntries || [], cashMovements, selectedTripObj.id, selectedTripObj.name, selectedTripObj.currency) : []),
     [allTravelEntries, cashMovements, selectedTripObj],
   );
+  const cashBalances = useMemo(() => Object.fromEntries(cashByCurrency.map((c) => [c.currency, c.balance])), [cashByCurrency]);
+  const tripCurrencies = useMemo(() => getTripCurrencies(selectedTripObj), [selectedTripObj]);
 
   const activeMembersList = useMemo(
     () => (selectedTripObj?.guests?.length ? [...members, ...selectedTripObj.guests] : members),
@@ -216,8 +219,7 @@ export default function Travel() {
               tripName={selectedTripObj.name}
               tripId={selectedTripObj.id}
               tripRollup={tripRollup}
-              cashStats={cashStats}
-              cashCurrency={selectedTripObj.currency}
+              cashByCurrency={cashByCurrency}
               instruments={instruments}
             />
           )}
@@ -237,9 +239,10 @@ export default function Travel() {
                   dbCategories={categories}
                   dbMembers={activeMembersList}
                   currentCurrency={selectedTripObj.currency}
+                  tripCurrencies={tripCurrencies}
                   instruments={instruments}
                   tripEntries={tripEntries}
-                  cashBalance={cashStats?.balance ?? null}
+                  cashBalances={cashBalances}
                   creditCards={creditCards}
                   cardTransactions={cardTransactions}
                   recentEntries={tripEntries}
@@ -265,6 +268,7 @@ export default function Travel() {
                 creditCards={creditCards}
                 cardTransactions={cardTransactions}
                 currentCurrency={selectedTripObj.currency}
+                tripCurrencies={tripCurrencies}
                 highlightId={highlightEntryId}
                 pendingDeletes={pendingDeletes}
                 onDelete={handleDelete}
@@ -302,6 +306,8 @@ export default function Travel() {
         dbGuests={guests}
         guestRawDocs={guestRawDocs}
         currentCurrency={selectedTripObj?.currency}
+        cashMovements={cashMovements}
+        cashByCurrency={cashByCurrency}
         onTripDeleted={() => setSelectedTripId('')}
         onSaveError={(err) => reportError(err, 'Could not save')}
       />
