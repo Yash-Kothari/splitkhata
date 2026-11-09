@@ -74,6 +74,7 @@ import {
   getCardYearWindow,
   getCardAnniversaryMonth,
   getAnnualStartingSpend,
+  getQuarterStartingSpend,
   checkCustomSharesTotal,
   parseCustomShares,
   getUnlinkedCards,
@@ -1005,6 +1006,11 @@ export default function SettingsModal({ visible, onClose }) {
       renewalDate:
         card.renewalDate ||
         (card.annualMilestoneAnchorMonth ? getCardYearWindow(card, todayISO()).periodStart : ''),
+      // Opening balances for the CURRENT card year / quarter, so a wrong figure typed when the
+      // card was added can be amended in place (stored under that period's key on save).
+      annualStartingSpend: String(getAnnualStartingSpend(card, getCardYearWindow(card, todayISO()).periodStart) || ''),
+      quarterlyStartingSpend: String(getQuarterStartingSpend(card, getQuarterBounds(todayISO()).quarterStart) || ''),
+      startingRewardPoints: card.startingRewardPoints ? String(card.startingRewardPoints) : '',
     });
   }
   async function saveEditCard(cardId) {
@@ -1013,16 +1019,18 @@ export default function SettingsModal({ visible, onClose }) {
       // The card's year starts in its anniversary date's month; the old stored month follows it.
       const oldAnchorMonth = getCardAnniversaryMonth(card);
       const newAnchorMonth = editCardDrafts.renewalDate ? getCardAnniversaryMonth({ renewalDate: editCardDrafts.renewalDate }) : oldAnchorMonth;
-      // "Spend counted so far" is a one-time catch-up for the period the card was added in, set when adding
-      // the card. Moving the anniversary month moves that period, so carry its figure to the new one.
       const newBillingDay = Math.min(31, Math.max(1, Math.round(Number(editCardDrafts.billingCycleDay)) || 1));
-      const oldPeriodStart = getCardYearWindow(card, todayISO()).periodStart;
       const newPeriodStart = getCardYearWindow({ ...card, renewalDate: editCardDrafts.renewalDate || card?.renewalDate, annualMilestoneAnchorMonth: newAnchorMonth, billingCycleDay: newBillingDay }, todayISO()).periodStart;
+      // The draft already holds the figure for the card year being viewed (carried over if the
+      // anniversary month moved it), so store it under the new period's key. Any older key for the
+      // same year-month is dropped so there is only one figure for that card year.
       const annualStartingSpend = { ...(card?.annualStartingSpend || {}) };
-      // Same card year (same month): the lookup matches by month, nothing to move.
-      if (newPeriodStart.slice(0, 7) !== oldPeriodStart.slice(0, 7) && annualStartingSpend[newPeriodStart] == null) {
-        annualStartingSpend[newPeriodStart] = getAnnualStartingSpend(card, oldPeriodStart);
-      }
+      Object.keys(annualStartingSpend).forEach((k) => {
+        if (k !== newPeriodStart && k.slice(0, 7) === newPeriodStart.slice(0, 7)) delete annualStartingSpend[k];
+      });
+      annualStartingSpend[newPeriodStart] = Math.max(0, parseAmountInput(editCardDrafts.annualStartingSpend) || 0);
+      const hasQuarterly = !!CARD_STRATEGY_DEFAULTS[card?.rewardStrategy]?.quarterlyMilestoneTarget;
+      const isPoints = CARD_REWARD_STRATEGIES.find((s) => s.key === card?.rewardStrategy)?.unit === 'points';
       await updateCreditCardInDb(cardId, {
         billingCycleDay: Math.min(31, Math.max(1, Math.round(Number(editCardDrafts.billingCycleDay)) || 1)),
         dueDateOffsetDays: Math.max(0, Math.round(Number(editCardDrafts.dueDateOffsetDays)) || 0),
@@ -1030,6 +1038,10 @@ export default function SettingsModal({ visible, onClose }) {
         renewalDate: editCardDrafts.renewalDate || null,
         annualMilestoneAnchorMonth: newAnchorMonth,
         annualStartingSpend,
+        ...(hasQuarterly
+          ? { quarterlyStartingSpend: { ...(card?.quarterlyStartingSpend || {}), [getQuarterBounds(todayISO()).quarterStart]: Math.max(0, parseAmountInput(editCardDrafts.quarterlyStartingSpend) || 0) } }
+          : {}),
+        ...(isPoints ? { startingRewardPoints: Math.max(0, parseAmountInput(editCardDrafts.startingRewardPoints) || 0) } : {}),
       });
       setEditingCardId(null);
     } catch (err) {
@@ -1962,6 +1974,29 @@ export default function SettingsModal({ visible, onClose }) {
                           <Text className="font-body text-2xs text-muted-text mt-2">
                             The card year, the annual milestone and the fee year start in this date's month, on your statement day.
                           </Text>
+                          <Text className={`${sectionLabel} mt-3 pt-3 border-t border-ink/10`}>Opening Balances</Text>
+                          <Text className="font-body text-2xs text-muted-text mb-2">
+                            What was already counted before you started tracking this card here. Fix a figure you entered wrongly
+                            when adding the card - only the current card year / quarter can be amended.
+                          </Text>
+                          <View className="flex-row flex-wrap" style={{ gap: 8 }}>
+                            <View className="w-full sm:w-[calc(50%-4px)]">
+                              <Text className={label}>Spend Already Counted This Period (₹)</Text>
+                              <TextInput value={editCardDrafts.annualStartingSpend} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, annualStartingSpend: v }))} keyboardType="decimal-pad" placeholder="0" className={input} />
+                            </View>
+                            {CARD_STRATEGY_DEFAULTS[card.rewardStrategy]?.quarterlyMilestoneTarget ? (
+                              <View className="w-full sm:w-[calc(50%-4px)]">
+                                <Text className={label}>Spend Already Counted This Quarter (₹)</Text>
+                                <TextInput value={editCardDrafts.quarterlyStartingSpend} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, quarterlyStartingSpend: v }))} keyboardType="decimal-pad" placeholder="0" className={input} />
+                              </View>
+                            ) : null}
+                            {strategyMeta?.unit === 'points' ? (
+                              <View className="w-full sm:w-[calc(50%-4px)]">
+                                <Text className={label}>Starting Reward Points Balance</Text>
+                                <TextInput value={editCardDrafts.startingRewardPoints} onChangeText={(v) => setEditCardDrafts((p) => ({ ...p, startingRewardPoints: v }))} keyboardType="decimal-pad" placeholder="0" className={input} />
+                              </View>
+                            ) : null}
+                          </View>
                           <View className="flex-row gap-2 mt-3">
                             <Pressable onPress={() => saveEditCard(card.id)} className="px-3 py-2 rounded-lg bg-ledger-green">
                               <Text className="font-body-semibold text-xs text-white">Save</Text>

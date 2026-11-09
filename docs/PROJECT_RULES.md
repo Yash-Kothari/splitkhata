@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.14.1**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.15.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -319,7 +319,8 @@ local testing predicted.
 - **Card settings have one date, the Anniversary Date** (stored as `renewalDate`). Its month starts the card
   year, the annual milestone window and the fee year (`getCardAnniversaryMonth`); cards that only have the
   old "Annual Milestone from" month keep working through that fallback, and saving the card turns it into a
-  date. The one-time "spend counted so far" figures are set in Add Card only, never in Edit.
+  date. The "spend counted so far" figures (card year, quarter, starting points) are set in Add Card and can be
+  amended in Edit Card under Opening Balances - current card year / quarter only, stored under that period's key.
 - **A card's cycle starts the day after its statement date**: statement date 15th -> billing day 16 (Axis,
   confirmed: 16 Sep purchases are on its statement, 16 Oct ones are not). A cycle's end is therefore statement
   date + 1, and credit-timing offsets in `CARD_CREDIT_TIMING` are measured from it. HSBC Live+ is deliberately
