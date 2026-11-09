@@ -50,6 +50,9 @@ export default function BalanceStrip({
     () => (hasMultipleMembers ? computeSettlements(balanceEntries, ledger, dbMembers) : null),
     [hasMultipleMembers, balanceEntries, ledger, dbMembers],
   );
+  // Nothing owed: no Settle Up button (it is for paying off what is owed). With three or more people
+  // that is "no settlement lines"; with two it is a settled balance.
+  const nothingToSettle = hasMultipleMembers ? settlements.length === 0 : balance.status === 'settled';
   // Entries the maths had to leave out (someone not on this ledger, an
   // "owed" entry owed by its own payer...) - listed rather than silently
   // shifting who owes whom.
@@ -402,7 +405,7 @@ export default function BalanceStrip({
       {isTravel ? (
         hasMultipleMembers ? (
           <>
-            {!settling && (
+            {!settling && !nothingToSettle && (
               <Pressable onPress={startSettling} className="w-full sm:w-auto min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center">
                 <Text className="font-body-semibold text-xs text-white">Settle Up</Text>
               </Pressable>
@@ -435,7 +438,7 @@ export default function BalanceStrip({
           )
         )
       ) : (
-        !settling && (
+        !settling && !nothingToSettle && (
           <Pressable onPress={startSettling} className="w-full sm:w-auto min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center">
             <Text className="font-body-semibold text-xs text-white">Settle Up</Text>
           </Pressable>

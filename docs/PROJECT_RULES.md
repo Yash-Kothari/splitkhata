@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.14.0**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.14.1**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -376,6 +376,7 @@ local testing predicted.
   currency (the FIFO in `useEntryForm` filters by currency), and cash balances are listed per currency
   (`computeTripCashByCurrency`; `computeTripCashStats` is the main currency only). A currency can't be removed from a
   trip while anything in it exists. Rupee totals, splits and balances never look at the local currency.
+- **Settle Up only shows while something is owed** (household and trips with a guest): with a settled balance / no settlement lines the button is hidden, because it exists to pay off a balance. Two-person trips never had it (they use Add to Main Ledger).
 - A statement-only card entered with the statement date falls inside the open cycle,
   which is why it's tracked per statement (paid/unpaid) and never as a "next statement".
 - An old "Cash withdrawal" checkbox once let ordinary cash purchases be flagged as
