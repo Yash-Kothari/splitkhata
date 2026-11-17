@@ -72,9 +72,11 @@ export default function CardTransactionGroups({ card, cardTxns, shownTxns, searc
     ].sort((a, b) => b.date.localeCompare(a.date) || a.order - b.order);
     // Only the latest statement (or any, on a statement-only card) is shown as
     // unpaid - older ones you never ticked are history, not debts.
-    const unpaid = closed && !paid && (statementOnly || g.cycleStart === latestClosed);
-    const status = !closed ? (g.status === 'upcoming' ? 'Upcoming' : 'Not billed yet') : paid ? '✓ Paid' : unpaid ? 'Billed, unpaid' : 'Closed';
-    const statusClass = !closed ? 'text-muted-text' : paid ? 'text-ledger-green' : unpaid ? 'text-mustard' : 'text-muted-text';
+    // A statement the bank printed as a credit (a refund landed after it was generated) has nothing to pay.
+    const credit = closed && !statementOnly && record?.billConfirmedAt != null && billShown < 0;
+    const unpaid = closed && !paid && !credit && (statementOnly || g.cycleStart === latestClosed);
+    const status = !closed ? (g.status === 'upcoming' ? 'Upcoming' : 'Not billed yet') : paid ? '✓ Paid' : credit ? 'Credit balance' : unpaid ? 'Billed, unpaid' : 'Closed';
+    const statusClass = !closed ? 'text-muted-text' : paid || credit ? 'text-ledger-green' : unpaid ? 'text-mustard' : 'text-muted-text';
 
     return (
       <View key={g.cycleStart} className={index > 0 ? 'border-t border-ink/10' : ''}>

@@ -13,6 +13,7 @@ import {
   parseAmountInput,
   getRewardCreditDate,
   cycleLastDay,
+  toggleNegativeText,
 } from '../lib/utils';
 
 function formatReward(amount, unit) {
@@ -121,10 +122,20 @@ function BillingCycleRow({ card, cycle, transactions, cycleRecord, ledger, onSav
           {billConfirmed ? (
             <Text className={`text-xs mt-0.5 ${amountMismatch !== 0 ? 'font-mono-bold text-stamp-red' : 'font-mono text-ledger-green'}`}>
               Actual {formatCurrency(cycleRecord.actualBillAmount)}
+              {cycleRecord.actualBillAmount < 0 ? ' credit' : ''}
               {amountMismatch !== 0 ? ` (${amountMismatch > 0 ? '+' : ''}${formatCurrency(amountMismatch)})` : ''}
             </Text>
           ) : (
             <View className="flex-row gap-1.5 mt-1">
+              {/* A phone's decimal keypad has no minus key; a statement can be a credit (a refund landed after it was generated). */}
+              <Pressable
+                onPress={() => setBillDraft(toggleNegativeText)}
+                accessibilityRole="button"
+                accessibilityLabel="Credit balance (negative amount)"
+                className={`w-8 rounded-lg border items-center justify-center ${billDraft.trim().startsWith('-') ? 'bg-ledger-green border-ledger-green' : 'bg-paper border-ink/15'}`}
+              >
+                <Text className={`font-body-semibold text-sm ${billDraft.trim().startsWith('-') ? 'text-white' : 'text-muted-text'}`}>−</Text>
+              </Pressable>
               <TextInput
                 value={billDraft}
                 onChangeText={setBillDraft}

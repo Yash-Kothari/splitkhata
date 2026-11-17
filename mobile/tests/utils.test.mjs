@@ -4307,3 +4307,27 @@ test('a trip with no cash activity still lists its main currency, and entries wi
   assert.equal(computeTripCashByCurrency(legacy, [], 't', 'T', 'MYR').length, 1);
   assert.equal(getLastEntryDefaults([{ category: 'Food', payer: 'Yash', localCurrency: 'SGD', splitType: 'shared', date: '2026-10-01', createdAt: '2026-10-01T10:00:00Z' }]).localCurrency, 'SGD');
 });
+
+// --- A statement can be a credit (negative actual bill) ---------------------------------------------
+import { toggleNegativeText, computeCardBillSummary as billSummaryFor, parseAmountInput as parseAmt } from '../lib/utils.js';
+
+test('toggleNegativeText flips a typed amount to a credit and back (phone keypads have no minus)', () => {
+  assert.equal(toggleNegativeText('500'), '-500');
+  assert.equal(toggleNegativeText('-500'), '500');
+  assert.equal(toggleNegativeText(''), '-');
+  assert.equal(toggleNegativeText(' 12.5 '), '-12.5');
+  assert.equal(parseAmt(toggleNegativeText('1,250.50'), { allowNegative: true }), -1250.5, 'what the toggle makes parses as a credit');
+});
+
+test('a statement the bank printed as a credit is not listed as billed and unpaid', () => {
+  const card = { id: 'c1', name: 'Test', owner: 'Yash', rewardStrategy: 'sbi_two_channel_cashback', billingCycleDay: 1, dueDateOffsetDays: 20 };
+  const txns = [{ id: 't1', cardId: 'c1', date: '2026-10-05', amount: 1000, category: 'Dining', isOnline: true }];
+  const today = '2026-11-10';
+  const plain = billSummaryFor([card], txns, [], today);
+  assert.ok(plain.billedTotal > 0, 'unconfirmed statement is billed');
+  const cycles = [{ cardId: 'c1', cycleStart: '2026-10-01', billConfirmedAt: '2026-11-02T00:00:00Z', actualBillAmount: -250 }];
+  const credit = billSummaryFor([card], txns, cycles, today);
+  assert.equal(credit.billedTotal, 0, 'a confirmed credit statement has nothing to pay');
+  const normal = billSummaryFor([card], txns, [{ ...cycles[0], actualBillAmount: 1000 }], today);
+  assert.equal(normal.billedTotal, plain.billedTotal, 'a confirmed positive bill is unchanged');
+});

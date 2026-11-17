@@ -1244,6 +1244,13 @@ export function parseAmountInput(text, { allowNegative = false } = {}) {
   return Math.round(value * 100) / 100;
 }
 
+// Flips a typed amount between a plain figure and a negative one. A phone's decimal keypad has no minus key, so
+// fields that can be a credit (a statement's actual bill) get a button that calls this instead.
+export function toggleNegativeText(text) {
+  const t = String(text ?? '').trim();
+  return t.startsWith('-') ? t.slice(1).trim() : `-${t}`;
+}
+
 // An entry's amount as typed plus the "Refund / Reversal" box: a refund (money received) is stored as a
 // minus (an expense of -500 is 500 coming in), so balances, category totals and card refunds all
 // follow without special cases. A leading "-" typed by hand means the same as the switch. 0 stays 0.
@@ -2364,7 +2371,9 @@ export function computeCardBillSummary(cards, cardTransactions, cardBillingCycle
       if (dueCycle) {
         const amount = ledger.cycleBills[dueCycle.cycleStart]?.statement ?? 0;
         const record = findCycleRecord(cardBillingCycles, card.id, dueCycle.cycleStart);
-        if (amount > 0 && !record?.paidAt) {
+        // A statement the bank printed as a credit (a refund landed after it was generated) has nothing to pay.
+        const confirmedCredit = record?.billConfirmedAt != null && record.actualBillAmount != null && Number(record.actualBillAmount) <= 0;
+        if (amount > 0 && !record?.paidAt && !confirmedCredit) {
           const daysUntilDue = daysBetweenISO(today, dueCycle.dueDate);
           billed = { amount, dueDate: dueCycle.dueDate, daysUntilDue, overdue: daysUntilDue < 0 };
         }
