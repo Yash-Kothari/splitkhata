@@ -3,8 +3,9 @@ import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-nativ
 import Card from './Card';
 import DateField from './DateField';
 import CardStrategyFields from './CardStrategyFields';
+import ModeToggle from './ModeToggle';
 import { addCardTransaction } from '../lib/firebase';
-import { todayISO, CARD_REWARD_STRATEGIES, previewTransactionReward, formatCurrency, isStatementOnlyCard, isSavableCardTxnAmount, parseAmountInput, isValidISODate, defaultCardTxnFields, statementDateToCycleDate, parseRedeemedPoints } from '../lib/utils';
+import { todayISO, CARD_REWARD_STRATEGIES, previewTransactionReward, formatCurrency, isStatementOnlyCard, isSavableCardTxnAmount, parseAmountInput, isValidISODate, defaultCardTxnFields, statementDateToCycleDate, parseRedeemedPoints, buildPointsRedemptionTxn } from '../lib/utils';
 import { notify } from '../lib/dialogs';
 
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
@@ -12,20 +13,6 @@ const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3
 
 function formatReward(amount, unit) {
   return unit === 'points' ? `${Math.round(amount).toLocaleString('en-IN')} pts` : formatCurrency(amount);
-}
-
-// Purchase vs redeem, only on a points card (a cashback card has no points to spend).
-function ModeToggle({ mode, onChange }) {
-  const opts = [['purchase', 'Purchase'], ['redeem', 'Redeem points']];
-  return (
-    <View className="flex-row self-start rounded-xl border border-ink/15 bg-paper p-0.5 mb-3.5" style={{ gap: 2 }}>
-      {opts.map(([key, text]) => (
-        <Pressable key={key} onPress={() => onChange(key)} className={`px-3 py-1.5 rounded-lg ${mode === key ? 'bg-ledger-green' : ''}`} accessibilityRole="button" accessibilityState={{ selected: mode === key }}>
-          <Text className={`font-body-semibold text-xs ${mode === key ? 'text-white' : 'text-muted-text'}`}>{text}</Text>
-        </Pressable>
-      ))}
-    </View>
-  );
 }
 
 // RN port of web's AddCardTransactionForm (inside CardsManager.jsx).
@@ -88,19 +75,7 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
     }
     setSaving(true);
     try {
-      await addCardTransaction({
-        cardId: card.id,
-        amount: 0,
-        description: description.trim() || 'Points redeemed',
-        date,
-        category: effective.category ?? null,
-        channel: effective.channel ?? null,
-        isBonusEligible,
-        travelMultiplier: null,
-        pointsRedeemed: points,
-        isRedemption: true,
-        rewardOverride: null,
-      });
+      await addCardTransaction(buildPointsRedemptionTxn(card, { points, date, description: description.trim() }));
       setRedeemPoints('');
       setDescription('');
       setDate(todayISO());

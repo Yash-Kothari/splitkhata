@@ -29,6 +29,7 @@ import {
   getRecentCombinations,
   suggestFromNote,
   inferCardRewardFields,
+  buildPointsRedemptionTxn,
   resolveStrategyParamsForDate,
   formatCurrency,
   parseAmountInput,
@@ -257,6 +258,7 @@ export default function AddEntryForm({
       f.setRefund(false);
       f.setLocalAmount('');
       f.setRewardPoints('');
+      f.setRedeemChoice(false);
       f.setNote('');
       f.setTagsText('');
       f.setTravelMultiplier('');
@@ -290,7 +292,7 @@ export default function AddEntryForm({
     const tags = parseTagsInput(f.tagsText);
     const months = !isTravel && splitAcrossMonths ? Math.max(2, Math.min(36, Math.round(Number(monthsCount)) || 2)) : 1;
     const parsedLocal = isTravel && f.localAmount ? f.localValue : null;
-    const parsedPoints = isTravel && f.rewardPoints ? parseAmountInput(f.rewardPoints, { allowNegative: true }) : null;
+    const parsedPoints = f.redeeming ? f.redeemedPoints : isTravel && f.rewardPoints ? parseAmountInput(f.rewardPoints, { allowNegative: true }) : null;
     const effectiveSplitAmong =
       splitType === 'shared' && splitAmong.length > 0 && splitAmong.length < membersList.length ? splitAmong : null;
     const { cardSkipped, effectiveTravelMultiplier } = f;
@@ -373,6 +375,7 @@ export default function AddEntryForm({
         localAmount: parsedLocal,
         localCurrency: parsedLocal != null ? f.localCurrency : null,
         rewardPoints: parsedPoints,
+        paidWithPoints: f.redeeming || null,
         skipCardTracking: cardSkipped || null,
         deviceName: deviceName || payer,
       };
@@ -383,18 +386,21 @@ export default function AddEntryForm({
       // separate act of discipline in the Cards tab. A statement-only card
       // tracks just its statement amounts - copying every entry would double-count them.
       const linkedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
-      const matchedCard = isStatementOnlyCard(linkedCard) || parsed === 0 || cardSkipped ? null : linkedCard;
+      // Paid with points: the card gets a points-out record (never a purchase), even for a ₹0 entry.
+      const matchedCard = f.redeeming ? linkedCard : isStatementOnlyCard(linkedCard) || parsed === 0 || cardSkipped ? null : linkedCard;
       let cardTransaction = null;
       if (matchedCard) {
         try {
           const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, date);
-          cardTransaction = {
-            cardId: matchedCard.id,
-            amount: parsed,
-            date,
-            description: trimmedNote || category,
-            ...inferCardRewardFields(matchedCard, category, params, effectiveTravelMultiplier, { bookings: !isTravel }),
-          };
+          cardTransaction = f.redeeming
+            ? buildPointsRedemptionTxn(matchedCard, { points: parsedPoints, date, description: trimmedNote || category, category })
+            : {
+                cardId: matchedCard.id,
+                amount: parsed,
+                date,
+                description: trimmedNote || category,
+                ...inferCardRewardFields(matchedCard, category, params, effectiveTravelMultiplier, { bookings: !isTravel }),
+              };
         } catch (err) {
           // Working out the card side failed: still save the expense.
           reportError(err, 'Saved the entry, but could not link it to the card');
@@ -420,7 +426,7 @@ export default function AddEntryForm({
       : null;
 
   const cardHint =
-    rankedCards.length > 0
+    rankedCards.length > 0 && !f.redeeming
       ? (() => {
           // Caps are shown for the card actually being paid with (the top-ranked
           // one only when paying with cash/UPI), each labelled, and as they'd

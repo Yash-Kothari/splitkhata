@@ -1364,6 +1364,28 @@ export function isPointsRedemption(txn) {
   return txn?.isRedemption === true;
 }
 
+// A card that earns points rather than cashback (HDFC Diners, HSBC Premier) - the only kind with points
+// to redeem.
+export function isPointsCard(card) {
+  return CARD_REWARD_STRATEGIES.find((st) => st.key === card?.rewardStrategy)?.unit === 'points';
+}
+
+// The one place a points redemption's card record is built, so the Cards tab and a Travel entry paid
+// with points save exactly the same thing (a ₹0 line: no spend, no earning, no bill - only points out).
+export function buildPointsRedemptionTxn(card, { points, date, description, category = null }) {
+  const params = resolveStrategyParamsForDate(card?.strategyParamsHistory, date);
+  return {
+    cardId: card.id,
+    amount: 0,
+    date,
+    description: description || 'Points redeemed',
+    ...inferCardRewardFields(card, category, params, null, { bookings: false }),
+    pointsRedeemed: points,
+    isRedemption: true,
+    rewardOverride: null,
+  };
+}
+
 // Whole points, more than zero ("5,000" is fine); anything else is not a redemption.
 export function parseRedeemedPoints(text) {
   const n = parseAmountInput(text);

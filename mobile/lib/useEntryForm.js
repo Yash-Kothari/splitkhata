@@ -6,8 +6,10 @@ import {
   formatFifoBreakdownSummary,
   getLastEntryDefaults,
   isCashPaid,
+  isPointsCard,
   isStatementOnlyCard,
   isValidISODate,
+  parseRedeemedPoints,
   isWithdrawalEntry,
   localCurrencyOf,
   parseAmountInput,
@@ -133,12 +135,21 @@ export function useEntryForm({
   const effectiveTravelMultiplier = showTravelMultiplier ? travelMultiplier.trim() : '';
   const selectedCardId = selectedCard?.id;
 
+  // Paid with points instead of money: on a Travel entry whose payment method is a points card, the
+  // same Purchase | Redeem points choice the Cards tab has. A redemption writes a points-out record on
+  // the card (see buildPointsRedemptionTxn) and the entry's own Reward Points is that same number, so
+  // the trip, the Payments points balance and the card's points in account all agree.
+  const [redeemChoice, setRedeemChoice] = useState(entry?.paidWithPoints === true);
+  const canRedeem = isTravel && Boolean(selectedCard) && isPointsCard(selectedCard) && !isStatementOnlyCard(selectedCard);
+  const redeeming = canRedeem && redeemChoice;
+
   // A card whose statement is already closed (backdated entries): keep the
   // entry but don't add a transaction to that card, so its cycle totals and
   // rewards stay as they were. Only offered for a tracked card.
   const [skipCardTracking, setSkipCardTracking] = useState(Boolean(entry?.skipCardTracking));
   const canSkipCard = Boolean(selectedCard) && !isStatementOnlyCard(selectedCard);
-  const cardSkipped = canSkipCard && skipCardTracking;
+  // A redemption has no statement amount to leave out, so the skip never applies to it.
+  const cardSkipped = canSkipCard && skipCardTracking && !redeeming;
 
   // Which of the trip's currencies the local amount is in. Editing: what the entry has. Adding: what
   // was picked, else what the last entry used, else the trip's main currency. Derived, like payer above.
@@ -190,7 +201,9 @@ export function useEntryForm({
   // with reward points still gets logged (with its points).
   const amountInvalid = amount !== '' && amountValue == null;
   const localAmountInvalid = isTravel && localAmount !== '' && !(Math.abs(localValue || 0) > 0);
-  const pointsInvalid = hasPoints && rewardPoints !== '' && parseAmountInput(rewardPoints, { allowNegative: true }) == null;
+  // A redemption needs whole points above zero; otherwise points are optional and may be negative (earned).
+  const redeemedPoints = redeeming ? parseRedeemedPoints(rewardPoints) : null;
+  const pointsInvalid = redeeming ? redeemedPoints == null : hasPoints && rewardPoints !== '' && parseAmountInput(rewardPoints, { allowNegative: true }) == null;
   const dateInvalid = !isValidISODate(date);
   const inputInvalid = amountInvalid || localAmountInvalid || pointsInvalid || dateInvalid;
 
@@ -251,7 +264,8 @@ export function useEntryForm({
     tagsText, setTagsText,
     travelMultiplier, setTravelMultiplier, initialTravelMultiplier, wasBooking,
     selectedCard, selectedCardId, bookingKind, showTravelMultiplier, effectiveTravelMultiplier,
-    skipCardTracking, setSkipCardTracking, canSkipCard, cardSkipped,
+    skipCardTracking, setSkipCardTracking, canSkipCard: canSkipCard && !redeeming, cardSkipped,
+    canRedeem, redeeming, setRedeemChoice, redeemedPoints,
     fifoResult, fifoBreakdownText, amountLocked,
     moreOpen, setMoreToggle,
     amountInvalid, localAmountInvalid, pointsInvalid, dateInvalid, inputInvalid,

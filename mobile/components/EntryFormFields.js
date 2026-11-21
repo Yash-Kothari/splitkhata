@@ -1,4 +1,5 @@
 import { View, Text, TextInput, Pressable, Keyboard } from 'react-native';
+import ModeToggle from './ModeToggle';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import CustomSplitEditor from './CustomSplitEditor';
@@ -171,6 +172,30 @@ export default function EntryFormFields({
           />
         </View>
 
+        {f.canRedeem && (
+          <View className="w-full">
+            <ModeToggle mode={f.redeeming ? 'redeem' : 'purchase'} onChange={(m) => f.setRedeemChoice(m === 'redeem')} />
+          </View>
+        )}
+
+        {f.redeeming && (
+          <View className={FIELD_HALF}>
+            <Text className={labelClass}>Points redeemed</Text>
+            <TextInput
+              value={f.rewardPoints}
+              onChangeText={f.setRewardPoints}
+              keyboardType="number-pad"
+              placeholder="e.g. 5000"
+              className={monoInputClass}
+            />
+            <Text className={`font-body text-2xs mt-1 ${f.rewardPoints !== '' && f.pointsInvalid ? 'text-stamp-red' : 'text-muted-text'}`}>
+              {f.rewardPoints !== '' && f.pointsInvalid
+                ? 'Whole points, like 5000'
+                : `Comes off ${f.selectedCard?.name || 'the card'}'s points. The amount above is what it was worth.`}
+            </Text>
+          </View>
+        )}
+
         {f.showTravelMultiplier && (
           <View className={FIELD_HALF}>
             <Text className={labelClass}>
@@ -252,7 +277,7 @@ export default function EntryFormFields({
       {f.moreOpen && (
         <>
           <View className="flex-row flex-wrap mt-3" style={{ gap: 14 }}>
-            <View className={f.hasPoints ? FIELD_HALF : FIELD_FULL}>
+            <View className={f.hasPoints && !f.redeeming ? FIELD_HALF : FIELD_FULL}>
               <Text className={labelClass}>Tags (optional)</Text>
               <TextInput
                 value={f.tagsText}
@@ -263,7 +288,7 @@ export default function EntryFormFields({
                 className={inputClass}
               />
             </View>
-            {f.hasPoints && (
+            {f.hasPoints && !f.redeeming && (
               <View className={FIELD_HALF}>
                 <Text className={labelClass}>Reward Points</Text>
                 <TextInput

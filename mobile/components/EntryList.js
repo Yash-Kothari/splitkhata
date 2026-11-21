@@ -87,7 +87,7 @@ const EntryRow = memo(function EntryRow({
                         item.rewardPoints > 0 ? 'bg-mustard/20 text-mustard' : 'bg-ledger-green/15 text-ledger-green'
                       }`}
                     >
-                      💳 {item.rewardPoints > 0 ? `-${item.rewardPoints}` : `+${Math.abs(item.rewardPoints)}`} pts
+                      {item.paidWithPoints ? '🎟' : '💳'} {item.rewardPoints > 0 ? `-${item.rewardPoints}` : `+${Math.abs(item.rewardPoints)}`} pts{item.paidWithPoints ? ' redeemed' : ''}
                     </Text>
                   ) : null}
                 </View>

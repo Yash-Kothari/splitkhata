@@ -12,6 +12,7 @@ import { reportError } from '../lib/errorReporting';
 import {
   parseCustomShares,
   inferCardRewardFields,
+  buildPointsRedemptionTxn,
   isStatementOnlyCard,
   resolveInstrument,
   resolveStrategyParamsForDate,
@@ -68,10 +69,18 @@ export default function EditEntryRow({
     const oldTxnId = entry.cardTransactionId || null;
     const trackedCardId = (id) => (id && !isStatementOnlyCard(creditCards.find((c) => c.id === id)) ? id : null);
     const oldCardId = trackedCardId(resolveInstrument(f.instruments, entry)?.cardId || null);
-    // A ₹0 entry has no spend to earn on, so it carries no card transaction.
-    const newCardId = parsedAmount === 0 || f.cardSkipped ? null : trackedCardId(selectedInstrument?.cardId || null);
+    // A ₹0 entry has no spend to earn on, so it carries no card transaction - unless it was paid with
+    // points, which always leaves a points-out record on the card.
+    const redeeming = f.redeeming;
+    const wasRedemption = entry.paidWithPoints === true;
+    const newCardId = redeeming
+      ? trackedCardId(selectedInstrument?.cardId || null)
+      : parsedAmount === 0 || f.cardSkipped ? null : trackedCardId(selectedInstrument?.cardId || null);
     try {
-      if (oldTxnId && newCardId && oldCardId === newCardId) {
+      if (redeeming && oldTxnId && newCardId && oldCardId === newCardId && wasRedemption) {
+        return { kind: 'update', id: oldTxnId, updates: { pointsRedeemed: f.redeemedPoints, date, description: note.trim() || category } };
+      }
+      if (!redeeming && !wasRedemption && oldTxnId && newCardId && oldCardId === newCardId) {
         const updates = { amount: parsedAmount, date, description: note.trim() || category };
         // Re-infer the card transaction's reward fields only when this edit
         // actually changes what they should be: the multiplier box was changed
@@ -93,14 +102,16 @@ export default function EditEntryRow({
       let newData = null;
       if (newCardId) {
         const newCard = creditCards.find((c) => c.id === newCardId);
-        newData = {
-          cardId: newCardId,
-          amount: parsedAmount,
-          date,
-          description: note.trim() || category,
-          linkedEntryId: entry.id,
-          ...inferCardRewardFields(newCard, category, resolveStrategyParamsForDate(newCard?.strategyParamsHistory, date), f.effectiveTravelMultiplier, { bookings: !isTravel }),
-        };
+        newData = redeeming
+          ? { ...buildPointsRedemptionTxn(newCard, { points: f.redeemedPoints, date, description: note.trim() || category, category }), linkedEntryId: entry.id }
+          : {
+              cardId: newCardId,
+              amount: parsedAmount,
+              date,
+              description: note.trim() || category,
+              linkedEntryId: entry.id,
+              ...inferCardRewardFields(newCard, category, resolveStrategyParamsForDate(newCard?.strategyParamsHistory, date), f.effectiveTravelMultiplier, { bookings: !isTravel }),
+            };
       }
       return { kind: 'replace', oldId: oldTxnId, newData };
     } catch (err) {
@@ -131,7 +142,7 @@ export default function EditEntryRow({
       notify('Check the local amount', 'Enter an amount like 1200 or 1200.50, or leave it empty.');
       return;
     }
-    const parsedPoints = f.hasPoints && f.rewardPoints ? parseAmountInput(f.rewardPoints, { allowNegative: true }) : null;
+    const parsedPoints = f.redeeming ? f.redeemedPoints : f.hasPoints && f.rewardPoints ? parseAmountInput(f.rewardPoints, { allowNegative: true }) : null;
     if (f.hasPoints && f.rewardPoints && parsedPoints == null) {
       notify('Check the reward points', 'Enter points like 1500 or -250, or leave it empty.');
       return;
@@ -173,6 +184,7 @@ export default function EditEntryRow({
           localAmount: parsedLocal,
           localCurrency: parsedLocal != null ? f.localCurrency : null,
           rewardPoints: parsedPoints,
+          paidWithPoints: f.redeeming || null,
           // Withdrawals are only created from Trip Settings; editing one keeps
           // it, and a stale flag on a cash-paid entry is dropped here.
           isWithdrawal: isTravel && isWithdrawalEntry(entry),

@@ -4453,3 +4453,27 @@ test('redeemed points are whole numbers above zero', () => {
   assert.equal(parseRedeemedPoints(''), null);
   assert.equal(parseRedeemedPoints('abc'), null);
 });
+
+import { isPointsCard, buildPointsRedemptionTxn } from '../lib/utils.js';
+
+test('the redemption record is built one way for both the Cards tab and a Travel entry, and moves nothing but points', () => {
+  for (const key of ['hdfc_diners_slab_milestone', 'hsbc_premier_flat_capped']) {
+    const card = { id: 'c', billingCycleDay: 10, rewardStrategy: key, strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS[key] }] };
+    assert.equal(isPointsCard(card), true);
+    // Even a category that normally earns extra (flights/hotels) must not turn the redemption into a booking.
+    const txn = buildPointsRedemptionTxn(card, { points: 12000, date: '2026-09-20', description: 'Flight', category: 'Flights' });
+    assert.equal(txn.amount, 0);
+    assert.equal(txn.pointsRedeemed, 12000);
+    assert.equal(txn.isRedemption, true);
+    assert.equal(txn.travelMultiplier, undefined, 'never a portal booking');
+    assert.notEqual(txn.category, 'travel_bonus');
+    assert.notEqual(txn.category, 'smartbuy_hotel');
+    const real = { id: 'a', cardId: 'c', date: '2026-09-15', amount: 5030, category: 'regular' };
+    const base = computeCardRewardLedger(card, [real], '2026-10-20');
+    const after = computeCardRewardLedger(card, [real, { id: 'r', ...txn }], '2026-10-20');
+    assert.equal(after.total, base.total);
+    assert.equal(after.cycleBills[Object.keys(after.cycleBills)[0]].statement, 5030);
+  }
+  assert.equal(isPointsCard({ rewardStrategy: 'sbi_two_channel_cashback' }), false);
+  assert.equal(isPointsCard(null), false);
+});
