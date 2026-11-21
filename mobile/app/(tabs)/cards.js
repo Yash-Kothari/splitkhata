@@ -300,11 +300,6 @@ function CardsScreen() {
                   <Text className="font-mono-bold text-ledger-green text-2xl">
                     {formatReward(lifetimeRewardTotal, ledger.unit)}
                   </Text>
-                  {lifetimePointsRedeemed > 0 && (
-                    <Text className="font-body text-2xs text-muted-text">
-                      after {formatReward(lifetimePointsRedeemed, ledger.unit)} redeemed
-                    </Text>
-                  )}
                 </View>
                 )}
                 {!statementOnly && ledger.unit !== 'points' && (

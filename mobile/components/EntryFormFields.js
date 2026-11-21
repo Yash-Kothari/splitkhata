@@ -178,20 +178,22 @@ export default function EntryFormFields({
           </View>
         )}
 
-        {f.redeeming && (
+        {f.cardPointsMode && (
           <View className={FIELD_HALF}>
-            <Text className={labelClass}>Points redeemed</Text>
+            <Text className={labelClass}>{f.redeeming ? 'Points redeemed' : 'Points redeemed (optional)'}</Text>
             <TextInput
               value={f.rewardPoints}
               onChangeText={f.setRewardPoints}
               keyboardType="number-pad"
-              placeholder="e.g. 5000"
+              placeholder={f.redeeming ? 'e.g. 5000' : '0'}
               className={monoInputClass}
             />
             <Text className={`font-body text-2xs mt-1 ${f.rewardPoints !== '' && f.pointsInvalid ? 'text-stamp-red' : 'text-muted-text'}`}>
               {f.rewardPoints !== '' && f.pointsInvalid
                 ? 'Whole points, like 5000'
-                : `Comes off ${f.selectedCard?.name || 'the card'}'s points. The amount above is what it was worth.`}
+                : f.redeeming
+                  ? `Comes off ${f.selectedCard?.name || 'the card'}'s points. The amount above is what it was worth.`
+                  : `Part paid with points? Amount is the money part, e.g. ₹1,000 and 2,000 points.`}
             </Text>
           </View>
         )}
@@ -277,7 +279,7 @@ export default function EntryFormFields({
       {f.moreOpen && (
         <>
           <View className="flex-row flex-wrap mt-3" style={{ gap: 14 }}>
-            <View className={f.hasPoints && !f.redeeming ? FIELD_HALF : FIELD_FULL}>
+            <View className={f.hasPoints && !f.cardPointsMode ? FIELD_HALF : FIELD_FULL}>
               <Text className={labelClass}>Tags (optional)</Text>
               <TextInput
                 value={f.tagsText}
@@ -288,7 +290,7 @@ export default function EntryFormFields({
                 className={inputClass}
               />
             </View>
-            {f.hasPoints && !f.redeeming && (
+            {f.hasPoints && !f.cardPointsMode && (
               <View className={FIELD_HALF}>
                 <Text className={labelClass}>Reward Points</Text>
                 <TextInput

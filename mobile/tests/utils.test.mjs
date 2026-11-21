@@ -4477,3 +4477,23 @@ test('the redemption record is built one way for both the Cards tab and a Travel
   assert.equal(isPointsCard({ rewardStrategy: 'sbi_two_channel_cashback' }), false);
   assert.equal(isPointsCard(null), false);
 });
+
+test('a purchase can carry points redeemed too (₹1,000 and 2,000 points): it still earns on the money part, and the bill is the money part', () => {
+  for (const key of ['hdfc_diners_slab_milestone', 'hsbc_premier_flat_capped']) {
+    const card = { id: 'c', billingCycleDay: 10, rewardStrategy: key, strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS[key] }] };
+    const plain = { id: 'a', cardId: 'c', date: '2026-09-15', amount: 1000, category: 'regular' };
+    const mixed = { ...plain, pointsRedeemed: 2000 };
+    const base = computeCardRewardLedger(card, [plain], '2026-10-20');
+    const withPoints = computeCardRewardLedger(card, [mixed], '2026-10-20');
+    assert.equal(withPoints.total, base.total, `${key}: points spent do not change what the money part earns`);
+    assert.equal(withPoints.cycleBills[Object.keys(withPoints.cycleBills)[0]].statement, 1000, `${key}: the bill is the money part only`);
+  }
+});
+
+test('a ₹0 card line is savable with points redeemed (a redemption), but never on a statement-only card or with 0 points', () => {
+  assert.equal(isSavableCardTxnAmount(0, null, false, 5000), true);
+  assert.equal(isSavableCardTxnAmount(0, null, false, 0), false);
+  assert.equal(isSavableCardTxnAmount(0, null, false, null), false);
+  assert.equal(isSavableCardTxnAmount(0, null, true, 5000), false);
+  assert.equal(isSavableCardTxnAmount(1000, null, false, 2000), true, 'money plus points is just a purchase');
+});

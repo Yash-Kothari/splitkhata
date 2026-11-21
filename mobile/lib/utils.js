@@ -1350,10 +1350,11 @@ export function parseSignedAmountInput(text, received = false) {
 // Whether a card transaction's amount can be saved. ₹0 is allowed for exactly one purpose: a line that
 // carries only points / cashback (a bank bonus, a lump from spending before tracking began) - so it
 // needs a reward override typed in, and never applies to a statement-only card (no rewards there).
-export function isSavableCardTxnAmount(amount, rewardOverride, statementOnly = false) {
+export function isSavableCardTxnAmount(amount, rewardOverride, statementOnly = false, pointsRedeemed = null) {
   if (amount == null || !Number.isFinite(amount)) return false;
   if (amount !== 0) return true;
-  return !statementOnly && rewardOverride != null && Number.isFinite(rewardOverride);
+  // A ₹0 line stands for something that is not a purchase: a bonus (reward override) or points cashed in.
+  return !statementOnly && ((rewardOverride != null && Number.isFinite(rewardOverride)) || (pointsRedeemed != null && pointsRedeemed > 0));
 }
 
 // A standalone points redemption (points cashed in for a voucher, a statement credit or a miles

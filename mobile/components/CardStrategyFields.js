@@ -26,7 +26,7 @@ export default function CardStrategyFields({ card, draft, onChange, gap = 14 }) 
             label="Category"
             value={draft.category || 'regular'}
             options={dinersCategories.map((c) => ({ value: c.key, label: c.label }))}
-            onChange={(v) => onChange({ category: v, ...(v === 'smartbuy_hotel' ? {} : { travelMultiplier: null, pointsRedeemed: null }) })}
+            onChange={(v) => onChange({ category: v, ...(v === 'smartbuy_hotel' ? {} : { travelMultiplier: null }) })}
           />
         </View>
         {draft.category === 'smartbuy_hotel' && (
@@ -38,16 +38,6 @@ export default function CardStrategyFields({ card, draft, onChange, gap = 14 }) 
                 onChangeText={(v) => onChange({ travelMultiplier: v })}
                 keyboardType="decimal-pad"
                 placeholder={String(smartbuyCategory?.multiplier ?? 10)}
-                className={input}
-              />
-            </View>
-            <View className={halfWidth}>
-              <Text className={label}>Points Redeemed (Optional)</Text>
-              <TextInput
-                value={String(draft.pointsRedeemed ?? '')}
-                onChangeText={(v) => onChange({ pointsRedeemed: v })}
-                keyboardType="decimal-pad"
-                placeholder="0"
                 className={input}
               />
             </View>
@@ -136,7 +126,7 @@ export default function CardStrategyFields({ card, draft, onChange, gap = 14 }) 
               { value: 'fuel_excluded', label: 'Fuel (Excluded)' },
               { value: 'travel_bonus', label: 'Travel with Points Booking (Multiplier)' },
             ]}
-            onChange={(v) => onChange({ category: v, ...(v === 'travel_bonus' ? {} : { travelMultiplier: null, pointsRedeemed: null }) })}
+            onChange={(v) => onChange({ category: v, ...(v === 'travel_bonus' ? {} : { travelMultiplier: null }) })}
           />
         </View>
         {draft.category === 'travel_bonus' && (
@@ -148,16 +138,6 @@ export default function CardStrategyFields({ card, draft, onChange, gap = 14 }) 
                 onChangeText={(v) => onChange({ travelMultiplier: v })}
                 keyboardType="decimal-pad"
                 placeholder="e.g. 6"
-                className={input}
-              />
-            </View>
-            <View className={halfWidth}>
-              <Text className={label}>Points Redeemed (Optional)</Text>
-              <TextInput
-                value={String(draft.pointsRedeemed ?? '')}
-                onChangeText={(v) => onChange({ pointsRedeemed: v })}
-                keyboardType="decimal-pad"
-                placeholder="0"
                 className={input}
               />
             </View>

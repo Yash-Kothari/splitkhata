@@ -3,9 +3,8 @@ import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-nativ
 import Card from './Card';
 import DateField from './DateField';
 import CardStrategyFields from './CardStrategyFields';
-import ModeToggle from './ModeToggle';
 import { addCardTransaction } from '../lib/firebase';
-import { todayISO, CARD_REWARD_STRATEGIES, previewTransactionReward, formatCurrency, isStatementOnlyCard, isSavableCardTxnAmount, parseAmountInput, isValidISODate, defaultCardTxnFields, statementDateToCycleDate, parseRedeemedPoints, buildPointsRedemptionTxn } from '../lib/utils';
+import { todayISO, CARD_REWARD_STRATEGIES, previewTransactionReward, formatCurrency, isStatementOnlyCard, isSavableCardTxnAmount, parseAmountInput, isValidISODate, defaultCardTxnFields, statementDateToCycleDate, parseRedeemedPoints, buildPointsRedemptionTxn, isPointsCard } from '../lib/utils';
 import { notify } from '../lib/dialogs';
 
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
@@ -26,9 +25,6 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
   const [draft, setDraft] = useState({});
   const [rewardOverride, setRewardOverride] = useState('');
   const [saving, setSaving] = useState(false);
-  // 'redeem' = points cashed in with no purchase (voucher, statement credit, miles transfer).
-  const [mode, setMode] = useState('purchase');
-  const [redeemPoints, setRedeemPoints] = useState('');
 
   function updateDraft(patch) {
     setDraft((prev) => ({ ...prev, ...patch }));
@@ -49,7 +45,11 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
   // `+ 0` turns a refund-signed zero (-0) back into a plain 0.
   const parsedAmount = isRefund && Number.isFinite(typedAmount) ? -Math.abs(typedAmount) + 0 : typedAmount;
   const overrideParsed = rewardOverride === '' ? null : parseAmountInput(rewardOverride, { allowNegative: true });
-  const canSubmit = isSavableCardTxnAmount(parsedAmount, overrideParsed, statementOnly);
+  // Points redeemed on this line (a points card only): with the money part of a purchase, or on their own.
+  const pointsRedeemed = isPointsCard(card) && !statementOnly ? parseRedeemedPoints(String(draft.pointsRedeemed ?? '')) : null;
+  const canSubmit = isSavableCardTxnAmount(parsedAmount, overrideParsed, statementOnly, pointsRedeemed);
+  // ₹0 and points, nothing else: points cashed in for a voucher, statement credit or miles transfer.
+  const isRedemption = parsedAmount === 0 && pointsRedeemed != null && overrideParsed == null;
   const preview = previewTransactionReward(card, cardTxns, {
     date: isValidISODate(date) ? date : null,
     amount: parsedAmount,
@@ -61,40 +61,17 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
   const calculatedReward = preview ? (preview.earned ?? preview.estimated ?? 0) : null;
   const rewardUnit = CARD_REWARD_STRATEGIES.find((s) => s.key === card.rewardStrategy)?.unit || 'inr';
 
-  const redeeming = mode === 'redeem' && rewardUnit === 'points' && !statementOnly;
-
-  async function handleRedeem() {
-    const points = parseRedeemedPoints(redeemPoints);
-    if (points == null) {
+  async function handleSubmit() {
+    const parsed = parsedAmount;
+    if (String(draft.pointsRedeemed ?? '').trim() !== '' && pointsRedeemed == null && isPointsCard(card) && !statementOnly) {
       notify('Check the points', 'Enter the whole number of points you redeemed, like 5000.');
       return;
     }
-    if (!isValidISODate(date)) {
-      notify('Check the date', 'Use the format YYYY-MM-DD.');
-      return;
-    }
-    setSaving(true);
-    try {
-      await addCardTransaction(buildPointsRedemptionTxn(card, { points, date, description: description.trim() }));
-      setRedeemPoints('');
-      setDescription('');
-      setDate(todayISO());
-      setMode('purchase');
-    } catch (err) {
-      onSaveError?.(err);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleSubmit() {
-    if (redeeming) return handleRedeem();
-    const parsed = parsedAmount;
     if (!canSubmit) {
       notify(
         'Check the amount',
         parsed === 0 && !statementOnly
-          ? 'A ₹0 line is for points only: type the points in the Override box, or enter an amount.'
+          ? 'A ₹0 line needs points: type the points redeemed, or the reward in the Override box, or enter an amount.'
           : 'Enter an amount like 1200 or 1,200.50.',
       );
       return;
@@ -110,6 +87,13 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
     }
     setSaving(true);
     try {
+      if (isRedemption) {
+        await addCardTransaction(buildPointsRedemptionTxn(card, { points: pointsRedeemed, date, description: description.trim() }));
+        setDescription('');
+        setDate(todayISO());
+        setDraft({});
+        return;
+      }
       await addCardTransaction({
         cardId: card.id,
         amount: parsed,
@@ -119,7 +103,7 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
         channel: effective.channel ?? null,
         isBonusEligible,
         travelMultiplier,
-        pointsRedeemed: hasTravelFields && draft.pointsRedeemed ? Number(draft.pointsRedeemed) : null,
+        pointsRedeemed,
         rewardOverride: overrideValue,
       });
       setAmount('');
@@ -144,41 +128,8 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
         </View>
       </Pressable>
 
-      {expanded && redeeming && (
+      {expanded && (
         <View className="mt-3">
-          <ModeToggle mode={mode} onChange={setMode} />
-          <View className="flex-row flex-wrap" style={{ gap: 14 }}>
-            <View className="w-full sm:w-[calc(50%-7px)]">
-              <Text className={label}>Points redeemed</Text>
-              <TextInput
-                value={redeemPoints}
-                onChangeText={setRedeemPoints}
-                keyboardType="number-pad"
-                placeholder="e.g. 5000"
-                className="font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper"
-              />
-            </View>
-            <View className="w-full sm:w-[calc(50%-7px)]">
-              <Text className={label}>Date</Text>
-              <DateField value={date} onChange={setDate} className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
-            </View>
-          </View>
-          <View className="mt-3.5">
-            <Text className={label}>What for? (optional)</Text>
-            <TextInput value={description} onChangeText={setDescription} placeholder="e.g. Amazon voucher, statement credit, miles transfer" className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
-            <Text className="font-body text-2xs text-muted-text mt-1">
-              Comes off the card's points in account. It earns nothing and adds no spend or bill.
-            </Text>
-          </View>
-          <Pressable onPress={handleSubmit} disabled={saving || parseRedeemedPoints(redeemPoints) == null} className={`mt-3.5 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && parseRedeemedPoints(redeemPoints) == null ? 'opacity-40' : ''}`}>
-            {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-white">Record Redemption</Text>}
-          </Pressable>
-        </View>
-      )}
-
-      {expanded && !redeeming && (
-        <View className="mt-3">
-          {!statementOnly && rewardUnit === 'points' && <ModeToggle mode={mode} onChange={setMode} />}
           <View className="flex-row flex-wrap" style={{ gap: 14 }}>
             <View className="w-full sm:w-[calc(50%-7px)]">
               <Text className={label}>{statementOnly ? 'Statement amount (₹)' : 'Amount (₹)'}</Text>
@@ -228,6 +179,22 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
             <CardStrategyFields card={card} draft={draft} onChange={updateDraft} gap={14} />
           </View>
 
+          {isPointsCard(card) && (
+            <View className="mt-3.5">
+              <Text className={label}>Points redeemed on this purchase (optional)</Text>
+              <TextInput
+                value={String(draft.pointsRedeemed ?? '')}
+                onChangeText={(v) => updateDraft({ pointsRedeemed: v })}
+                keyboardType="number-pad"
+                placeholder="0"
+                className={input}
+              />
+              <Text className="font-body text-2xs text-muted-text mt-1">
+                Part paid with points? Put the money part in Amount and the points here, e.g. ₹1,000 and 2,000 points. Points only (a voucher, statement credit or miles transfer)? Enter ₹0 as the amount.
+              </Text>
+            </View>
+          )}
+
           <View className="flex-row flex-wrap mt-3.5" style={{ gap: 14 }}>
             <View className="w-full sm:w-[calc(50%-7px)]">
               <Text className={label}>Calculated Reward</Text>
@@ -254,7 +221,7 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
           </>)}
 
           <Pressable onPress={handleSubmit} disabled={saving || !canSubmit} className={`mt-3.5 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && !canSubmit ? 'opacity-40' : ''}`}>
-            {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-white">{statementOnly ? 'Add Statement' : isRefund || parsedAmount < 0 ? 'Add Refund' : 'Add Transaction'}</Text>}
+            {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-white">{statementOnly ? 'Add Statement' : isRedemption ? 'Record Redemption' : isRefund || parsedAmount < 0 ? 'Add Refund' : 'Add Transaction'}</Text>}
           </Pressable>
         </View>
       )}

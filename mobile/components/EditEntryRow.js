@@ -71,7 +71,7 @@ export default function EditEntryRow({
     const oldCardId = trackedCardId(resolveInstrument(f.instruments, entry)?.cardId || null);
     // A ₹0 entry has no spend to earn on, so it carries no card transaction - unless it was paid with
     // points, which always leaves a points-out record on the card.
-    const redeeming = f.redeeming;
+    const redeeming = f.asRedemption;
     const wasRedemption = entry.paidWithPoints === true;
     const newCardId = redeeming
       ? trackedCardId(selectedInstrument?.cardId || null)
@@ -82,6 +82,8 @@ export default function EditEntryRow({
       }
       if (!redeeming && !wasRedemption && oldTxnId && newCardId && oldCardId === newCardId) {
         const updates = { amount: parsedAmount, date, description: note.trim() || category };
+        // Points spent alongside the money move with the entry (cleared when the field is emptied).
+        if (f.cardPointsMode) updates.pointsRedeemed = f.pointsValue > 0 ? f.pointsValue : null;
         // Re-infer the card transaction's reward fields only when this edit
         // actually changes what they should be: the multiplier box was changed
         // (including cleared), or the category changed on a transaction that
@@ -111,6 +113,7 @@ export default function EditEntryRow({
               description: note.trim() || category,
               linkedEntryId: entry.id,
               ...inferCardRewardFields(newCard, category, resolveStrategyParamsForDate(newCard?.strategyParamsHistory, date), f.effectiveTravelMultiplier, { bookings: !isTravel }),
+              ...(f.cardPointsMode && f.pointsValue > 0 ? { pointsRedeemed: f.pointsValue } : {}),
             };
       }
       return { kind: 'replace', oldId: oldTxnId, newData };
@@ -142,7 +145,7 @@ export default function EditEntryRow({
       notify('Check the local amount', 'Enter an amount like 1200 or 1200.50, or leave it empty.');
       return;
     }
-    const parsedPoints = f.redeeming ? f.redeemedPoints : f.hasPoints && f.rewardPoints ? parseAmountInput(f.rewardPoints, { allowNegative: true }) : null;
+    const parsedPoints = f.pointsValue;
     if (f.hasPoints && f.rewardPoints && parsedPoints == null) {
       notify('Check the reward points', 'Enter points like 1500 or -250, or leave it empty.');
       return;
@@ -184,7 +187,7 @@ export default function EditEntryRow({
           localAmount: parsedLocal,
           localCurrency: parsedLocal != null ? f.localCurrency : null,
           rewardPoints: parsedPoints,
-          paidWithPoints: f.redeeming || null,
+          paidWithPoints: f.asRedemption || null,
           // Withdrawals are only created from Trip Settings; editing one keeps
           // it, and a stale flag on a cash-paid entry is dropped here.
           isWithdrawal: isTravel && isWithdrawalEntry(entry),

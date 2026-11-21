@@ -63,7 +63,11 @@ export function useEntryForm({
   const isRefund = (refund || /^\s*-/.test(amount)) && entry?.splitType !== 'settlement';
   const amountValue = parseSignedAmountInput(amount, isRefund);
   const localValue = parseSignedAmountInput(localAmount, isRefund);
-  const [rewardPoints, setRewardPoints] = useState(entry?.rewardPoints != null ? String(entry.rewardPoints) : '');
+  // Points spent on a trip entry paid with a points card live on the card line too (see cardPointsMode
+  // below), so an entry whose own field is empty still starts from what its card line says.
+  const linkedPointsTxn = entry?.cardTransactionId ? cardTransactions.find((t) => t.id === entry.cardTransactionId) : null;
+  const startPoints = entry?.rewardPoints ?? (isTravel && linkedPointsTxn?.pointsRedeemed > 0 ? linkedPointsTxn.pointsRedeemed : null);
+  const [rewardPoints, setRewardPoints] = useState(startPoints != null ? String(startPoints) : '');
 
   // Who paid and how. Editing: what the entry has. Adding: what the user picked,
   // else what the last entry on this ledger used (a stretch of entries on one
@@ -142,6 +146,10 @@ export function useEntryForm({
   const [redeemChoice, setRedeemChoice] = useState(entry?.paidWithPoints === true);
   const canRedeem = isTravel && Boolean(selectedCard) && isPointsCard(selectedCard) && !isStatementOnlyCard(selectedCard);
   const redeeming = canRedeem && redeemChoice;
+  // On a points card the Points field means "points redeemed on this" - on its own (Redeem points) or
+  // alongside the money part of a purchase (₹1,000 and 2,000 points). An old entry that holds a negative
+  // number (points earned, typed by hand) keeps the plain Reward Points field instead.
+  const cardPointsMode = canRedeem && !(parseAmountInput(rewardPoints, { allowNegative: true }) < 0);
 
   // A card whose statement is already closed (backdated entries): keep the
   // entry but don't add a transaction to that card, so its cycle totals and
@@ -202,8 +210,15 @@ export function useEntryForm({
   const amountInvalid = amount !== '' && amountValue == null;
   const localAmountInvalid = isTravel && localAmount !== '' && !(Math.abs(localValue || 0) > 0);
   // A redemption needs whole points above zero; otherwise points are optional and may be negative (earned).
-  const redeemedPoints = redeeming ? parseRedeemedPoints(rewardPoints) : null;
-  const pointsInvalid = redeeming ? redeemedPoints == null : hasPoints && rewardPoints !== '' && parseAmountInput(rewardPoints, { allowNegative: true }) == null;
+  const redeemedPoints = cardPointsMode ? parseRedeemedPoints(rewardPoints) : null;
+  const pointsInvalid = cardPointsMode
+    ? redeeming ? redeemedPoints == null : rewardPoints.trim() !== '' && redeemedPoints == null
+    : hasPoints && rewardPoints !== '' && parseAmountInput(rewardPoints, { allowNegative: true }) == null;
+  // What gets saved as the entry's points: whole points redeemed on a points card, else the manual field.
+  const pointsValue = cardPointsMode ? redeemedPoints : hasPoints && rewardPoints.trim() ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
+  // Nothing charged to the card and points redeemed: that is a pure redemption, whether or not the
+  // Redeem points toggle was used - it still leaves a points-out line on the card.
+  const asRedemption = canRedeem && (redeeming || (redeemedPoints != null && amountValue === 0));
   const dateInvalid = !isValidISODate(date);
   const inputInvalid = amountInvalid || localAmountInvalid || pointsInvalid || dateInvalid;
 
@@ -265,7 +280,7 @@ export function useEntryForm({
     travelMultiplier, setTravelMultiplier, initialTravelMultiplier, wasBooking,
     selectedCard, selectedCardId, bookingKind, showTravelMultiplier, effectiveTravelMultiplier,
     skipCardTracking, setSkipCardTracking, canSkipCard: canSkipCard && !redeeming, cardSkipped,
-    canRedeem, redeeming, setRedeemChoice, redeemedPoints,
+    canRedeem, redeeming, asRedemption, cardPointsMode, setRedeemChoice, redeemedPoints, pointsValue,
     fifoResult, fifoBreakdownText, amountLocked,
     moreOpen, setMoreToggle,
     amountInvalid, localAmountInvalid, pointsInvalid, dateInvalid, inputInvalid,

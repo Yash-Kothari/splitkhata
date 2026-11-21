@@ -3,7 +3,7 @@ import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-nativ
 import CardStrategyFields from './CardStrategyFields';
 import DateField from './DateField';
 import { updateCardTransaction } from '../lib/firebase';
-import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward, isStatementOnlyCard, isSavableCardTxnAmount, parseAmountInput, isValidISODate, defaultCardTxnFields, describeRewardCalculation, isPointsRedemption, parseRedeemedPoints } from '../lib/utils';
+import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward, isStatementOnlyCard, isSavableCardTxnAmount, parseAmountInput, isValidISODate, defaultCardTxnFields, describeRewardCalculation, isPointsRedemption, parseRedeemedPoints, isPointsCard } from '../lib/utils';
 import { notify } from '../lib/dialogs';
 import { reportError } from '../lib/errorReporting';
 
@@ -126,11 +126,16 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
   async function handleSave() {
     const amountValue = parseAmountInput(draftAmount, { allowNegative: true });
     const overrideValue = draftRewardOverride === '' ? null : parseAmountInput(draftRewardOverride, { allowNegative: true });
-    if (!isSavableCardTxnAmount(amountValue, overrideValue, statementOnly)) {
+    const pointsOut = isPointsCard(card) && !statementOnly ? parseRedeemedPoints(String(draft.pointsRedeemed ?? '')) : null;
+    if (String(draft.pointsRedeemed ?? '').trim() !== '' && isPointsCard(card) && !statementOnly && pointsOut == null) {
+      notify('Check the points', 'Enter the whole number of points you redeemed, like 5000.');
+      return;
+    }
+    if (!isSavableCardTxnAmount(amountValue, overrideValue, statementOnly, pointsOut)) {
       notify(
         'Check the amount',
         amountValue === 0 && !statementOnly
-          ? 'A ₹0 line is for points only: type the points in the Override box, or enter an amount.'
+          ? 'A ₹0 line needs points: type the points redeemed, or the reward in the Override box, or enter an amount.'
           : 'Enter an amount like 1200 or 1,200.50.',
       );
       return;
@@ -153,7 +158,9 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
         channel: draft.channel ?? null,
         isBonusEligible: Boolean(draft.isBonusEligible),
         travelMultiplier: hasTravelFields && draft.travelMultiplier ? Number(draft.travelMultiplier) : null,
-        pointsRedeemed: hasTravelFields && draft.pointsRedeemed ? Number(draft.pointsRedeemed) : null,
+        pointsRedeemed: pointsOut,
+        // ₹0 and points only is a redemption (shown as one); anything else is an ordinary line.
+        isRedemption: amountValue === 0 && pointsOut != null && overrideValue == null ? true : null,
         rewardOverride: statementOnly ? null : overrideValue,
       });
       setEditing(false);
@@ -222,6 +229,19 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
         <View className="flex-row flex-wrap mt-3.5" style={{ gap: 12 }}>
           <CardStrategyFields card={card} draft={draft} onChange={updateDraft} gap={12} />
         </View>
+
+        {isPointsCard(card) && (
+          <View className="mt-3.5">
+            <Text className={label}>Points redeemed on this purchase (optional)</Text>
+            <TextInput
+              value={String(draft.pointsRedeemed ?? '')}
+              onChangeText={(v) => updateDraft({ pointsRedeemed: v })}
+              keyboardType="number-pad"
+              placeholder="0"
+              className={input}
+            />
+          </View>
+        )}
 
         {!statementOnly && (
         <View className="flex-row flex-wrap mt-3.5" style={{ gap: 12 }}>
