@@ -1,3 +1,5 @@
+import { Redirect } from 'expo-router';
+import { FEATURES } from '../../lib/edition';
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
 import { notify } from '../../lib/dialogs';
@@ -221,7 +223,7 @@ function RewardPointsCardBody({ entries, travelEntries, dbMembers, onSaveError }
   );
 }
 
-export default function Payments() {
+function PaymentsScreen() {
   const [entries, setEntries] = useState(null);
   const [travelEntries, setTravelEntries] = useState([]);
   const [members, setMembers] = useState(DEFAULT_PERSONS);
@@ -306,4 +308,11 @@ export default function Payments() {
       />
     </View>
   );
+}
+
+// Not part of every edition (see lib/edition.js): where this screen is switched off, anyone who lands on its
+// URL goes to Household, and none of its data subscriptions ever start.
+export default function Payments() {
+  if (!FEATURES.payments) return <Redirect href="/household" />;
+  return <PaymentsScreen />;
 }

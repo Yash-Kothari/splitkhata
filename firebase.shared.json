@@ -1,0 +1,16 @@
+{
+  "firestore": {
+    "rules": "firestore.shared.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "public": "mobile/dist-shared",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [{ "source": "**", "destination": "/index.html" }]
+  },
+  "emulators": {
+    "firestore": { "port": 8090 },
+    "auth": { "port": 9199 },
+    "ui": { "enabled": false }
+  }
+}

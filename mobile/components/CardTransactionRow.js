@@ -3,7 +3,7 @@ import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-nativ
 import CardStrategyFields from './CardStrategyFields';
 import DateField from './DateField';
 import { updateCardTransaction } from '../lib/firebase';
-import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward, isStatementOnlyCard, isSavableCardTxnAmount, parseAmountInput, isValidISODate, defaultCardTxnFields, describeRewardCalculation } from '../lib/utils';
+import { formatCurrency, CARD_REWARD_STRATEGIES, previewTransactionReward, isStatementOnlyCard, isSavableCardTxnAmount, parseAmountInput, isValidISODate, defaultCardTxnFields, describeRewardCalculation, isPointsRedemption, parseRedeemedPoints } from '../lib/utils';
 import { notify } from '../lib/dialogs';
 import { reportError } from '../lib/errorReporting';
 
@@ -45,6 +45,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
   const [draftDescription, setDraftDescription] = useState(txn.description || txn.note || '');
   const [draft, setDraft] = useState(draftFromTxn);
   const [draftRewardOverride, setDraftRewardOverride] = useState(txn.rewardOverride != null ? String(txn.rewardOverride) : '');
+  const [draftPoints, setDraftPoints] = useState(txn.pointsRedeemed != null ? String(txn.pointsRedeemed) : '');
   const [saving, setSaving] = useState(false);
   const [showHow, setShowHow] = useState(false);
   const statementOnly = isStatementOnlyCard(card);
@@ -59,6 +60,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
     setDraftDescription(txn.description || txn.note || '');
     setDraft(draftFromTxn());
     setDraftRewardOverride(txn.rewardOverride != null ? String(txn.rewardOverride) : '');
+    setDraftPoints(txn.pointsRedeemed != null ? String(txn.pointsRedeemed) : '');
   }, [txn, editing]);
 
   function updateDraft(patch) {
@@ -72,7 +74,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
   // Live+ lines show what actually counts once the shared bonus limit is used up in date order (so the
   // pills add up to the statement), not the uncapped estimate.
   const aggregateValue = perTxn ? (perTxn.detail && perTxn.detail.counted != null ? perTxn.detail.counted : perTxn.detail && perTxn.detail.raw != null ? perTxn.detail.raw : perTxn.estimated) : 0;
-  const howLines = statementOnly ? [] : describeRewardCalculation(perTxn, cycleReward?.unit, isAggregate || cycleReward?.statement?.dualPool ? cycleReward?.statement : null);
+  const howLines = statementOnly || isPointsRedemption(txn) ? [] : describeRewardCalculation(perTxn, cycleReward?.unit, isAggregate || cycleReward?.statement?.dualPool ? cycleReward?.statement : null);
 
   const editPreview = editing
     ? previewTransactionReward(card, cardTxns, {
@@ -97,6 +99,27 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
       await updateCardTransaction(txn.id, { paidAt: txn.paidAt ? null : new Date().toISOString() });
     } catch (err) {
       reportError(err, 'Could not update the paid status');
+    }
+  }
+
+  async function handleSaveRedemption() {
+    const points = parseRedeemedPoints(draftPoints);
+    if (points == null) {
+      notify('Check the points', 'Enter the whole number of points you redeemed, like 5000.');
+      return;
+    }
+    if (!isValidISODate(draftDate)) {
+      notify('Check the date', 'Use the format YYYY-MM-DD.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateCardTransaction(txn.id, { pointsRedeemed: points, date: draftDate, description: draftDescription.trim() || 'Points redeemed' });
+      setEditing(false);
+    } catch (err) {
+      reportError(err, 'Could not save the redemption');
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -142,6 +165,35 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
   }
 
   const rowBorder = isLast ? '' : 'border-b border-ink/10';
+
+  if (editing && isPointsRedemption(txn)) {
+    return (
+      <View className={`py-3 ${rowBorder}`}>
+        <View className="flex-row flex-wrap" style={{ gap: 12 }}>
+          <View className="w-full sm:w-[calc(50%-6px)]">
+            <Text className={label}>Points redeemed</Text>
+            <TextInput value={draftPoints} onChangeText={setDraftPoints} keyboardType="number-pad" className="font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper" />
+          </View>
+          <View className="w-full sm:w-[calc(50%-6px)]">
+            <Text className={label}>Date</Text>
+            <DateField value={draftDate} onChange={setDraftDate} className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
+          </View>
+        </View>
+        <View className="mt-3.5">
+          <Text className={label}>What for? (optional)</Text>
+          <TextInput value={draftDescription} onChangeText={setDraftDescription} className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
+        </View>
+        <View className="flex-row gap-2 mt-3.5">
+          <Pressable onPress={handleSaveRedemption} disabled={saving} className="px-3 py-2 rounded-lg bg-ledger-green disabled:opacity-50">
+            {saving ? <ActivityIndicator color="white" size="small" /> : <Text className="font-body-semibold text-xs text-white">Save</Text>}
+          </Pressable>
+          <Pressable onPress={() => setEditing(false)} className="px-3 py-2 rounded-lg border border-ink/15">
+            <Text className="font-body-semibold text-xs text-muted-text">Cancel</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   if (editing) {
     return (
@@ -213,16 +265,20 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
       <View className="flex-1 min-w-0">
         <View className="flex-row items-baseline justify-between gap-2">
           <View className="flex-row items-baseline flex-wrap gap-1.5 flex-1">
-            <Text className={`font-mono-bold text-base ${txn.amount < 0 ? 'text-ledger-green' : 'text-ink'}`}>{formatCurrency(txn.amount)}</Text>
+            {isPointsRedemption(txn) ? (
+              <Text className="font-mono-bold text-base text-mustard">🎟 Redeemed -{(txn.pointsRedeemed || 0).toLocaleString('en-IN')} pts</Text>
+            ) : (
+              <Text className={`font-mono-bold text-base ${txn.amount < 0 ? 'text-ledger-green' : 'text-ink'}`}>{formatCurrency(txn.amount)}</Text>
+            )}
             {txn.amount < 0 && !isStatementOnlyCard(card) && (
               <Text className="font-body-semibold text-2xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">Refund</Text>
             )}
-            {perTxn && perTxn.overridden && (
+            {!isPointsRedemption(txn) && perTxn && perTxn.overridden && (
               <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
                 💳 {formatReward(perTxn.earned, cycleReward.unit)} (edited)
               </Text>
             )}
-            {perTxn && !perTxn.overridden && !isAggregate && (
+            {!isPointsRedemption(txn) && perTxn && !perTxn.overridden && !isAggregate && (
               <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-ledger-green/15 text-ledger-green">
                 💳 {perTxn.earned >= 0 ? '+' : ''}{formatReward(perTxn.earned, cycleReward.unit)}
               </Text>
@@ -238,7 +294,7 @@ export default function CardTransactionRow({ txn, card, cardTxns, cycleReward, o
                 {txn.travelMultiplier ? ` ×${txn.travelMultiplier}` : txn.category === 'travel_bonus' ? ' (no multiplier - base points only)' : ''}
               </Text>
             )}
-            {txn.pointsRedeemed > 0 && (
+            {txn.pointsRedeemed > 0 && !isPointsRedemption(txn) && (
               <Text className="font-mono text-xs px-1.5 py-0.5 rounded bg-mustard/20 text-mustard">
                 🎟 -{txn.pointsRedeemed.toLocaleString('en-IN')} pts
               </Text>

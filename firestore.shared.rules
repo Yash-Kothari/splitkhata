@@ -1,0 +1,105 @@
+rules_version = '2';
+
+// Rules for the SHARED edition of Splitkhata (its own Firebase project - see docs/SHARED_EDITION.md).
+// Anyone with a verified Google account may sign in. All data lives under groups/{groupId}/... and is
+// readable and writable only by that group's members. A group is either a normal shared group
+// (kind 'group') or a hidden two-person ledger between two people (kind 'direct', id
+// direct~<emailA>~<emailB>, emails sorted). Membership is a list of lowercase verified emails on the
+// group document, so someone can be added before they have ever signed in. Anything not matched
+// below is denied. (The admin app's firestore.rules is a different file for a different project.)
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    function myEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function groupPath(gid) {
+      return /databases/$(database)/documents/groups/$(gid);
+    }
+
+    function isMember(gid) {
+      return signedIn() && myEmail() in get(groupPath(gid)).data.memberEmails;
+    }
+
+    // The id a direct ledger between these two emails must have (so nobody can squat on, or
+    // duplicate, someone else's).
+    function directId(emails) {
+      return 'direct~'
+        + (emails[0] < emails[1] ? emails[0] : emails[1])
+        + '~'
+        + (emails[0] < emails[1] ? emails[1] : emails[0]);
+    }
+
+    match /groups/{gid} {
+      // You can read (and list, filtered by your own email) the groups you belong to.
+      allow read: if signedIn() && myEmail() in resource.data.memberEmails;
+
+      // Anyone can start a group, as its owner and a member. Others can be named at creation
+      // (that is how a group or a direct ledger is started with someone), up to 20 people.
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['ownerUid', 'memberEmails', 'name', 'kind', 'createdAt'])
+        && request.resource.data.keys().hasAll(['ownerUid', 'memberEmails', 'name', 'kind', 'createdAt'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.name is string
+        && request.resource.data.name.size() >= 1
+        && request.resource.data.name.size() <= 80
+        && request.resource.data.memberEmails is list
+        && request.resource.data.memberEmails.size() >= 1
+        && request.resource.data.memberEmails.size() <= 20
+        && myEmail() in request.resource.data.memberEmails
+        && (
+          request.resource.data.kind == 'group'
+          || (
+            request.resource.data.kind == 'direct'
+            && request.resource.data.memberEmails.size() == 2
+            && gid == directId(request.resource.data.memberEmails)
+          )
+        );
+
+      // Members can add people. Only the owner renames the group or removes others; any non-owner
+      // can leave (remove only themselves). The owner can never be removed, ownership never moves,
+      // a group stays under 20 people and a direct ledger's two people never change.
+      allow update: if signedIn()
+        && myEmail() in resource.data.memberEmails
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.kind == resource.data.kind
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberEmails', 'name'])
+        && request.resource.data.memberEmails.size() <= 20
+        && (request.resource.data.name == resource.data.name || resource.data.ownerUid == request.auth.uid)
+        && (resource.data.kind == 'group' || request.resource.data.memberEmails == resource.data.memberEmails)
+        && (
+          // add people (any member)
+          request.resource.data.memberEmails.hasAll(resource.data.memberEmails)
+          // a non-owner leaves
+          || (
+            resource.data.ownerUid != request.auth.uid
+            && resource.data.memberEmails.hasAll(request.resource.data.memberEmails)
+            && !(myEmail() in request.resource.data.memberEmails)
+            && request.resource.data.memberEmails.size() == resource.data.memberEmails.size() - 1
+          )
+          // the owner removes someone else
+          || (
+            resource.data.ownerUid == request.auth.uid
+            && resource.data.memberEmails.hasAll(request.resource.data.memberEmails)
+            && myEmail() in request.resource.data.memberEmails
+          )
+        );
+
+      // No deleting groups.
+
+      // Everything inside the group (expenses, members, settings, ...). `{col}/{document=**}` needs
+      // at least one collection segment: a bare `{document=**}` also matches the group document
+      // itself in rules v2 and would let any member rewrite who is in the group.
+      match /{col}/{document=**} {
+        allow read, write: if isMember(gid);
+      }
+    }
+  }
+}

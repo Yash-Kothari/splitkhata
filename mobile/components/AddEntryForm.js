@@ -5,6 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import Card from './Card';
 import EntryFormFields from './EntryFormFields';
 import { useEntryForm } from '../lib/useEntryForm';
+import { FEATURES } from '../lib/edition';
 import { addExpenseWithCard, addExpensesBatch, generateStructured, extractReceiptFromImage } from '../lib/firebase';
 import { settleOrHandOff } from '../lib/saveHandoff';
 import { reportError } from '../lib/errorReporting';
@@ -528,7 +529,7 @@ export default function AddEntryForm({
           {/* Quick Add and receipt scan are occasional tools, not core to
               every entry - collapsed by default behind one affordance
               instead of always occupying the top of the form. */}
-          {!aiToolsOpen ? (
+          {!FEATURES.ai ? null : !aiToolsOpen ? (
             <Pressable
               onPress={() => setAiToolsOpen(true)}
               className="rounded-xl border border-ledger-green/20 bg-ledger-green/5 px-3.5 py-2.5 mb-3 flex-row items-center justify-center"
@@ -608,7 +609,7 @@ export default function AddEntryForm({
             members={membersList}
             currentCurrency={currentCurrency}
             categoryLabelExtra={
-              note.trim() ? (
+              FEATURES.ai && note.trim() ? (
                 <Pressable onPress={handleSuggestCategory} disabled={suggestingCategory} hitSlop={6}>
                   <Text className="font-body-semibold text-2xs text-ledger-green">
                     {suggestingCategory ? 'Suggesting...' : '✨ Suggest'}

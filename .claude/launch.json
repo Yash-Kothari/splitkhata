@@ -4,8 +4,79 @@
     {
       "name": "mobile-web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "mobile", "run", "web"],
+      "runtimeArgs": [
+        "--prefix",
+        "mobile",
+        "run",
+        "web"
+      ],
       "port": 8081
+    },
+    {
+      "name": "shared-alice",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "EXPO_PUBLIC_EDITION=shared",
+        "EXPO_PUBLIC_USE_FIRESTORE_EMULATOR=true",
+        "EXPO_PUBLIC_FIREBASE_API_KEY=fake-key",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID=demo-shared",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-shared.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_APP_ID=1:1:web:fake",
+        "EXPO_PUBLIC_DEV_TEST_EMAIL=alice@example.com",
+        "npm",
+        "--prefix",
+        "mobile",
+        "run",
+        "web",
+        "--",
+        "--port",
+        "8082"
+      ],
+      "port": 8082
+    },
+    {
+      "name": "shared-bob",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "EXPO_PUBLIC_EDITION=shared",
+        "EXPO_PUBLIC_USE_FIRESTORE_EMULATOR=true",
+        "EXPO_PUBLIC_FIREBASE_API_KEY=fake-key",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID=demo-shared",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-shared.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_APP_ID=1:1:web:fake",
+        "EXPO_PUBLIC_DEV_TEST_EMAIL=bob@example.com",
+        "npm",
+        "--prefix",
+        "mobile",
+        "run",
+        "web",
+        "--",
+        "--port",
+        "8083"
+      ],
+      "port": 8083
+    },
+    {
+      "name": "shared-carol",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "EXPO_PUBLIC_EDITION=shared",
+        "EXPO_PUBLIC_USE_FIRESTORE_EMULATOR=true",
+        "EXPO_PUBLIC_FIREBASE_API_KEY=fake-key",
+        "EXPO_PUBLIC_FIREBASE_PROJECT_ID=demo-shared",
+        "EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=demo-shared.firebaseapp.com",
+        "EXPO_PUBLIC_FIREBASE_APP_ID=1:1:web:fake",
+        "EXPO_PUBLIC_DEV_TEST_EMAIL=carol@example.com",
+        "npm",
+        "--prefix",
+        "mobile",
+        "run",
+        "web",
+        "--",
+        "--port",
+        "8084"
+      ],
+      "port": 8084
     }
   ]
 }

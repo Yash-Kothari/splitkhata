@@ -1,3 +1,4 @@
+import { FEATURES } from '../lib/edition';
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, Modal, ScrollView, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -58,12 +59,12 @@ export default function GlobalSearch({ visible, onClose: onCloseProp }) {
   }, [visible]);
 
   useEffect(() => {
-    if (!visible) return undefined;
+    if (!visible || !FEATURES.travel) return undefined;
     return subscribeToExpenses('travel', setTravelEntries, (err) => reportError(err, 'Could not load travel entries'));
   }, [visible]);
 
   useEffect(() => {
-    if (!visible) return undefined;
+    if (!visible || !FEATURES.travel) return undefined;
     return subscribeToTrips(setTrips, (err) => reportError(err, 'Could not load trips'));
   }, [visible]);
 

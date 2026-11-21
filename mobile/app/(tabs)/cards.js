@@ -1,3 +1,5 @@
+import { Redirect } from 'expo-router';
+import { FEATURES } from '../../lib/edition';
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView, Platform, KeyboardAvoidingView, useWindowDimensions } from 'react-native';
 import {
@@ -58,7 +60,7 @@ function ProgressBar({ pctUsed, invert = false }) {
 // RN port of web's CardsManager.jsx main export - self-contained screen
 // (unlike web, which receives these as props from App.jsx) since mobile
 // screens each own their own Firestore subscriptions.
-export default function Cards() {
+function CardsScreen() {
   const [creditCards, setCreditCards] = useState([]);
   const [cardTransactions, setCardTransactions] = useState([]);
   const [cardBillingCycles, setCardBillingCycles] = useState([]);
@@ -298,6 +300,11 @@ export default function Cards() {
                   <Text className="font-mono-bold text-ledger-green text-2xl">
                     {formatReward(lifetimeRewardTotal, ledger.unit)}
                   </Text>
+                  {lifetimePointsRedeemed > 0 && (
+                    <Text className="font-body text-2xs text-muted-text">
+                      after {formatReward(lifetimePointsRedeemed, ledger.unit)} redeemed
+                    </Text>
+                  )}
                 </View>
                 )}
                 {!statementOnly && ledger.unit !== 'points' && (
@@ -476,4 +483,11 @@ export default function Cards() {
       />
     </View>
   );
+}
+
+// Not part of every edition (see lib/edition.js): where this screen is switched off, anyone who lands on its
+// URL goes to Household, and none of its data subscriptions ever start.
+export default function Cards() {
+  if (!FEATURES.cards) return <Redirect href="/household" />;
+  return <CardsScreen />;
 }

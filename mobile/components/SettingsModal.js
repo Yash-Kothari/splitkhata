@@ -1,3 +1,7 @@
+import { FEATURES, IS_SHARED_EDITION } from '../lib/edition';
+import { useGroup } from '../lib/GroupContext';
+import { usePathname } from 'expo-router';
+import GroupPeople from './GroupPeople';
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, Modal, ScrollView, Switch, useWindowDimensions, Platform, KeyboardAvoidingView } from 'react-native';
 import { notify, confirmAsync } from '../lib/dialogs';
@@ -188,15 +192,30 @@ const TABS = [
 // especially on phone width - grouped into a short list of sections
 // instead. Purely navigational: each group just names which of the TABS
 // above it contains, none of those tabs' own content/logic changes.
-const TAB_GROUPS = [
+const ALL_TAB_GROUPS = [
   { key: 'ledger', label: 'Ledger', icon: '📒', description: 'Categories, Budgets, Recurring Bills, Reminders', tabs: ['categories', 'budgets', 'recurring', 'reminders'] },
   { key: 'payments', label: 'Payments & Cards', icon: '💳', description: 'Currencies, Payment Methods, Credit Cards', tabs: ['currencies', 'paymentMethods'] },
   { key: 'people', label: 'People', icon: '👥', description: 'Household Members', tabs: ['members'] },
   { key: 'data', label: 'Data & Backup', icon: '☁️', description: 'Sync Status & Export', tabs: ['database', 'export'] },
   { key: 'general', label: 'General', icon: '⚙️', description: 'Appearance & Security PIN', tabs: ['appearance', 'security'] },
 ];
+// The shared edition is Household only: no currencies / payment methods / credit cards (all travel & card features).
 const HOME_TAB = '__home__';
-const TAB_TO_GROUP = Object.fromEntries(TAB_GROUPS.flatMap((g) => g.tabs.map((t) => [t, g])));
+// Which settings tabs exist in this edition, and which of those edit a group's data (and so need one open).
+const TAB_ENABLED = { recurring: FEATURES.recurring, reminders: FEATURES.household, currencies: FEATURES.cards, paymentMethods: FEATURES.cards, security: FEATURES.pin };
+const GROUP_DATA_TABS = new Set(['categories', 'budgets', 'recurring', 'reminders', 'currencies', 'paymentMethods', 'members', 'database', 'export']);
+function settingsTabGroups(dataReady) {
+  return ALL_TAB_GROUPS
+    .map((g) => ({
+      ...g,
+      tabs: g.tabs.filter((t) => TAB_ENABLED[t] !== false && (dataReady || !GROUP_DATA_TABS.has(t))),
+      // The admin app keeps its original descriptions; the shared edition describes what is actually there.
+      ...(IS_SHARED_EDITION && g.key === 'ledger' ? { description: 'Categories & Budgets' } : {}),
+      ...(IS_SHARED_EDITION && g.key === 'people' ? { label: 'People', description: 'Who is in this group' } : {}),
+      ...(IS_SHARED_EDITION && g.key === 'general' ? { description: 'Appearance' } : {}),
+    }))
+    .filter((g) => g.tabs.length > 0);
+}
 
 function Tag({ label, onRemove, onEdit, removable = true, labelWeight = 'font-body-medium' }) {
   return (
@@ -231,6 +250,18 @@ const input = 'font-body text-sm text-ink border border-ink/15 rounded-xl px-3 p
 // 4 screens to thread half a dozen datasets down to it.
 export default function SettingsModal({ visible, onClose }) {
   const { height: windowHeight } = useWindowDimensions();
+  // Shared edition: Settings is about the open group (categories, people, export...) only while a group is
+  // open on the Groups tab; anywhere else it is just the app's own preferences.
+  const { activeGroup } = useGroup();
+  const pathname = usePathname();
+  const dataReady = !IS_SHARED_EDITION || (Boolean(activeGroup) && pathname.startsWith('/groups'));
+  const liveGroup = visible && dataReady;
+  const liveTravel = liveGroup && FEATURES.travel;
+  const liveReminders = liveGroup && FEATURES.household;
+  const liveRecurring = liveGroup && FEATURES.recurring;
+  const livePin = visible && FEATURES.pin;
+  const tabGroups = settingsTabGroups(dataReady);
+  const tabToGroup = Object.fromEntries(tabGroups.flatMap((g) => g.tabs.map((t) => [t, g])));
   const [activeTab, setActiveTab] = useState(HOME_TAB);
   // Land on the group picker every time Settings reopens, rather than
   // wherever the last session's activeTab happened to be - a predictable
@@ -271,23 +302,23 @@ export default function SettingsModal({ visible, onClose }) {
   const dbMembers = membersData.members;
   const dbPaymentMethods = paymentMethodsData.methods;
 
-  useEffect(() => (visible ? subscribeToExpenses('household', (data) => setHouseholdEntries(data), (err) => reportError(err, 'Could not load household entries')) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToExpenses('travel', (data) => setTravelEntries(data), (err) => reportError(err, 'Could not load travel entries')) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToCategories((data) => setCategories(data), (err) => reportError(err, 'Could not load categories')) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToCurrencies((data) => setCurrencies(data), (err) => reportError(err, 'Could not load currencies')) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToMembers((data) => setMembersData(data), (err) => reportError(err, 'Could not load members')) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToHouseholdBudgets(setHouseholdBudgetsState) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToOverallBudget(setOverallBudgetState) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToPaymentReminderConfig(setReminderConfigState) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToRecurringRules(setRecurringRules) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToPinConfig(setPinConfigState) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToTrips((data) => setDbTrips(data), (err) => reportError(err, 'Could not load trips')) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToCashMovements((data) => setCashMovements(data), (err) => reportError(err, 'Could not load cash movements')) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToCardTransactions((data) => setCardTransactions(data), (err) => reportError(err, 'Could not load card transactions')) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToCardBillingCycles((data) => setCardBillingCycles(data), (err) => reportError(err, 'Could not load billing cycles')) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToPaymentMethods((data) => setPaymentMethodsData(data), (err) => reportError(err, 'Could not load payment methods')) : undefined), [visible]);
-  useEffect(() => (visible ? subscribeToGuests((data) => setGuests(data.rawDocs), (err) => reportError(err, 'Could not load guests')) : undefined), [visible]);
+  useEffect(() => (liveGroup ? subscribeToExpenses('household', (data) => setHouseholdEntries(data), (err) => reportError(err, 'Could not load household entries')) : undefined), [liveGroup]);
+  useEffect(() => (liveTravel ? subscribeToExpenses('travel', (data) => setTravelEntries(data), (err) => reportError(err, 'Could not load travel entries')) : undefined), [liveTravel]);
+  useEffect(() => (liveGroup ? subscribeToCategories((data) => setCategories(data), (err) => reportError(err, 'Could not load categories')) : undefined), [liveGroup]);
+  useEffect(() => (liveTravel ? subscribeToCurrencies((data) => setCurrencies(data), (err) => reportError(err, 'Could not load currencies')) : undefined), [liveTravel]);
+  useEffect(() => (liveGroup ? subscribeToMembers((data) => setMembersData(data), (err) => reportError(err, 'Could not load members')) : undefined), [liveGroup]);
+  useEffect(() => (liveGroup ? subscribeToHouseholdBudgets(setHouseholdBudgetsState) : undefined), [liveGroup]);
+  useEffect(() => (liveGroup ? subscribeToOverallBudget(setOverallBudgetState) : undefined), [liveGroup]);
+  useEffect(() => (liveReminders ? subscribeToPaymentReminderConfig(setReminderConfigState) : undefined), [liveReminders]);
+  useEffect(() => (liveRecurring ? subscribeToRecurringRules(setRecurringRules) : undefined), [liveRecurring]);
+  useEffect(() => (livePin ? subscribeToPinConfig(setPinConfigState) : undefined), [livePin]);
+  useEffect(() => (liveTravel ? subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')) : undefined), [liveTravel]);
+  useEffect(() => (liveTravel ? subscribeToTrips((data) => setDbTrips(data), (err) => reportError(err, 'Could not load trips')) : undefined), [liveTravel]);
+  useEffect(() => (liveTravel ? subscribeToCashMovements((data) => setCashMovements(data), (err) => reportError(err, 'Could not load cash movements')) : undefined), [liveTravel]);
+  useEffect(() => (liveTravel ? subscribeToCardTransactions((data) => setCardTransactions(data), (err) => reportError(err, 'Could not load card transactions')) : undefined), [liveTravel]);
+  useEffect(() => (liveTravel ? subscribeToCardBillingCycles((data) => setCardBillingCycles(data), (err) => reportError(err, 'Could not load billing cycles')) : undefined), [liveTravel]);
+  useEffect(() => (liveTravel ? subscribeToPaymentMethods((data) => setPaymentMethodsData(data), (err) => reportError(err, 'Could not load payment methods')) : undefined), [liveTravel]);
+  useEffect(() => (liveTravel ? subscribeToGuests((data) => setGuests(data.rawDocs), (err) => reportError(err, 'Could not load guests')) : undefined), [liveTravel]);
 
   const cardNameById = useMemo(() => Object.fromEntries(creditCards.map((c) => [c.id, c.name || c.id])), [creditCards]);
 
@@ -1198,7 +1229,7 @@ export default function SettingsModal({ visible, onClose }) {
             <Pressable onPress={() => setActiveTab(HOME_TAB)} className="px-2 py-3 mr-1">
               <Text className="font-body-semibold text-xs text-muted-text">← All Settings</Text>
             </Pressable>
-            {(TAB_TO_GROUP[activeTab]?.tabs || [activeTab]).map((key) => {
+            {(tabToGroup[activeTab]?.tabs || [activeTab]).map((key) => {
               const t = TABS.find((tab) => tab.key === key);
               if (!t) return null;
               return (
@@ -1219,7 +1250,7 @@ export default function SettingsModal({ visible, onClose }) {
         <ScrollView className="flex-1" contentContainerStyle={{ padding: 16, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
           {activeTab === HOME_TAB && (
             <View className="flex-row flex-wrap" style={{ gap: 10 }}>
-              {TAB_GROUPS.map((g) => (
+              {tabGroups.map((g) => (
                 <Pressable
                   key={g.key}
                   onPress={() => setActiveTab(g.tabs[0])}
@@ -2145,6 +2176,9 @@ export default function SettingsModal({ visible, onClose }) {
 
           {activeTab === 'members' && (
             <View>
+              {IS_SHARED_EDITION ? <GroupPeople /> : null}
+              {!IS_SHARED_EDITION && (
+              <View>
               <Text className="font-body-semibold text-sm text-ink mb-0.5">Manage Members Database</Text>
               <Text className="font-body text-xs text-muted-text mb-3">Persons/Partners in your household ledger. Stored dynamically in database.</Text>
               <View className="flex-row gap-2 mb-3">
@@ -2190,6 +2224,8 @@ export default function SettingsModal({ visible, onClose }) {
                   ),
                 )}
               </View>
+              </View>
+              )}
             </View>
           )}
 

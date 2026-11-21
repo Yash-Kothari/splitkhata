@@ -4,7 +4,7 @@ import Card from './Card';
 import DateField from './DateField';
 import CardStrategyFields from './CardStrategyFields';
 import { addCardTransaction } from '../lib/firebase';
-import { todayISO, CARD_REWARD_STRATEGIES, previewTransactionReward, formatCurrency, isStatementOnlyCard, isSavableCardTxnAmount, parseAmountInput, isValidISODate, defaultCardTxnFields, statementDateToCycleDate } from '../lib/utils';
+import { todayISO, CARD_REWARD_STRATEGIES, previewTransactionReward, formatCurrency, isStatementOnlyCard, isSavableCardTxnAmount, parseAmountInput, isValidISODate, defaultCardTxnFields, statementDateToCycleDate, parseRedeemedPoints } from '../lib/utils';
 import { notify } from '../lib/dialogs';
 
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
@@ -12,6 +12,20 @@ const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3
 
 function formatReward(amount, unit) {
   return unit === 'points' ? `${Math.round(amount).toLocaleString('en-IN')} pts` : formatCurrency(amount);
+}
+
+// Purchase vs redeem, only on a points card (a cashback card has no points to spend).
+function ModeToggle({ mode, onChange }) {
+  const opts = [['purchase', 'Purchase'], ['redeem', 'Redeem points']];
+  return (
+    <View className="flex-row self-start rounded-xl border border-ink/15 bg-paper p-0.5 mb-3.5" style={{ gap: 2 }}>
+      {opts.map(([key, text]) => (
+        <Pressable key={key} onPress={() => onChange(key)} className={`px-3 py-1.5 rounded-lg ${mode === key ? 'bg-ledger-green' : ''}`} accessibilityRole="button" accessibilityState={{ selected: mode === key }}>
+          <Text className={`font-body-semibold text-xs ${mode === key ? 'text-white' : 'text-muted-text'}`}>{text}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
 }
 
 // RN port of web's AddCardTransactionForm (inside CardsManager.jsx).
@@ -25,6 +39,9 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
   const [draft, setDraft] = useState({});
   const [rewardOverride, setRewardOverride] = useState('');
   const [saving, setSaving] = useState(false);
+  // 'redeem' = points cashed in with no purchase (voucher, statement credit, miles transfer).
+  const [mode, setMode] = useState('purchase');
+  const [redeemPoints, setRedeemPoints] = useState('');
 
   function updateDraft(patch) {
     setDraft((prev) => ({ ...prev, ...patch }));
@@ -57,7 +74,46 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
   const calculatedReward = preview ? (preview.earned ?? preview.estimated ?? 0) : null;
   const rewardUnit = CARD_REWARD_STRATEGIES.find((s) => s.key === card.rewardStrategy)?.unit || 'inr';
 
+  const redeeming = mode === 'redeem' && rewardUnit === 'points' && !statementOnly;
+
+  async function handleRedeem() {
+    const points = parseRedeemedPoints(redeemPoints);
+    if (points == null) {
+      notify('Check the points', 'Enter the whole number of points you redeemed, like 5000.');
+      return;
+    }
+    if (!isValidISODate(date)) {
+      notify('Check the date', 'Use the format YYYY-MM-DD.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await addCardTransaction({
+        cardId: card.id,
+        amount: 0,
+        description: description.trim() || 'Points redeemed',
+        date,
+        category: effective.category ?? null,
+        channel: effective.channel ?? null,
+        isBonusEligible,
+        travelMultiplier: null,
+        pointsRedeemed: points,
+        isRedemption: true,
+        rewardOverride: null,
+      });
+      setRedeemPoints('');
+      setDescription('');
+      setDate(todayISO());
+      setMode('purchase');
+    } catch (err) {
+      onSaveError?.(err);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function handleSubmit() {
+    if (redeeming) return handleRedeem();
     const parsed = parsedAmount;
     if (!canSubmit) {
       notify(
@@ -113,8 +169,41 @@ export default function CardTransactionForm({ card, cardTxns, onSaveError }) {
         </View>
       </Pressable>
 
-      {expanded && (
+      {expanded && redeeming && (
         <View className="mt-3">
+          <ModeToggle mode={mode} onChange={setMode} />
+          <View className="flex-row flex-wrap" style={{ gap: 14 }}>
+            <View className="w-full sm:w-[calc(50%-7px)]">
+              <Text className={label}>Points redeemed</Text>
+              <TextInput
+                value={redeemPoints}
+                onChangeText={setRedeemPoints}
+                keyboardType="number-pad"
+                placeholder="e.g. 5000"
+                className="font-mono-bold text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper"
+              />
+            </View>
+            <View className="w-full sm:w-[calc(50%-7px)]">
+              <Text className={label}>Date</Text>
+              <DateField value={date} onChange={setDate} className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
+            </View>
+          </View>
+          <View className="mt-3.5">
+            <Text className={label}>What for? (optional)</Text>
+            <TextInput value={description} onChangeText={setDescription} placeholder="e.g. Amazon voucher, statement credit, miles transfer" className="font-body-medium text-sm text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper shadow-2xs" />
+            <Text className="font-body text-2xs text-muted-text mt-1">
+              Comes off the card's points in account. It earns nothing and adds no spend or bill.
+            </Text>
+          </View>
+          <Pressable onPress={handleSubmit} disabled={saving || parseRedeemedPoints(redeemPoints) == null} className={`mt-3.5 min-h-11 rounded-xl bg-ledger-green items-center justify-center ${!saving && parseRedeemedPoints(redeemPoints) == null ? 'opacity-40' : ''}`}>
+            {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-white">Record Redemption</Text>}
+          </Pressable>
+        </View>
+      )}
+
+      {expanded && !redeeming && (
+        <View className="mt-3">
+          {!statementOnly && rewardUnit === 'points' && <ModeToggle mode={mode} onChange={setMode} />}
           <View className="flex-row flex-wrap" style={{ gap: 14 }}>
             <View className="w-full sm:w-[calc(50%-7px)]">
               <Text className={label}>{statementOnly ? 'Statement amount (₹)' : 'Amount (₹)'}</Text>

@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.15.1**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.16.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -415,3 +415,19 @@ local testing predicted.
   still covers every match, and a jump-to-entry highlight floats to the top so it is always drawn.
 - GitHub's "AI Scan for PRs" is explicitly **disabled** on all repos
   (`gh api repos/Yash-Kothari/<repo>/code-scanning/ai-scan`).
+
+## Shared edition
+
+- A second build of the same code (`EXPO_PUBLIC_EDITION=shared`), Splitwise-style, for sharing with other people:
+  a **Personal** tab (net balance per person across everything) and a **Groups** tab, on its own Firebase project.
+  **The admin app is the default and must stay untouched** - unset edition = previous behaviour, enforced by guard
+  tests. Design, setup and limits: `docs/SHARED_EDITION.md`.
+- Every Firestore path goes through `col()` / `docAt()` in `lib/firebase.js` (never a raw `collection(dbInstance, 'x')`).
+  Rules for the shared project are `firestore.shared.rules`; after changing them or the group code run
+  `npm run test:shared-rules` against `firebase emulators:start --config firebase.shared.json`.
+- Rules v2 gotcha: a bare `{document=**}` also matches the parent document itself - use `/{col}/{document=**}` for
+  "everything inside".
+- Firestore gotcha: a listener inside a group started before the server has the group doc is rejected and dropped
+  for good - wait for `pending` to clear (see `subscribeToMyGroups`, `usePersonalBalances`).
+- People are identified across groups by **email**; entries still store the member's **name**, so the balance engine
+  is shared with the admin app. `computePairwiseDebts` / `computePersonalBalances` (lib/utils.js) add balances up.

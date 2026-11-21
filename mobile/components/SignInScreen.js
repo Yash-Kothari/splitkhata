@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, Platform } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import * as Google from 'expo-auth-session/providers/google';
+import { IS_SHARED_EDITION } from '../lib/edition';
 import { signInWithGoogleIdToken, signInWithGooglePopup, signInDevTestUser, IS_DEV_EMULATOR } from '../lib/firebase';
 import { themeColor } from '../lib/theme';
 import { shadowStyle } from '../lib/shadow';
@@ -87,7 +88,9 @@ export default function SignInScreen() {
       >
         <Text className="font-display text-3xl text-ink mb-2">Splitkhata</Text>
         <Text className="font-body text-sm text-muted-text text-center mb-6">
-          Sign in with an approved Google account to access the shared ledger.
+          {IS_SHARED_EDITION
+            ? 'Keep track of shared expenses. Sign in with your Google account - your data is private to you and the people you invite.'
+            : 'Sign in with an approved Google account to access the shared ledger.'}
         </Text>
 
         {IS_DEV_EMULATOR ? (

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Tabs, Redirect } from 'expo-router';
 import { View, Text, Platform, AppState, useWindowDimensions } from 'react-native';
 import { useColorScheme } from 'nativewind';
-import { subscribeToPinConfig, subscribeToRecurringRules, runRecurringGeneration } from '../../lib/firebase';
+import { subscribeToPinConfig, subscribeToRecurringRules, runRecurringGeneration, getTenant } from '../../lib/firebase';
 import { getMonthKey, todayISO, decideInitialLock, shouldRelockAfterBackground } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import { getJSON, setJSON } from '../../lib/deviceStore';
@@ -11,6 +11,7 @@ import { useLock } from '../../lib/LockContext';
 import { useAuth } from '../../lib/AuthContext';
 import PinLockScreen from '../../components/PinLockScreen';
 import AskQuestion from '../../components/AskQuestion';
+import { FEATURES, IS_SHARED_EDITION } from '../../lib/edition';
 import StartupWait from '../../components/StartupWait';
 
 // A plain color-change on the emoji (the old behavior) is subtle enough
@@ -34,7 +35,11 @@ function TabIcon({ emoji, focused }) {
   );
 }
 
-const PIN_LAST_KNOWN_KEY = 'splitkhata_pin_last_known';
+// Per household in the shared edition: two accounts on one browser must never read each other's lock state.
+// (The admin edition keeps its original single key, so an existing device keeps working.)
+function pinLastKnownKey() {
+  return IS_SHARED_EDITION ? `splitkhata_pin_last_known_${getTenant()}` : 'splitkhata_pin_last_known';
+}
 
 // Gates the tabs (i.e. everything past sign-in) behind PinLockScreen when a
 // PIN is configured - matches web's App.jsx, which locks by default on
@@ -52,6 +57,12 @@ const PIN_LAST_KNOWN_KEY = 'splitkhata_pin_last_known';
 // the wiring: deviceStore remembers the last config this device actually
 // confirmed, across relaunches, for the offline case to fail closed against.
 function PinGate({ children }) {
+  // The shared edition has no PIN lock (see lib/edition.js), so there is nothing to subscribe to or gate on.
+  if (!FEATURES.pin) return children;
+  return <PinGateInner>{children}</PinGateInner>;
+}
+
+function PinGateInner({ children }) {
   const { isLocked, setIsLocked } = useLock();
   const [pinConfig, setPinConfig] = useState(null);
   const [ready, setReady] = useState(false);
@@ -61,7 +72,7 @@ function PinGate({ children }) {
 
   useEffect(() => {
     let cancelled = false;
-    getJSON(PIN_LAST_KNOWN_KEY, null).then((stored) => {
+    getJSON(pinLastKnownKey(), null).then((stored) => {
       if (cancelled) return;
       lastKnownRef.current = stored;
       setReady(true);
@@ -81,7 +92,7 @@ function PinGate({ children }) {
         if (decision.locked) setIsLocked(true);
         if (decision.trustworthy) {
           lastKnownRef.current = decision.config;
-          setJSON(PIN_LAST_KNOWN_KEY, decision.config);
+          setJSON(pinLastKnownKey(), decision.config);
         }
         return;
       }
@@ -94,7 +105,7 @@ function PinGate({ children }) {
         : null;
       setPinConfig(config);
       lastKnownRef.current = config;
-      setJSON(PIN_LAST_KNOWN_KEY, config);
+      setJSON(pinLastKnownKey(), config);
     });
   }, [ready, setIsLocked]);
 
@@ -212,7 +223,7 @@ export default function TabsLayout() {
   return (
     <PinGate>
       <View style={{ flex: 1 }}>
-        <RecurringRuleRunner />
+        {FEATURES.recurring ? <RecurringRuleRunner /> : null}
         <Tabs
           screenOptions={{
             headerShown: false,
@@ -223,6 +234,7 @@ export default function TabsLayout() {
             tabBarActiveTintColor: themeColor('ledgerGreen', isDark),
             tabBarInactiveTintColor: themeColor('mutedText', isDark),
             tabBarStyle: {
+              // Hidden above 768px (TopNavBar takes over).
               display: isWide ? 'none' : 'flex',
               backgroundColor: themeColor('paper', isDark),
               borderTopColor: themeRgba('ink', isDark, 0.1),
@@ -235,23 +247,31 @@ export default function TabsLayout() {
           }}
         >
           <Tabs.Screen
+            name="personal"
+            options={{ href: FEATURES.groups ? undefined : null, title: 'Personal', tabBarIcon: ({ focused }) => <TabIcon emoji="👤" focused={focused} /> }}
+          />
+          <Tabs.Screen
+            name="groups"
+            options={{ href: FEATURES.groups ? undefined : null, title: 'Groups', tabBarIcon: ({ focused }) => <TabIcon emoji="👥" focused={focused} /> }}
+          />
+          <Tabs.Screen
             name="payments"
-            options={{ title: 'Payments', tabBarIcon: ({ focused }) => <TabIcon emoji="💰" focused={focused} /> }}
+            options={{ href: FEATURES.payments ? undefined : null, title: 'Payments', tabBarIcon: ({ focused }) => <TabIcon emoji="💰" focused={focused} /> }}
           />
           <Tabs.Screen
             name="household"
-            options={{ title: 'Household', tabBarIcon: ({ focused }) => <TabIcon emoji="🏠" focused={focused} /> }}
+            options={{ href: FEATURES.household ? undefined : null, title: 'Household', tabBarIcon: ({ focused }) => <TabIcon emoji="🏠" focused={focused} /> }}
           />
           <Tabs.Screen
             name="travel"
-            options={{ title: 'Travel', tabBarIcon: ({ focused }) => <TabIcon emoji="✈️" focused={focused} /> }}
+            options={{ href: FEATURES.travel ? undefined : null, title: 'Travel', tabBarIcon: ({ focused }) => <TabIcon emoji="✈️" focused={focused} /> }}
           />
           <Tabs.Screen
             name="cards"
-            options={{ title: 'Cards', tabBarIcon: ({ focused }) => <TabIcon emoji="💳" focused={focused} /> }}
+            options={{ href: FEATURES.cards ? undefined : null, title: 'Cards', tabBarIcon: ({ focused }) => <TabIcon emoji="💳" focused={focused} /> }}
           />
         </Tabs>
-        <AskQuestion />
+        {FEATURES.ai ? <AskQuestion /> : null}
       </View>
     </PinGate>
   );

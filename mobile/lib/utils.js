@@ -1,5 +1,10 @@
+import { IS_SHARED_EDITION } from './edition.js';
+
 // Initial default seeds used only when seeding a fresh empty database/storage
-export const DEFAULT_PERSONS = ['Yash', 'Kruti'];
+// The admin edition's two people. The shared edition has no built-in people: a new household's own
+// member list comes from the group's own member docs (see createGroup), and this single
+// placeholder only ever shows for the instant before that list arrives.
+export const DEFAULT_PERSONS = IS_SHARED_EDITION ? ['Me'] : ['Yash', 'Kruti'];
 
 export const DEFAULT_CATEGORIES = [
   'Groceries',
@@ -516,6 +521,87 @@ function computeNetByMemberScaled(entries, ledger, members, valueField) {
   }
 
   return { netByMemberScaled, scale };
+}
+
+// --- Shared edition: balances between people, across groups -------------------------------------
+// The id of the hidden two-person ledger between two people (see firestore.shared.rules).
+export function directGroupId(emailA, emailB) {
+  const [a, b] = [String(emailA).trim().toLowerCase(), String(emailB).trim().toLowerCase()].sort();
+  return `direct~${a}~${b}`;
+}
+
+// Who owes whom, exactly (Splitwise's "friend balance"): for every split entry, each person who shared
+// it owes the payer their part. Same classification as computeBalance/computeSettlements, so a group's
+// own screen and the Personal tab can't disagree. Result: { debtor: { creditor: paise } } - shared splits
+// are fractional paise here; callers round once, at the end.
+export function computePairwiseDebts(entries, members) {
+  const debts = {};
+  const add = (debtor, creditor, paise) => {
+    if (!paise || debtor === creditor) return;
+    debts[debtor] = debts[debtor] || {};
+    debts[debtor][creditor] = (debts[debtor][creditor] || 0) + paise;
+  };
+  for (const entry of entries || []) {
+    if (!entry || !entry.split) continue;
+    const c = classifyEntryForBalance(entry, members);
+    if (c.skip) continue;
+    if (c.kind === 'shared') {
+      const share = c.valuePaise / c.splitSet.length;
+      c.splitSet.forEach((m) => add(m, c.payer, share));
+    } else {
+      Object.entries(c.debits).forEach(([m, paise]) => add(m, c.payer, paise));
+    }
+  }
+  return debts;
+}
+
+// The member (by name) a signed-in email is, in one group's member docs ({ name, email }).
+export function memberNameForEmail(memberDocs, email) {
+  const lower = String(email || '').toLowerCase();
+  if (!lower) return null;
+  return (memberDocs || []).find((m) => String(m.email || '').toLowerCase() === lower)?.name || null;
+}
+
+// What to call a group: its name, or - for a hidden two-person ledger - the other person.
+export function groupDisplayName(group, myEmail, memberDocs) {
+  if (group?.kind !== 'direct') return group?.name || 'Group';
+  const lower = String(myEmail || '').toLowerCase();
+  const other = (memberDocs || []).find((m) => String(m.email || '').toLowerCase() !== lower);
+  const otherEmail = (group.memberEmails || []).find((e) => e !== lower);
+  return other?.name || (otherEmail ? otherEmail.split('@')[0] : 'Direct');
+}
+
+/**
+ * The Personal tab: your net position with every person you share a group with, added up across all of
+ * them. groupsData: [{ id, name, kind, entries, memberDocs }]. Amounts are rupees; positive means they
+ * owe you, negative means you owe them.
+ * @param {Array<{id: string, name?: string, kind?: string, entries: any[], memberDocs: Array<{name?: string, email?: string}>}>} groupsData
+ * @param {string} myEmail
+ */
+export function computePersonalBalances(groupsData, myEmail) {
+  const me = String(myEmail || '').toLowerCase();
+  const byEmail = new Map();
+  for (const g of groupsData || []) {
+    const docs = (g.memberDocs || []).filter((m) => m.name);
+    const mine = docs.find((m) => String(m.email || '').toLowerCase() === me);
+    if (!mine) continue;
+    const debts = computePairwiseDebts(g.entries || [], docs.map((m) => m.name));
+    for (const other of docs) {
+      const otherEmail = String(other.email || '').toLowerCase();
+      if (!otherEmail || otherEmail === me) continue;
+      const paise = Math.round((debts[other.name]?.[mine.name] || 0) - (debts[mine.name]?.[other.name] || 0));
+      const entry = byEmail.get(otherEmail) || { email: otherEmail, name: other.name, paise: 0, perGroup: [] };
+      entry.paise += paise;
+      entry.perGroup.push({ groupId: g.id, groupName: g.name || '', kind: g.kind || 'group', net: paise / 100 });
+      byEmail.set(otherEmail, entry);
+    }
+  }
+  const people = [...byEmail.values()]
+    .map(({ paise, ...rest }) => ({ ...rest, net: paise / 100 }))
+    .sort((a, b) => Math.abs(b.net) - Math.abs(a.net) || a.name.localeCompare(b.name));
+  const owedToMe = people.reduce((sum, p) => sum + (p.net > 0 ? p.net : 0), 0);
+  const iOwe = people.reduce((sum, p) => sum + (p.net < 0 ? -p.net : 0), 0);
+  return { people, owedToMe, iOwe, net: owedToMe - iOwe };
 }
 
 // Entries the balance maths had to leave out, and why - surfaced in the UI
@@ -1268,6 +1354,20 @@ export function isSavableCardTxnAmount(amount, rewardOverride, statementOnly = f
   if (amount == null || !Number.isFinite(amount)) return false;
   if (amount !== 0) return true;
   return !statementOnly && rewardOverride != null && Number.isFinite(rewardOverride);
+}
+
+// A standalone points redemption (points cashed in for a voucher, a statement credit or a miles
+// transfer - nothing bought on the card) is a ₹0 card line flagged isRedemption with the points
+// spent in pointsRedeemed. It earns nothing, adds no spend and leaves the bill alone; the card's
+// "points in account" total just subtracts it, like the points used on a SmartBuy / Travel booking.
+export function isPointsRedemption(txn) {
+  return txn?.isRedemption === true;
+}
+
+// Whole points, more than zero ("5,000" is fine); anything else is not a redemption.
+export function parseRedeemedPoints(text) {
+  const n = parseAmountInput(text);
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 // Comma-separated free text ("vacation, reimbursable") into a clean tag

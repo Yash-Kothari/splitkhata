@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import { subscribeToAuth, isAllowedUser } from './firebase';
+import { subscribeToAuth, isAllowedUser, setTenant } from './firebase';
+import { IS_SHARED_EDITION } from './edition';
 
 const AuthContext = createContext({ user: null, allowed: false, initializing: true, slowInit: false });
 
@@ -13,6 +14,8 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const unsubscribe = subscribeToAuth((u) => {
+      // Shared edition: signing out (or in as someone else) must never leave the previous account's open group behind.
+      if (IS_SHARED_EDITION) setTenant(null);
       setUser(u);
       setInitializing(false);
     });

@@ -1,12 +1,15 @@
 import { useRouter, usePathname } from 'expo-router';
 import { View, Pressable, Text, useWindowDimensions } from 'react-native';
+import { FEATURES } from '../lib/edition';
 
 const TABS = [
-  { href: '/payments', label: '💰 Payments' },
-  { href: '/household', label: '🏠 Household' },
-  { href: '/travel', label: '✈️ Travel' },
-  { href: '/cards', label: '💳 Cards' },
-];
+  FEATURES.groups && { href: '/personal', label: '👤 Personal' },
+  FEATURES.groups && { href: '/groups', label: '👥 Groups' },
+  FEATURES.payments && { href: '/payments', label: '💰 Payments' },
+  FEATURES.household && { href: '/household', label: '🏠 Household' },
+  FEATURES.travel && { href: '/travel', label: '✈️ Travel' },
+  FEATURES.cards && { href: '/cards', label: '💳 Cards' },
+].filter(Boolean);
 
 // The bottom tab bar is a phone idiom - above 768px, a top segmented
 // control (matching the original website's own nav, before it was replaced
@@ -18,7 +21,8 @@ export default function TopNavBar() {
   const router = useRouter();
   const pathname = usePathname();
 
-  if (width < 768) return null;
+  // One screen would need no navigation.
+  if (width < 768 || TABS.length < 2) return null;
 
   return (
     // No outer max-width/centering here - the root layout (app/_layout.js)

@@ -2,7 +2,7 @@
   "name": "splitkhata-mobile",
   "description": "Splitkhata native iPhone app",
   "private": true,
-  "version": "3.15.1",
+  "version": "3.16.0",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo-google-fonts/fraunces": "^0.4.1",
@@ -43,6 +43,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
+    "web:shared": "EXPO_PUBLIC_EDITION=shared expo start --web",
+    "export:shared": "EXPO_PUBLIC_EDITION=shared expo export --platform web --output-dir dist-shared",
+    "test:shared-rules": "node scripts/test-shared-rules.mjs",
     "test": "node --test \"tests/**/*.test.mjs\"",
     "test:cov": "node --test --experimental-test-coverage \"tests/**/*.test.mjs\"",
     "lint": "expo lint",

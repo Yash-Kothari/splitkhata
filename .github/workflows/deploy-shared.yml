@@ -1,0 +1,53 @@
+name: Deploy shared edition (Firebase Hosting)
+
+# Manual only. This publishes the SHARED edition (Household only, one private household per Google
+# account) to its OWN Firebase project. It never runs on push and never touches the main site's
+# GitHub Pages deploy (deploy.yml) or the admin Firebase project. Setup: docs/SHARED_EDITION.md.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-shared
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install mobile dependencies
+        run: npm ci
+        working-directory: mobile
+
+      - name: Test mobile app
+        run: npm test
+        working-directory: mobile
+
+      - name: Export shared edition for web
+        run: npm run export:shared
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_FIREBASE_API_KEY: ${{ vars.SHARED_FIREBASE_API_KEY }}
+          EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ vars.SHARED_FIREBASE_AUTH_DOMAIN }}
+          EXPO_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.SHARED_FIREBASE_PROJECT_ID }}
+          EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ vars.SHARED_FIREBASE_STORAGE_BUCKET }}
+          EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.SHARED_FIREBASE_MESSAGING_SENDER_ID }}
+          EXPO_PUBLIC_FIREBASE_APP_ID: ${{ vars.SHARED_FIREBASE_APP_ID }}
+          EXPO_PUBLIC_BUILD_SHA: ${{ github.sha }}
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.SHARED_FIREBASE_SERVICE_ACCOUNT }}
+
+      - name: Deploy rules, indexes and site
+        run: npx --yes firebase-tools@latest deploy --config firebase.shared.json --only hosting,firestore --project "${{ vars.SHARED_FIREBASE_PROJECT_ID }}"

@@ -14,11 +14,13 @@ import {
   deleteCardTransaction,
   clearTripRollupPointer,
 } from '../../lib/firebase';
+import { Redirect } from 'expo-router';
+import { FEATURES } from '../../lib/edition';
 import { useAuth } from '../../lib/AuthContext';
 import { useJump } from '../../lib/JumpContext';
 import { useUndoDelete } from '../../lib/useUndoDelete';
 import { usePaymentInstruments } from '../../lib/usePaymentInstruments';
-import { DEFAULT_PERSONS, DEFAULT_CATEGORIES, todayISO, getMonthKey, getAvailableMonths, formatCurrency, memberForUser } from '../../lib/utils';
+import { DEFAULT_PERSONS, DEFAULT_CATEGORIES, todayISO, getMonthKey, getAvailableMonths, formatCurrency, memberForUser, memberNameForEmail } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
 import AddEntryForm from '../../components/AddEntryForm';
 import EntryList from '../../components/EntryList';
@@ -32,12 +34,14 @@ import CategoryChart from '../../components/CategoryChart';
 import PersonSpendCard from '../../components/PersonSpendCard';
 import UndoToast from '../../components/UndoToast';
 
-export default function Household() {
+// `topSlot` (shared edition) is the group header shown above the balance - see groups.js.
+export function HouseholdScreen({ topSlot = null }) {
   const { user } = useAuth();
   const { pendingJump, setPendingJump } = useJump();
   const [entries, setEntries] = useState(null);
   const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
   const [members, setMembers] = useState(DEFAULT_PERSONS);
+  const [memberDocs, setMemberDocs] = useState([]);
   const [budgets, setBudgets] = useState({});
   const [overallBudget, setOverallBudget] = useState(null);
   const [reminderConfig, setReminderConfig] = useState({ enabled: true, amountThreshold: 2000 });
@@ -81,7 +85,10 @@ export default function Household() {
   useEffect(
     () =>
       subscribeToMembers(
-        (data) => data.members?.length && setMembers(data.members),
+        (data) => {
+          if (data.members?.length) setMembers(data.members);
+          setMemberDocs(data.rawDocs || []);
+        },
         (err) => reportError(err, 'Could not load members'),
       ),
     [],
@@ -89,9 +96,12 @@ export default function Household() {
   useEffect(() => subscribeToHouseholdBudgets(setBudgets), []);
   useEffect(() => subscribeToOverallBudget(setOverallBudget), []);
   useEffect(() => subscribeToPaymentReminderConfig(setReminderConfig), []);
-  useEffect(() => subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')), []);
-  useEffect(() => subscribeToCardTransactions(setCardTransactions, (err) => reportError(err, 'Could not load card transactions')), []);
+  useEffect(() => (FEATURES.cards ? subscribeToCreditCards(setCreditCards, (err) => reportError(err, 'Could not load credit cards')) : undefined), []);
+  useEffect(() => (FEATURES.cards ? subscribeToCardTransactions(setCardTransactions, (err) => reportError(err, 'Could not load card transactions')) : undefined), []);
   useEffect(() => subscribeToRecurringRules(setRecurringRules), []);
+
+  // Shared edition: you are the member whose email is yours (names can repeat across groups); admin: matched by first name.
+  const myName = FEATURES.groups ? memberNameForEmail(memberDocs, user?.email) : memberForUser(user, members);
 
   const availableMonths = useMemo(() => getAvailableMonths(entries || []), [entries]);
 
@@ -128,12 +138,12 @@ export default function Household() {
   );
   const monthChart = entries && <MonthChart entries={entries} ledger="household" collapsible={!wide} />;
   const personSpend = entries && (
-    <PersonSpendCard entries={entries} members={members} deviceMemberName={memberForUser(user, members)} collapsible={!wide} />
+    <PersonSpendCard entries={entries} members={members} deviceMemberName={myName} collapsible={!wide} />
   );
 
   return (
     <View className="flex-1 bg-paper">
-      <AppHeader badge="🏠 Household Ledger" />
+      <AppHeader badge={FEATURES.groups ? '👥 Groups' : '🏠 Household Ledger'} />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <ScrollView contentContainerStyle={{ paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
         {/* Balance + reminder live full-width above the two-column shell,
@@ -144,6 +154,7 @@ export default function Household() {
             on the Payments tab; P1-7 surfaces it here too so you don't have
             to switch tabs to see who owes whom. */}
         <View className="px-4">
+          {topSlot}
           {entries && <PaymentReminderBanner entries={entries} dbMembers={members} config={reminderConfig} />}
           {entries && <BalanceStrip entries={entries} ledger="household" dbMembers={members} instruments={instruments} />}
         </View>
@@ -156,7 +167,7 @@ export default function Household() {
           <View className="lg:flex-1">
             <View className="px-4">
               <AddEntryForm
-                deviceName={memberForUser(user, members) || undefined}
+                deviceName={myName || undefined}
                 ledger="household"
                 dbCategories={categories}
                 dbMembers={members}
@@ -219,4 +230,10 @@ export default function Household() {
       />
     </View>
   );
+}
+
+// The admin app's Household tab. The shared edition shows this same ledger inside a group (groups.js) instead.
+export default function Household() {
+  if (FEATURES.groups) return <Redirect href="/groups" />;
+  return <HouseholdScreen />;
 }

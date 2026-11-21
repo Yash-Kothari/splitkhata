@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, usePathname } from 'expo-router';
+import { FEATURES } from '../lib/edition';
+import { useGroup } from '../lib/GroupContext';
 import { signOutUser, subscribeToPinConfig } from '../lib/firebase';
 import { useAuth } from '../lib/AuthContext';
 import { useLock } from '../lib/LockContext';
@@ -21,6 +23,9 @@ import { shadowStyle } from '../lib/shadow';
 // see SettingsModalContext for why a per-AppHeader instance was a problem.
 export default function AppHeader({ badge }) {
   const { user } = useAuth();
+  const { activeGroup } = useGroup();
+  const pathname = usePathname();
+  const searchAvailable = !FEATURES.groups || (Boolean(activeGroup) && pathname.startsWith('/groups'));
   const { setIsLocked } = useLock();
   const router = useRouter();
   const { open: openSettings } = useSettingsModal();
@@ -30,7 +35,7 @@ export default function AppHeader({ badge }) {
   const accountButtonRef = useRef(null);
   const [pinConfig, setPinConfig] = useState({ enabled: false, pinHash: null, legacyPin: null });
 
-  useEffect(() => subscribeToPinConfig(setPinConfig), []);
+  useEffect(() => (FEATURES.pin ? subscribeToPinConfig(setPinConfig) : undefined), []);
 
   const deviceName = user?.displayName?.split(' ')[0] || user?.email || 'Account';
 
@@ -67,6 +72,8 @@ export default function AppHeader({ badge }) {
           </View>
         </View>
         <View className="flex-1" />
+        {/* Search reads one group's entries, so it only shows while a group is open. */}
+        {searchAvailable ? (
         <Pressable
           onPress={() => setShowSearch(true)}
           hitSlop={8}
@@ -74,6 +81,7 @@ export default function AppHeader({ badge }) {
         >
           <Text className="font-body-semibold text-xs text-ink">🔎</Text>
         </Pressable>
+        ) : null}
         <Pressable
           onPress={openSettings}
           hitSlop={8}

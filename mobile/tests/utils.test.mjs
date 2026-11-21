@@ -4308,6 +4308,100 @@ test('a trip with no cash activity still lists its main currency, and entries wi
   assert.equal(getLastEntryDefaults([{ category: 'Food', payer: 'Yash', localCurrency: 'SGD', splitType: 'shared', date: '2026-10-01', createdAt: '2026-10-01T10:00:00Z' }]).localCurrency, 'SGD');
 });
 
+// --- Shared edition: balances between people, across groups -----------------------------------
+import {
+  computePairwiseDebts as pairwiseDebts,
+  computePersonalBalances as personalBalances,
+  memberNameForEmail as nameForEmail,
+  groupDisplayName as displayNameForGroup,
+  directGroupId as directIdFor,
+} from '../lib/utils.js';
+
+test('pairwise debts: an even split makes everyone else owe the payer their part', () => {
+  const debts = pairwiseDebts([{ amount: 300, payer: 'Asha', split: true, splitType: 'shared' }], ['Asha', 'Bo', 'Cy']);
+  assert.deepEqual(debts, { Bo: { Asha: 10000 }, Cy: { Asha: 10000 } });
+});
+
+test('pairwise debts: owed, custom and settlement entries move exactly the right amounts', () => {
+  const members = ['Asha', 'Bo', 'Cy'];
+  const debts = pairwiseDebts([
+    { amount: 90, payer: 'Asha', owedBy: 'Bo', split: true, splitType: 'owed' },
+    { amount: 100, payer: 'Cy', split: true, splitType: 'custom', splitShares: { Asha: 25, Bo: 75 } },
+    { amount: 90, payer: 'Bo', owedBy: 'Asha', split: true, splitType: 'settlement' }, // Bo pays Asha back
+    { amount: 500, payer: 'Asha', split: false, splitType: 'shared' }, // personal spend, not shared
+  ], members);
+  assert.equal(debts.Bo.Asha, 9000);
+  assert.equal(debts.Asha.Bo, 9000, 'the settlement is Bo paying Asha, so Asha is now owed by Bo less');
+  assert.equal(debts.Asha.Cy, 2500);
+  assert.equal(debts.Bo.Cy, 7500);
+});
+
+test('personal balances add a person up across every group and direct ledger', () => {
+  const me = 'asha@x.com';
+  const g1 = {
+    id: 'flat', name: 'Flat', kind: 'group',
+    memberDocs: [{ name: 'Asha', email: me }, { name: 'Bo', email: 'bo@x.com' }, { name: 'Cy', email: 'cy@x.com' }],
+    entries: [{ amount: 300, payer: 'Asha', split: true, splitType: 'shared' }],
+  };
+  const direct = {
+    id: directIdFor(me, 'bo@x.com'), name: 'Asha & Bo', kind: 'direct',
+    memberDocs: [{ name: 'Ash', email: me }, { name: 'Bobby', email: 'bo@x.com' }],
+    entries: [{ amount: 40, payer: 'Bobby', owedBy: 'Ash', split: true, splitType: 'owed' }],
+  };
+  const result = personalBalances([g1, direct], me);
+  const bo = result.people.find((p) => p.email === 'bo@x.com');
+  const cy = result.people.find((p) => p.email === 'cy@x.com');
+  assert.equal(bo.net, 60, 'Bo owes 100 in the flat, Asha owes Bo 40 directly');
+  assert.equal(bo.perGroup.length, 2);
+  assert.equal(cy.net, 100);
+  assert.equal(result.owedToMe, 160);
+  assert.equal(result.iOwe, 0);
+  assert.equal(result.net, 160);
+});
+
+test('personal balances: you owe, rounding, strangers and groups you are not in', () => {
+  const me = 'Asha@X.com'; // case does not matter
+  const g = {
+    id: 'g', kind: 'group',
+    memberDocs: [{ name: 'Asha', email: 'asha@x.com' }, { name: 'Bo', email: 'bo@x.com' }, { name: 'Cy', email: 'cy@x.com' }, { name: 'NoEmail' }],
+    entries: [
+      { amount: 100, payer: 'Bo', split: true, splitType: 'shared', splitAmong: ['Asha', 'Bo', 'Cy'] }, // 33.33 each: Asha and Cy owe Bo
+      { amount: 10, payer: 'Asha', split: true, splitType: 'owed', owedBy: 'NoEmail' },
+    ],
+  };
+  const elsewhere = { id: 'other', kind: 'group', memberDocs: [{ name: 'Z', email: 'z@x.com' }, { name: 'Y', email: 'y@x.com' }], entries: [{ amount: 50, payer: 'Z', split: true, splitType: 'shared' }] };
+  const result = personalBalances([g, elsewhere], me);
+  assert.equal(result.people.length, 2, 'only people with an email, and only groups you are in');
+  assert.equal(result.people.find((p) => p.email === 'bo@x.com').net, -33.33);
+  assert.equal(result.iOwe, 33.33);
+  assert.equal(result.people.find((p) => p.email === 'cy@x.com').net, 0);
+});
+
+test('personal balances: settling up zeroes the balance', () => {
+  const me = 'asha@x.com';
+  const g = {
+    id: 'g', kind: 'group',
+    memberDocs: [{ name: 'Asha', email: me }, { name: 'Bo', email: 'bo@x.com' }],
+    entries: [
+      { amount: 200, payer: 'Asha', split: true, splitType: 'shared' }, // Bo owes 100
+      { amount: 100, payer: 'Bo', owedBy: 'Asha', split: true, splitType: 'settlement' }, // Bo pays it back
+    ],
+  };
+  const result = personalBalances([g], me);
+  assert.equal(result.people[0].net, 0);
+  assert.equal(result.owedToMe, 0);
+});
+
+test('names, emails and direct ledger ids', () => {
+  const docs = [{ name: 'Asha', email: 'Asha@X.com' }, { name: 'Bo', email: 'bo@x.com' }];
+  assert.equal(nameForEmail(docs, 'asha@x.com'), 'Asha');
+  assert.equal(nameForEmail(docs, 'nobody@x.com'), null);
+  assert.equal(directIdFor('B@x.com', 'a@x.com'), 'direct~a@x.com~b@x.com', 'sorted and lowercase, so both people get the same id');
+  assert.equal(displayNameForGroup({ kind: 'group', name: 'Flat' }, 'asha@x.com', docs), 'Flat');
+  assert.equal(displayNameForGroup({ kind: 'direct', memberEmails: ['asha@x.com', 'bo@x.com'] }, 'asha@x.com', docs), 'Bo');
+  assert.equal(displayNameForGroup({ kind: 'direct', memberEmails: ['asha@x.com', 'cy@x.com'] }, 'asha@x.com', []), 'cy');
+});
+
 // --- A statement can be a credit (negative actual bill) ---------------------------------------------
 import { toggleNegativeText, computeCardBillSummary as billSummaryFor, parseAmountInput as parseAmt } from '../lib/utils.js';
 
@@ -4330,4 +4424,32 @@ test('a statement the bank printed as a credit is not listed as billed and unpai
   assert.equal(credit.billedTotal, 0, 'a confirmed credit statement has nothing to pay');
   const normal = billSummaryFor([card], txns, [{ ...cycles[0], actualBillAmount: 1000 }], today);
   assert.equal(normal.billedTotal, plain.billedTotal, 'a confirmed positive bill is unchanged');
+});
+
+// ---- Standalone points redemption (HDFC Diners / HSBC Premier) ----
+import { isPointsRedemption, parseRedeemedPoints } from '../lib/utils.js';
+
+test('a standalone points redemption is a ₹0 line that earns nothing and changes no bill, spend or carried remainder', () => {
+  for (const key of ['hdfc_diners_slab_milestone', 'hsbc_premier_flat_capped']) {
+    const card = { id: 'c', billingCycleDay: 10, rewardStrategy: key, strategyParamsHistory: [{ effectiveFrom: '2020-01-01', params: CARD_STRATEGY_DEFAULTS[key] }] };
+    const real = { id: 'a', cardId: 'c', date: '2026-09-15', amount: 5030, category: 'regular' };
+    const redemption = { id: 'r', cardId: 'c', date: '2026-09-20', amount: 0, category: 'regular', pointsRedeemed: 5000, isRedemption: true, rewardOverride: null };
+    const base = computeCardRewardLedger(card, [real], '2026-10-20');
+    const withRedemption = computeCardRewardLedger(card, [real, redemption], '2026-10-20');
+    assert.equal(withRedemption.total, base.total, `${key}: no points earned or lost by the engine`);
+    const cycle = Object.keys(withRedemption.cycleBills)[0];
+    assert.equal(withRedemption.cycleBills[cycle].statement, 5030, `${key}: the bill does not move`);
+    assert.equal(isPointsRedemption(redemption), true);
+    assert.equal(isPointsRedemption(real), false);
+  }
+});
+
+test('redeemed points are whole numbers above zero', () => {
+  assert.equal(parseRedeemedPoints('5000'), 5000);
+  assert.equal(parseRedeemedPoints('5,000'), 5000);
+  assert.equal(parseRedeemedPoints('0'), null);
+  assert.equal(parseRedeemedPoints('-50'), null);
+  assert.equal(parseRedeemedPoints('12.5'), null);
+  assert.equal(parseRedeemedPoints(''), null);
+  assert.equal(parseRedeemedPoints('abc'), null);
 });

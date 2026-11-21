@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { reportError } from './errorReporting';
+import { IS_SHARED_EDITION } from './edition';
 import { initializeApp } from 'firebase/app';
 // firebase/auth's own package.json exports map has no "react-native"
 // condition (only node/browser/default), so it resolves to the web build
@@ -67,22 +68,35 @@ import {
   inferCardRewardFields,
 } from './utils';
 
-// Same project the web app (yash-kothari.github.io/splitkhata) uses - public
-// client config, not a secret; access is enforced by firestore.rules, not by
-// hiding these values. Pulled from the deployed web bundle.
-const firebaseConfig = {
-  apiKey: 'AIzaSyBTKCJR836AU5RwRgNnd8JmHpdDCjHwk6g',
-  authDomain: 'splitkhata-96cbd.firebaseapp.com',
-  projectId: 'splitkhata-96cbd',
-  storageBucket: 'splitkhata-96cbd.firebasestorage.app',
-  messagingSenderId: '833405553997',
-  appId: '1:833405553997:web:eac064e35ec9f0d0b87b04',
+// Admin edition: the same project the web app (yash-kothari.github.io/splitkhata) uses - public
+// client config, not a secret; access is enforced by firestore.rules, not by hiding these
+// values. Pulled from the deployed web bundle.
+// Shared edition: its own, separate Firebase project, configured through EXPO_PUBLIC_FIREBASE_*
+// (see docs/SHARED_EDITION.md) - it never touches the admin project's data or rules.
+// The expression is spelled out here (not read from edition.js) so the bundler sees a literal and drops
+// the admin-only values below from a shared build, instead of shipping another app's identifiers.
+const BUILDING_SHARED = process.env.EXPO_PUBLIC_EDITION === 'shared';
+const adminFirebaseConfig = BUILDING_SHARED
+  ? null
+  : {
+      apiKey: 'AIzaSyBTKCJR836AU5RwRgNnd8JmHpdDCjHwk6g',
+      authDomain: 'splitkhata-96cbd.firebaseapp.com',
+      projectId: 'splitkhata-96cbd',
+      storageBucket: 'splitkhata-96cbd.firebasestorage.app',
+      messagingSenderId: '833405553997',
+      appId: '1:833405553997:web:eac064e35ec9f0d0b87b04',
+    };
+const sharedFirebaseConfig = {
+  apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.EXPO_PUBLIC_FIREBASE_APP_ID,
 };
+const firebaseConfig = IS_SHARED_EDITION ? sharedFirebaseConfig : adminFirebaseConfig;
 
-const ALLOWED_EMAILS = new Set([
-  'yash.sk.kothari@gmail.com',
-  'kruti.v.sheth@gmail.com',
-]);
+const ALLOWED_EMAILS = new Set(BUILDING_SHARED ? [] : ['yash.sk.kothari@gmail.com', 'kruti.v.sheth@gmail.com']);
 
 const app = initializeApp(firebaseConfig);
 // Web: no popupRedirectResolver here on purpose. getAuth() installs one, and on startup the SDK
@@ -153,24 +167,52 @@ function track(promise, context) {
 export const IS_DEV_EMULATOR = __DEV__ && process.env.EXPO_PUBLIC_USE_FIRESTORE_EMULATOR === 'true';
 
 if (IS_DEV_EMULATOR) {
-  connectFirestoreEmulator(dbInstance, 'localhost', 8080);
+  connectFirestoreEmulator(dbInstance, 'localhost', IS_SHARED_EDITION ? 8090 : 8080); // the shared edition's emulators run on their own ports (firebase.shared.json)
   // disableWarnings: the emulator's own "do not use in production" banner is
   // noise here since IS_DEV_EMULATOR already guarantees __DEV__.
-  connectAuthEmulator(auth, 'http://localhost:9099', { disableWarnings: true });
+  connectAuthEmulator(auth, IS_SHARED_EDITION ? 'http://localhost:9199' : 'http://localhost:9099', { disableWarnings: true });
 }
 
-const expensesRef = collection(dbInstance, 'expenses');
-const categoriesRef = collection(dbInstance, 'categories');
-const membersRef = collection(dbInstance, 'members');
-const tripsRef = collection(dbInstance, 'trips');
-const cashMovementsRef = collection(dbInstance, 'cashMovements');
-const paymentMethodsRef = collection(dbInstance, 'paymentMethods');
-const guestsRef = collection(dbInstance, 'guests');
-const currenciesRef = collection(dbInstance, 'currencies');
-const creditCardsRef = collection(dbInstance, 'creditCards');
-const cardTransactionsRef = collection(dbInstance, 'cardTransactions');
-const cardBillingCyclesRef = collection(dbInstance, 'cardBillingCycles');
-const cardStatementSummariesRef = collection(dbInstance, 'cardStatementSummaries');
+// --- Where data lives -------------------------------------------------------------------------
+// Admin edition: top-level collections ('expenses', 'settings', ...), exactly as always.
+// Shared edition: every collection sits under groups/{groupId}/..., and firestore.shared.rules only
+// lets that group's members read or write it. The open group is chosen in the Groups tab (setTenant)
+// and every ref below is built per call, so it always follows the current group. In the shared
+// edition a call made with no group open throws instead of ever falling back to a top-level path.
+let tenantId = null;
+export function setTenant(id) {
+  if ((id || null) !== tenantId) {
+    // Per-household "already seeded" memory (below) must not carry over to another household.
+    categoriesSeededFlag = false;
+    membersSeededFlag = false;
+  }
+  tenantId = id || null;
+}
+export function getTenant() {
+  return tenantId;
+}
+function col(name, groupId = tenantId) {
+  if (IS_SHARED_EDITION) {
+    if (!groupId) throw new Error('No group selected yet');
+    return collection(dbInstance, 'groups', groupId, name);
+  }
+  return collection(dbInstance, name);
+}
+function docAt(name, id) {
+  return id === undefined ? doc(col(name)) : doc(col(name), id);
+}
+const expensesRef = () => col('expenses');
+const categoriesRef = () => col('categories');
+const membersRef = () => col('members');
+const tripsRef = () => col('trips');
+const cashMovementsRef = () => col('cashMovements');
+const paymentMethodsRef = () => col('paymentMethods');
+const guestsRef = () => col('guests');
+const currenciesRef = () => col('currencies');
+const creditCardsRef = () => col('creditCards');
+const cardTransactionsRef = () => col('cardTransactions');
+const cardBillingCyclesRef = () => col('cardBillingCycles');
+const cardStatementSummariesRef = () => col('cardStatementSummaries');
 
 // Always true on mobile - the Firebase config above is hardcoded, not
 // environment-gated the way web's "no config, run in a local-only demo
@@ -321,7 +363,115 @@ export async function extractReceiptFromImage(base64Data, mimeType, prompt, sche
 }
 
 export function isAllowedUser(user) {
+  if (IS_SHARED_EDITION) return Boolean(user?.email && user.emailVerified); // anyone with a verified Google account; their data is scoped by household
   return Boolean(user?.email && user.emailVerified && ALLOWED_EMAILS.has(user.email.toLowerCase()));
+}
+
+// --- Groups (shared edition only) ------------------------------------------------------------
+// groups/{id} = { ownerUid, memberEmails: [lowercase emails], name, kind: 'group' | 'direct', createdAt }.
+// A 'direct' group is the hidden two-person ledger behind "you and Raj" (id direct~<a>~<b>, emails
+// sorted). Membership is by verified Google email, so someone can be added before they have ever
+// signed in. firestore.shared.rules is what enforces it; this code only reads and writes through it.
+// Every member also has a doc in the group's `members` collection ({ name, email }), keyed by their
+// email: entries store the member's NAME (as always), and the email is what lets one person be
+// recognised across groups for the Personal tab.
+export const MAX_GROUP_MEMBERS = 20;
+
+function cleanEmail(email) {
+  const clean = String(email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) throw new Error('Enter a valid email address.');
+  return clean;
+}
+
+export function subscribeToMyGroups(email, onData, onError) {
+  if (!IS_SHARED_EDITION) return () => {};
+  const q = query(collection(dbInstance, 'groups'), where('memberEmails', 'array-contains', String(email).toLowerCase()));
+  return onSnapshot(
+    q,
+    // Metadata changes too: `pending` stays true until the server has the group, and anything that reads
+    // INSIDE a group (the rules look the group up) must wait for it - a listener started earlier is
+    // rejected and Firestore then drops it for good.
+    { includeMetadataChanges: true },
+    (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate?.()?.toISOString() ?? null, pending: d.metadata.hasPendingWrites }))),
+    onError,
+  );
+}
+
+// Starts a group (or a direct ledger) with the creator as owner and member, plus anyone named in
+// `others` ([{ name, email }]). Returns the new group's id. The group doc has to exist before its
+// members can be written (the rules look the group up), so this is two steps: if the second is
+// interrupted the group opens with no member docs and ensureOwnMemberDoc fills in the creator's.
+export async function createGroup({ name, kind = 'group', owner, others = [], id }) {
+  const ownerEmail = cleanEmail(owner.email);
+  const people = [{ name: owner.name, email: ownerEmail }];
+  for (const o of others) {
+    const email = cleanEmail(o.email);
+    if (!people.some((p) => p.email === email)) people.push({ name: String(o.name || '').trim() || email.split('@')[0], email });
+  }
+  if (people.length > MAX_GROUP_MEMBERS) throw new Error(`A group can have at most ${MAX_GROUP_MEMBERS} people.`);
+  const groupRef = id ? doc(dbInstance, 'groups', id) : doc(collection(dbInstance, 'groups'));
+  await track(
+    setDoc(groupRef, { ownerUid: owner.uid, memberEmails: people.map((p) => p.email), name: String(name).trim(), kind, createdAt: serverTimestamp() }),
+    'Could not create the group',
+  );
+  const batch = writeBatch(dbInstance);
+  people.forEach((p) => batch.set(doc(col('members', groupRef.id), p.email), { name: p.name, email: p.email, createdAt: serverTimestamp() }));
+  batch.set(doc(col('settings', groupRef.id), 'seed_state'), { members: true }, { merge: true });
+  await track(batch.commit(), 'Could not save the group\'s people');
+  return groupRef.id;
+}
+
+// Adds someone to the open group (any member may). They see the group as soon as they sign in.
+export async function addGroupMember({ name, email }) {
+  const clean = cleanEmail(email);
+  const ref = doc(dbInstance, 'groups', tenantId);
+  await runTransaction(dbInstance, async (tx) => {
+    const snap = await tx.get(ref);
+    const emails = snap.data().memberEmails || [];
+    if (emails.includes(clean)) return;
+    if (emails.length >= MAX_GROUP_MEMBERS) throw new Error(`A group can have at most ${MAX_GROUP_MEMBERS} people.`);
+    tx.update(ref, { memberEmails: [...emails, clean] });
+  });
+  await setDoc(doc(col('members'), clean), { name: String(name || '').trim() || clean.split('@')[0], email: clean, createdAt: serverTimestamp() }, { merge: true });
+}
+
+// A non-owner leaves the open group. Their name stays on past entries, so balances still add up.
+export async function leaveGroup(email) {
+  const clean = cleanEmail(email);
+  const ref = doc(dbInstance, 'groups', tenantId);
+  await runTransaction(dbInstance, async (tx) => {
+    const snap = await tx.get(ref);
+    tx.update(ref, { memberEmails: (snap.data().memberEmails || []).filter((e) => e !== clean) });
+  });
+}
+
+export async function renameGroup(name) {
+  await updateDoc(doc(dbInstance, 'groups', tenantId), { name: String(name).trim() });
+}
+
+// Makes sure the signed-in person has their own member doc in the open group (for a group whose
+// creation was interrupted, or one they were added to by someone else).
+export async function ensureOwnMemberDoc(user) {
+  const email = String(user.email).toLowerCase();
+  const ref = doc(col('members'), email);
+  const existing = await getDoc(ref);
+  if (existing.exists()) return;
+  const first = (user.displayName || email.split('@')[0]).trim().split(/\s+/)[0];
+  await setDoc(ref, { name: first.charAt(0).toUpperCase() + first.slice(1), email, createdAt: serverTimestamp() });
+}
+
+// Read-only listeners on a specific group (not necessarily the open one) - the Personal tab adds up
+// balances across every group you are in.
+export function subscribeToGroupExpenses(groupId, onData, onError) {
+  const q = query(col('expenses', groupId), where('ledger', '==', 'household'), orderBy('date', 'desc'));
+  return onSnapshot(q, (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
+}
+export function subscribeToGroupMembers(groupId, onData, onError) {
+  return onSnapshot(col('members', groupId), (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
+}
+export async function addExpenseToGroup(groupId, entry) {
+  const docRef = await track(addDoc(col('expenses', groupId), { ...entry, createdAt: serverTimestamp() }), 'Could not save entry');
+  return docRef.id;
 }
 
 export function subscribeToAuth(callback) {
@@ -353,7 +503,7 @@ export async function signInWithGoogleIdToken(idToken) {
 // against the emulator's own copy of the rules. Throws if pointed at the
 // real Auth service, since GoogleAuthProvider.credential(<this JSON blob>)
 // isn't a real Google ID token.
-export async function signInDevTestUser(email = 'yash.sk.kothari@gmail.com') {
+export async function signInDevTestUser(email = process.env.EXPO_PUBLIC_DEV_TEST_EMAIL || (BUILDING_SHARED ? 'test@example.com' : 'yash.sk.kothari@gmail.com')) {
   if (!IS_DEV_EMULATOR) throw new Error('signInDevTestUser only works against the Auth emulator (IS_DEV_EMULATOR).');
   const fakeIdToken = JSON.stringify({
     sub: `dev-${email}`,
@@ -366,6 +516,7 @@ export async function signInDevTestUser(email = 'yash.sk.kothari@gmail.com') {
 }
 
 export async function signOutUser() {
+  setTenant(null);
   await signOut(auth);
 }
 
@@ -398,7 +549,7 @@ function createStableDocs(mapDoc) {
 
 export function subscribeToExpenses(ledger, onData, onError) {
   const targetLedger = normalizeLedger(ledger);
-  const q = query(expensesRef, where('ledger', '==', targetLedger), orderBy('date', 'desc'));
+  const q = query(expensesRef(), where('ledger', '==', targetLedger), orderBy('date', 'desc'));
   const toEntries = createStableDocs((d) => ({
     id: d.id,
     ...d.data(),
@@ -417,7 +568,7 @@ export function subscribeToExpenses(ledger, onData, onError) {
 // at once seeded a second set, and deleting every item in a list brought
 // the defaults back on the next launch.
 async function seedOnce(key, writeDefaults) {
-  const seedStateRef = doc(dbInstance, 'settings', 'seed_state');
+  const seedStateRef = docAt('settings', 'seed_state');
   const state = await getDoc(seedStateRef);
   if (state.exists() && state.data()[key]) return;
   const batch = writeBatch(dbInstance);
@@ -429,10 +580,12 @@ async function seedOnce(key, writeDefaults) {
 async function seedDefaultCategories() {
   await seedOnce('categories', (batch) => {
     for (const cat of CATEGORIES) {
-      batch.set(doc(categoriesRef), { name: cat, ledger: 'household', createdAt: serverTimestamp() });
+      batch.set(doc(categoriesRef()), { name: cat, ledger: 'household', createdAt: serverTimestamp() });
     }
-    for (const cat of TRAVEL_CATEGORIES) {
-      batch.set(doc(categoriesRef), { name: cat, ledger: 'travel', createdAt: serverTimestamp() });
+    if (!IS_SHARED_EDITION) {
+      for (const cat of TRAVEL_CATEGORIES) {
+        batch.set(doc(categoriesRef()), { name: cat, ledger: 'travel', createdAt: serverTimestamp() });
+      }
     }
   });
 }
@@ -455,12 +608,12 @@ function sortByOrder(items) {
 
 export async function saveSortOrder(collectionName, orderedIds) {
   const batch = writeBatch(dbInstance);
-  orderedIds.forEach((id, index) => batch.update(doc(dbInstance, collectionName, id), { sortOrder: index }));
+  orderedIds.forEach((id, index) => batch.update(docAt(collectionName, id), { sortOrder: index }));
   await batch.commit();
 }
 
 export function subscribeToCategories(onData, onError) {
-  const q = query(categoriesRef, orderBy('createdAt', 'asc'));
+  const q = query(categoriesRef(), orderBy('createdAt', 'asc'));
   return onSnapshot(
     q,
     // Metadata changes too, so a cache-only empty result is followed by the
@@ -497,19 +650,27 @@ export function subscribeToCategories(onData, onError) {
 async function seedDefaultMembers() {
   await seedOnce('members', (batch) => {
     for (const name of PERSONS) {
-      batch.set(doc(membersRef), { name, createdAt: serverTimestamp() });
+      batch.set(doc(membersRef()), { name, createdAt: serverTimestamp() });
     }
   });
 }
 
 export function subscribeToMembers(onData, onError) {
-  const q = query(membersRef, orderBy('createdAt', 'asc'));
+  const q = query(membersRef(), orderBy('createdAt', 'asc'));
   return onSnapshot(
     q,
     // Metadata changes too, so a cache-only empty result is followed by the
     // server's answer even when that answer is also empty.
     { includeMetadataChanges: true },
     (snapshot) => {
+      // Shared edition: a group's people are exactly its member docs (created with the group) - never
+      // the admin app's built-in names, and nothing to seed.
+      if (IS_SHARED_EDITION) {
+        /** @type {Array<{id: string, name?: string, email?: string}>} */
+        const rawDocs = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
+        onData({ members: rawDocs.map((m) => m.name).filter(Boolean), rawDocs });
+        return;
+      }
       // An empty result straight from the local cache says nothing about the
       // server: show the defaults, but don't seed until the server confirms.
       if (snapshot.empty && snapshot.metadata.fromCache) {
@@ -537,7 +698,7 @@ export function subscribeToMembers(onData, onError) {
 }
 
 export async function addExpense(entry) {
-  const docRef = await track(addDoc(expensesRef, { ...entry, createdAt: serverTimestamp() }), 'Could not save entry');
+  const docRef = await track(addDoc(expensesRef(), { ...entry, createdAt: serverTimestamp() }), 'Could not save entry');
   return docRef.id;
 }
 
@@ -549,13 +710,13 @@ export async function addExpense(entry) {
 export async function addExpensesBatch(entries, cardTransactions = []) {
   if (!entries.length) return [];
   const batch = writeBatch(dbInstance);
-  const refs = entries.map(() => doc(expensesRef));
+  const refs = entries.map(() => doc(expensesRef()));
   entries.forEach((entry, i) => {
     const cardTransaction = cardTransactions[i];
     if (cardTransaction) {
       // The card side rides in the same commit, so an installment set needs one
       // round trip instead of one per installment.
-      const cardRef = doc(cardTransactionsRef);
+      const cardRef = doc(cardTransactionsRef());
       batch.set(cardRef, { ...cardTransaction, linkedEntryId: refs[i].id, createdAt: serverTimestamp() });
       batch.set(refs[i], { ...entry, cardTransactionId: cardRef.id, createdAt: serverTimestamp() });
     } else {
@@ -575,7 +736,7 @@ export async function addExpenseWithCard(entry, cardTransaction = null) {
 }
 
 export async function updateExpense(id, updates) {
-  await track(updateDoc(doc(dbInstance, 'expenses', id), updates), 'Could not save changes');
+  await track(updateDoc(docAt('expenses', id), updates), 'Could not save changes');
 }
 
 // Edit Entry's save as one commit: the entry's own fields plus whatever its
@@ -589,17 +750,17 @@ export async function updateExpenseWithCard(entryId, updates, cardChange = { kin
   const batch = writeBatch(dbInstance);
   let cardTransactionId = cardChange.id ?? null;
   if (cardChange.kind === 'update' && cardChange.id) {
-    batch.update(doc(dbInstance, 'cardTransactions', cardChange.id), cardChange.updates);
+    batch.update(docAt('cardTransactions', cardChange.id), cardChange.updates);
   } else if (cardChange.kind === 'replace') {
-    if (cardChange.oldId) batch.delete(doc(dbInstance, 'cardTransactions', cardChange.oldId));
+    if (cardChange.oldId) batch.delete(docAt('cardTransactions', cardChange.oldId));
     cardTransactionId = null;
     if (cardChange.newData) {
-      const newRef = doc(cardTransactionsRef);
+      const newRef = doc(cardTransactionsRef());
       batch.set(newRef, { ...cardChange.newData, createdAt: serverTimestamp() });
       cardTransactionId = newRef.id;
     }
   }
-  batch.update(doc(dbInstance, 'expenses', entryId), { ...updates, cardTransactionId });
+  batch.update(docAt('expenses', entryId), { ...updates, cardTransactionId });
   try {
     await track(batch.commit(), 'Could not save changes');
   } catch (err) {
@@ -616,7 +777,7 @@ export async function updateExpenseWithCard(entryId, updates, cardChange = { kin
 }
 
 export async function deleteExpense(id) {
-  await track(deleteDoc(doc(dbInstance, 'expenses', id)), 'Could not delete entry');
+  await track(deleteDoc(docAt('expenses', id)), 'Could not delete entry');
 }
 
 // P1-14: an installment set shares no doc, only a common
@@ -624,7 +785,7 @@ export async function deleteExpense(id) {
 // set up and act on every member at once, instead of the user editing/
 // deleting each of the N rows one at a time.
 export async function updateInstallmentGroup(installmentGroupId, updates) {
-  const snap = await getDocs(query(expensesRef, where('installmentGroupId', '==', installmentGroupId)));
+  const snap = await getDocs(query(expensesRef(), where('installmentGroupId', '==', installmentGroupId)));
   if (snap.empty) return;
   const batch = writeBatch(dbInstance);
   snap.docs.forEach((d) => batch.update(d.ref, updates));
@@ -636,7 +797,7 @@ export async function updateInstallmentGroup(installmentGroupId, updates) {
 // here rather than by the caller since this function already has every
 // sibling's cardTransactionId from the query it has to run anyway.
 export async function deleteInstallmentGroup(installmentGroupId) {
-  const snap = await getDocs(query(expensesRef, where('installmentGroupId', '==', installmentGroupId)));
+  const snap = await getDocs(query(expensesRef(), where('installmentGroupId', '==', installmentGroupId)));
   if (snap.empty) return;
   const linkedCardTransactionIds = snap.docs.map((d) => d.data().cardTransactionId).filter(Boolean);
   const batch = writeBatch(dbInstance);
@@ -650,7 +811,7 @@ export async function deleteInstallmentGroup(installmentGroupId) {
 }
 
 export function subscribeToHouseholdBudgets(callback) {
-  const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+  const budgetsDocRef = docAt('settings', 'household_budgets');
   return onSnapshot(
     budgetsDocRef,
     (docSnap) => callback(docSnap.exists() && docSnap.data().budgets ? docSnap.data().budgets : {}),
@@ -659,7 +820,7 @@ export function subscribeToHouseholdBudgets(callback) {
 }
 
 export function subscribeToPaymentReminderConfig(callback) {
-  const configDocRef = doc(dbInstance, 'settings', 'payment_reminder_config');
+  const configDocRef = docAt('settings', 'payment_reminder_config');
   return onSnapshot(
     configDocRef,
     (docSnap) => {
@@ -678,7 +839,7 @@ export function subscribeToPaymentReminderConfig(callback) {
 // --- Trips ---
 
 export function subscribeToTrips(onData, onError) {
-  const q = query(tripsRef, orderBy('createdAt', 'asc'));
+  const q = query(tripsRef(), orderBy('createdAt', 'asc'));
   return onSnapshot(
     q,
     (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
@@ -694,13 +855,13 @@ export async function addTripToDb(name, currency, year, existingTrips = [], star
   if (!trimmed) return null;
   const exists = existingTrips.some((t) => t.name?.trim().toLowerCase() === trimmed.toLowerCase());
   if (exists) return null;
-  const ref = await addDoc(tripsRef, { name: trimmed, currency, year, startDate, endDate, createdAt: serverTimestamp() });
+  const ref = await addDoc(tripsRef(), { name: trimmed, currency, year, startDate, endDate, createdAt: serverTimestamp() });
   return ref.id;
 }
 
 export async function updateTripInDb(tripId, updates) {
   if (!tripId) return;
-  await updateDoc(doc(dbInstance, 'trips', tripId), updates);
+  await updateDoc(docAt('trips', tripId), updates);
 }
 
 // A rename has zero cascading writes, unlike everything else that used to
@@ -733,7 +894,7 @@ export async function archiveTripInDb(tripId, archived) {
 // match with no shared all-or-nothing outcome between them.
 export async function clearTripRollupPointer(entryId) {
   if (!entryId) return;
-  const snap = await getDocs(query(tripsRef, where('rolledUpEntryId', '==', entryId)));
+  const snap = await getDocs(query(tripsRef(), where('rolledUpEntryId', '==', entryId)));
   if (snap.empty) return;
   const batch = writeBatch(dbInstance);
   snap.docs.forEach((d) => batch.update(d.ref, { rolledUpEntryId: null, rolledUpAmount: null, rolledUpDebtor: null, rolledUpCreditor: null }));
@@ -749,28 +910,28 @@ export async function clearTripRollupPointer(entryId) {
 
 export async function clearTripRollupEntry(tripId, entryId) {
   const batch = writeBatch(dbInstance);
-  batch.delete(doc(dbInstance, 'expenses', entryId));
+  batch.delete(docAt('expenses', entryId));
   if (tripId) {
-    batch.update(doc(dbInstance, 'trips', tripId), { rolledUpEntryId: null, rolledUpAmount: null, rolledUpDebtor: null, rolledUpCreditor: null });
+    batch.update(docAt('trips', tripId), { rolledUpEntryId: null, rolledUpAmount: null, rolledUpDebtor: null, rolledUpCreditor: null });
   }
   await track(batch.commit(), 'Could not update the trip rollup');
 }
 
 export async function updateTripRollupEntry(tripId, entryId, entryUpdates, pointerUpdates) {
   const batch = writeBatch(dbInstance);
-  batch.update(doc(dbInstance, 'expenses', entryId), entryUpdates);
+  batch.update(docAt('expenses', entryId), entryUpdates);
   if (tripId) {
-    batch.update(doc(dbInstance, 'trips', tripId), pointerUpdates);
+    batch.update(docAt('trips', tripId), pointerUpdates);
   }
   await track(batch.commit(), 'Could not update the trip rollup');
 }
 
 export async function createTripRollupEntry(tripId, entryData, pointerData) {
-  const entryRef = doc(expensesRef);
+  const entryRef = doc(expensesRef());
   const batch = writeBatch(dbInstance);
   batch.set(entryRef, { ...entryData, createdAt: serverTimestamp() });
   if (tripId) {
-    batch.update(doc(dbInstance, 'trips', tripId), { ...pointerData, rolledUpEntryId: entryRef.id });
+    batch.update(docAt('trips', tripId), { ...pointerData, rolledUpEntryId: entryRef.id });
   }
   await track(batch.commit(), 'Could not update the trip rollup');
   return entryRef.id;
@@ -778,7 +939,7 @@ export async function createTripRollupEntry(tripId, entryData, pointerData) {
 
 export async function deleteTripFromDb(tripId) {
   if (!tripId) return;
-  await deleteDoc(doc(dbInstance, 'trips', tripId));
+  await deleteDoc(docAt('trips', tripId));
 }
 
 // Deleting a trip used to remove only the trip doc: its entries stayed (still
@@ -799,10 +960,10 @@ export async function deleteTripCascade(trip) {
     return [...byId.values()];
   };
   const [entriesById, entriesByName, movementsById, movementsByName] = await Promise.all([
-    getDocs(query(expensesRef, where('tripId', '==', trip.id))),
-    getDocs(query(expensesRef, where('tripName', '==', trip.name))),
-    getDocs(query(cashMovementsRef, where('tripId', '==', trip.id))),
-    getDocs(query(cashMovementsRef, where('tripName', '==', trip.name))),
+    getDocs(query(expensesRef(), where('tripId', '==', trip.id))),
+    getDocs(query(expensesRef(), where('tripName', '==', trip.name))),
+    getDocs(query(cashMovementsRef(), where('tripId', '==', trip.id))),
+    getDocs(query(cashMovementsRef(), where('tripName', '==', trip.name))),
   ]);
   const entryDocs = dedupeById([entriesById, entriesByName]);
   const movementDocs = dedupeById([movementsById, movementsByName]);
@@ -811,11 +972,11 @@ export async function deleteTripCascade(trip) {
     const data = d.data();
     if (normalizeLedger(data.ledger) !== 'travel') return;
     refs.push(d.ref);
-    if (data.cardTransactionId) refs.push(doc(dbInstance, 'cardTransactions', data.cardTransactionId));
+    if (data.cardTransactionId) refs.push(docAt('cardTransactions', data.cardTransactionId));
   });
   movementDocs.forEach((d) => refs.push(d.ref));
-  if (trip.rolledUpEntryId) refs.push(doc(expensesRef, trip.rolledUpEntryId));
-  refs.push(doc(dbInstance, 'trips', trip.id));
+  if (trip.rolledUpEntryId) refs.push(doc(expensesRef(), trip.rolledUpEntryId));
+  refs.push(docAt('trips', trip.id));
   // Batches cap at 500 writes; the trip doc goes last so a partial failure
   // leaves the trip visible to delete again.
   for (let i = 0; i < refs.length; i += 400) {
@@ -828,7 +989,7 @@ export async function deleteTripCascade(trip) {
 // --- Cash movements (travel ledger - opening balance + ATM withdrawals per trip) ---
 
 export function subscribeToCashMovements(onData, onError) {
-  const q = query(cashMovementsRef, orderBy('createdAt', 'asc'));
+  const q = query(cashMovementsRef(), orderBy('createdAt', 'asc'));
   return onSnapshot(
     q,
     (snapshot) =>
@@ -844,7 +1005,7 @@ export function subscribeToCashMovements(onData, onError) {
 }
 
 export async function addCashMovementToDb(movement) {
-  await track(addDoc(cashMovementsRef, { ...movement, createdAt: serverTimestamp() }), 'Could not save cash record');
+  await track(addDoc(cashMovementsRef(), { ...movement, createdAt: serverTimestamp() }), 'Could not save cash record');
 }
 
 // Atomic: an ATM withdrawal is really two records at once - the cash
@@ -854,9 +1015,9 @@ export async function addCashMovementToDb(movement) {
 // expense (the trip's cash balance and its spend total would disagree).
 export async function addWithdrawal(movement, entry) {
   const batch = writeBatch(dbInstance);
-  const movementRef = doc(cashMovementsRef);
+  const movementRef = doc(cashMovementsRef());
   batch.set(movementRef, { ...movement, createdAt: serverTimestamp() });
-  batch.set(doc(expensesRef), { ...entry, cashMovementId: movementRef.id, createdAt: serverTimestamp() });
+  batch.set(doc(expensesRef()), { ...entry, cashMovementId: movementRef.id, createdAt: serverTimestamp() });
   await track(batch.commit(), 'Could not record the withdrawal');
 }
 
@@ -869,8 +1030,8 @@ export async function addWithdrawal(movement, entry) {
 // they are removed when that currency's opening is saved again, as is any other 'opening' record
 // for the same currency, or the trip's cash balance would double-count two of them.
 export async function setOpeningCash(tripId, amount, currency, primaryCurrency = currency) {
-  const openingRef = doc(cashMovementsRef, `opening_${tripId}_${currency}`);
-  const existing = await getDocs(query(cashMovementsRef, where('tripId', '==', tripId), where('type', '==', 'opening')));
+  const openingRef = doc(cashMovementsRef(), `opening_${tripId}_${currency}`);
+  const existing = await getDocs(query(cashMovementsRef(), where('tripId', '==', tripId), where('type', '==', 'opening')));
   const batch = writeBatch(dbInstance);
   existing.docs.forEach((d) => {
     if (d.id !== openingRef.id && (d.data().currency || primaryCurrency) === currency) batch.delete(d.ref);
@@ -880,7 +1041,7 @@ export async function setOpeningCash(tripId, amount, currency, primaryCurrency =
 }
 
 export async function deleteCashMovementFromDb(id) {
-  await deleteDoc(doc(dbInstance, 'cashMovements', id));
+  await deleteDoc(docAt('cashMovements', id));
 }
 
 // --- Payment methods (travel ledger - "Cash", "Yash Forex", "Kruti Diners", etc.) ---
@@ -888,7 +1049,7 @@ export async function deleteCashMovementFromDb(id) {
 let paymentMethodsSeededFlag = false;
 
 export function subscribeToPaymentMethods(onData, onError) {
-  const q = query(paymentMethodsRef, orderBy('createdAt', 'asc'));
+  const q = query(paymentMethodsRef(), orderBy('createdAt', 'asc'));
   return onSnapshot(
     q,
     // Metadata changes too, so a cache-only empty result is followed by the
@@ -922,7 +1083,7 @@ export function subscribeToPaymentMethods(onData, onError) {
 async function seedDefaultPaymentMethods() {
   await seedOnce('paymentMethods', (batch) => {
     for (const name of PAYMENT_METHODS) {
-      batch.set(doc(paymentMethodsRef), { name, createdAt: serverTimestamp() });
+      batch.set(doc(paymentMethodsRef()), { name, createdAt: serverTimestamp() });
     }
   });
 }
@@ -937,7 +1098,7 @@ export async function addPaymentMethodToDb(name, existingRawDocs = [], { type, o
   if (!trimmed) return;
   const exists = existingRawDocs.some((d) => d.name?.trim().toLowerCase() === trimmed.toLowerCase());
   if (!exists) {
-    const docRef = await addDoc(paymentMethodsRef, {
+    const docRef = await addDoc(paymentMethodsRef(), {
       name: trimmed,
       ...(type ? { type } : {}),
       ...(owner ? { owner } : {}),
@@ -958,12 +1119,12 @@ export async function linkCardsToPaymentMethods(cards, methodDocs) {
     let methodId;
     if (match) {
       methodId = match.id;
-      await updateDoc(doc(dbInstance, 'paymentMethods', methodId), {
+      await updateDoc(docAt('paymentMethods', methodId), {
         type: 'credit',
         ...(match.owner || !card.owner ? {} : { owner: card.owner }),
       });
     } else {
-      const ref = await addDoc(paymentMethodsRef, {
+      const ref = await addDoc(paymentMethodsRef(), {
         name: card.name.trim(),
         type: 'credit',
         ...(card.owner ? { owner: card.owner } : {}),
@@ -973,20 +1134,20 @@ export async function linkCardsToPaymentMethods(cards, methodDocs) {
       docs.push({ id: methodId, name: card.name });
     }
     claimed.add(methodId);
-    await updateDoc(doc(dbInstance, 'creditCards', card.id), { paymentMethodId: methodId });
+    await updateDoc(docAt('creditCards', card.id), { paymentMethodId: methodId });
   }
 }
 
 export async function updatePaymentMethodInDb(id, { name, type, owner }) {
   if (!id) return;
-  await updateDoc(doc(dbInstance, 'paymentMethods', id), { name: name.trim(), type: type || 'other', owner: owner || '' });
+  await updateDoc(docAt('paymentMethods', id), { name: name.trim(), type: type || 'other', owner: owner || '' });
 }
 
 // By id - two methods can share a name (told apart by owner), and deleting
 // by name removed whichever came first, not the one tapped.
 export async function deletePaymentMethodFromDb(id) {
   if (!id) return;
-  await deleteDoc(doc(dbInstance, 'paymentMethods', id));
+  await deleteDoc(docAt('paymentMethods', id));
 }
 
 // --- Rename / usage guards (P1-5): a category/member/guest historically
@@ -1031,7 +1192,7 @@ async function batchUpdateDocs(collectionRef, computeUpdates) {
 // additionally touches trip.guests arrays (a member never appears there);
 // a member rename touches nothing extra, so one function covers both.
 async function renamePersonEverywhere(oldName, newName) {
-  const entriesUpdated = await batchUpdateDocs(expensesRef, (entry) => {
+  const entriesUpdated = await batchUpdateDocs(expensesRef(), (entry) => {
     const updates = {};
     let changed = false;
     if (entry.payer === oldName) {
@@ -1054,7 +1215,7 @@ async function renamePersonEverywhere(oldName, newName) {
     return changed ? updates : null;
   });
 
-  await batchUpdateDocs(tripsRef, (trip) => {
+  await batchUpdateDocs(tripsRef(), (trip) => {
     const updates = {};
     let changed = false;
     if (trip.rolledUpDebtor === oldName) {
@@ -1072,10 +1233,10 @@ async function renamePersonEverywhere(oldName, newName) {
     return changed ? updates : null;
   });
 
-  await batchUpdateDocs(creditCardsRef, (card) => (card.owner === oldName ? { owner: newName } : null));
-  await batchUpdateDocs(paymentMethodsRef, (pm) => (pm.owner === oldName ? { owner: newName } : null));
+  await batchUpdateDocs(creditCardsRef(), (card) => (card.owner === oldName ? { owner: newName } : null));
+  await batchUpdateDocs(paymentMethodsRef(), (pm) => (pm.owner === oldName ? { owner: newName } : null));
 
-  const rulesRef = doc(dbInstance, 'settings', 'recurring_rules');
+  const rulesRef = docAt('settings', 'recurring_rules');
   await track(
     runTransaction(dbInstance, async (tx) => {
       const snap = await tx.get(rulesRef);
@@ -1108,11 +1269,11 @@ async function renamePersonEverywhere(oldName, newName) {
 // guests share the same check, since both are just "a person" in the data.
 export async function countRecordsUsingPerson(name) {
   const [entriesSnap, tripsSnap, cardsSnap, pmSnap, rulesSnap] = await Promise.all([
-    getDocs(expensesRef),
-    getDocs(tripsRef),
-    getDocs(creditCardsRef),
-    getDocs(paymentMethodsRef),
-    getDoc(doc(dbInstance, 'settings', 'recurring_rules')),
+    getDocs(expensesRef()),
+    getDocs(tripsRef()),
+    getDocs(creditCardsRef()),
+    getDocs(paymentMethodsRef()),
+    getDoc(docAt('settings', 'recurring_rules')),
   ]);
   let count = 0;
   entriesSnap.docs.forEach((d) => {
@@ -1146,7 +1307,7 @@ export async function countRecordsUsingPerson(name) {
 // re-typing it, matching the reuse members/payment methods already get) ---
 
 export function subscribeToGuests(onData, onError) {
-  const q = query(guestsRef, orderBy('createdAt', 'asc'));
+  const q = query(guestsRef(), orderBy('createdAt', 'asc'));
   return onSnapshot(
     q,
     (snapshot) => {
@@ -1168,7 +1329,7 @@ export async function addGuestToDb(name, existingRawDocs = []) {
   if (!trimmed) return;
   const exists = existingRawDocs.some((d) => d.name?.trim().toLowerCase() === trimmed.toLowerCase());
   if (!exists) {
-    await addDoc(guestsRef, { name: trimmed, createdAt: serverTimestamp() });
+    await addDoc(guestsRef(), { name: trimmed, createdAt: serverTimestamp() });
   }
 }
 
@@ -1182,7 +1343,7 @@ export async function renameGuestInDb(oldName, newName, existingRawDocs = []) {
   if (!trimmedOld || !trimmedNew || trimmedOld === trimmedNew) return 0;
   const guestDoc = existingRawDocs.find((d) => d.name?.trim().toLowerCase() === trimmedOld.toLowerCase());
   if (guestDoc?.id) {
-    await track(updateDoc(doc(dbInstance, 'guests', guestDoc.id), { name: trimmedNew }), 'Could not rename guest');
+    await track(updateDoc(docAt('guests', guestDoc.id), { name: trimmedNew }), 'Could not rename guest');
   }
   return renamePersonEverywhere(trimmedOld, trimmedNew);
 }
@@ -1196,7 +1357,7 @@ export async function deleteGuestFromDb(name, rawDocs = []) {
   }
   const docToDelete = rawDocs.find((d) => d.name?.trim().toLowerCase() === trimmed.toLowerCase());
   if (docToDelete?.id) {
-    await deleteDoc(doc(dbInstance, 'guests', docToDelete.id));
+    await deleteDoc(docAt('guests', docToDelete.id));
   }
 }
 
@@ -1205,7 +1366,7 @@ export async function deleteGuestFromDb(name, rawDocs = []) {
 let currenciesSeededFlag = false;
 
 export function subscribeToCurrencies(onData, onError) {
-  const q = query(currenciesRef, orderBy('createdAt', 'asc'));
+  const q = query(currenciesRef(), orderBy('createdAt', 'asc'));
   return onSnapshot(
     q,
     // Metadata changes too, so a cache-only empty result is followed by the
@@ -1241,7 +1402,7 @@ export function subscribeToCurrencies(onData, onError) {
 async function seedDefaultCurrencies() {
   await seedOnce('currencies', (batch) => {
     for (const name of CURRENCIES) {
-      batch.set(doc(currenciesRef), { name, createdAt: serverTimestamp() });
+      batch.set(doc(currenciesRef()), { name, createdAt: serverTimestamp() });
     }
   });
 }
@@ -1253,7 +1414,7 @@ export async function addCurrencyToDb(name, existingRawDocs = []) {
   if (!trimmed) return;
   const exists = existingRawDocs.some((d) => d.name && d.name.trim().toUpperCase() === trimmed);
   if (!exists) {
-    await addDoc(currenciesRef, { name: trimmed, createdAt: serverTimestamp() });
+    await addDoc(currenciesRef(), { name: trimmed, createdAt: serverTimestamp() });
   }
 }
 
@@ -1262,13 +1423,13 @@ export async function deleteCurrencyFromDb(name, rawDocs = []) {
   if (!trimmed) return;
   const docToDelete = rawDocs.find((d) => d.name && d.name.trim().toUpperCase() === trimmed);
   if (docToDelete?.id) {
-    await deleteDoc(doc(dbInstance, 'currencies', docToDelete.id));
+    await deleteDoc(docAt('currencies', docToDelete.id));
     return;
   }
-  const q = query(currenciesRef, where('name', '==', trimmed));
+  const q = query(currenciesRef(), where('name', '==', trimmed));
   const snap = await getDocs(q);
   if (!snap.empty) {
-    await Promise.all(snap.docs.map((d) => deleteDoc(doc(dbInstance, 'currencies', d.id))));
+    await Promise.all(snap.docs.map((d) => deleteDoc(docAt('currencies', d.id))));
   }
 }
 
@@ -1279,7 +1440,7 @@ export async function addMemberToDb(name, existingRawDocs = []) {
   if (!trimmed) return;
   const exists = existingRawDocs.some((d) => d.name && d.name.trim().toLowerCase() === trimmed.toLowerCase());
   if (!exists) {
-    await addDoc(membersRef, { name: trimmed, createdAt: serverTimestamp() });
+    await addDoc(membersRef(), { name: trimmed, createdAt: serverTimestamp() });
   }
 }
 
@@ -1292,7 +1453,7 @@ export async function renameMemberInDb(oldName, newName, existingRawDocs = []) {
   if (!trimmedOld || !trimmedNew || trimmedOld === trimmedNew) return 0;
   const memberDoc = existingRawDocs.find((d) => d.name?.trim().toLowerCase() === trimmedOld.toLowerCase());
   if (memberDoc?.id) {
-    await track(updateDoc(doc(dbInstance, 'members', memberDoc.id), { name: trimmedNew }), 'Could not rename member');
+    await track(updateDoc(docAt('members', memberDoc.id), { name: trimmedNew }), 'Could not rename member');
   }
   return renamePersonEverywhere(trimmedOld, trimmedNew);
 }
@@ -1306,13 +1467,13 @@ export async function deleteMemberFromDb(name, rawDocs = []) {
   }
   const docToDelete = rawDocs.find((d) => d.name && d.name.trim().toLowerCase() === trimmed.toLowerCase());
   if (docToDelete?.id) {
-    await deleteDoc(doc(dbInstance, 'members', docToDelete.id));
+    await deleteDoc(docAt('members', docToDelete.id));
     return;
   }
-  const q = query(membersRef, where('name', '==', trimmed));
+  const q = query(membersRef(), where('name', '==', trimmed));
   const snap = await getDocs(q);
   if (!snap.empty) {
-    await Promise.all(snap.docs.map((d) => deleteDoc(doc(dbInstance, 'members', d.id))));
+    await Promise.all(snap.docs.map((d) => deleteDoc(docAt('members', d.id))));
   }
 }
 
@@ -1324,7 +1485,7 @@ export async function deleteMemberFromDb(name, rawDocs = []) {
 // last saw - two people editing different categories at the same time used
 // to have the second save silently drop the first's change.
 export async function saveHouseholdBudget(category, amount) {
-  const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+  const budgetsDocRef = docAt('settings', 'household_budgets');
   await track(
     setDoc(budgetsDocRef, { budgets: { [category]: amount }, updatedAt: serverTimestamp() }, { merge: true }),
     'Could not save budget',
@@ -1332,7 +1493,7 @@ export async function saveHouseholdBudget(category, amount) {
 }
 
 export async function deleteHouseholdBudget(category) {
-  const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+  const budgetsDocRef = docAt('settings', 'household_budgets');
   await track(
     setDoc(budgetsDocRef, { budgets: { [category]: deleteField() }, updatedAt: serverTimestamp() }, { merge: true }),
     'Could not remove budget',
@@ -1345,7 +1506,7 @@ export async function deleteHouseholdBudget(category) {
 // subscribeToHouseholdBudgets's callback, which every existing caller
 // already treats as a flat {category: limit} map.
 export function subscribeToOverallBudget(callback) {
-  const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+  const budgetsDocRef = docAt('settings', 'household_budgets');
   return onSnapshot(
     budgetsDocRef,
     (docSnap) => callback(docSnap.exists() && Number(docSnap.data().overallBudget) > 0 ? Number(docSnap.data().overallBudget) : null),
@@ -1354,7 +1515,7 @@ export function subscribeToOverallBudget(callback) {
 }
 
 export async function saveOverallBudget(amount) {
-  const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+  const budgetsDocRef = docAt('settings', 'household_budgets');
   await track(
     setDoc(budgetsDocRef, { overallBudget: amount, updatedAt: serverTimestamp() }, { merge: true }),
     'Could not save overall budget',
@@ -1362,7 +1523,7 @@ export async function saveOverallBudget(amount) {
 }
 
 export async function deleteOverallBudget() {
-  const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+  const budgetsDocRef = docAt('settings', 'household_budgets');
   await track(
     setDoc(budgetsDocRef, { overallBudget: deleteField() }, { merge: true }),
     'Could not remove overall budget',
@@ -1376,7 +1537,7 @@ export async function deleteOverallBudget() {
 // this device's full local copy - toggling "enabled" on one phone used to
 // be able to revert a threshold edit made moments earlier on the other.
 export async function savePaymentReminderConfigToDb(updates) {
-  const configDocRef = doc(dbInstance, 'settings', 'payment_reminder_config');
+  const configDocRef = docAt('settings', 'payment_reminder_config');
   await track(setDoc(configDocRef, { ...updates, updatedAt: serverTimestamp() }, { merge: true }), 'Could not save reminder settings');
 }
 
@@ -1384,7 +1545,7 @@ export async function savePaymentReminderConfigToDb(updates) {
 // doc holding the whole array, matching web's shape exactly. ---
 
 export function subscribeToRecurringRules(callback) {
-  const rulesDocRef = doc(dbInstance, 'settings', 'recurring_rules');
+  const rulesDocRef = docAt('settings', 'recurring_rules');
   return onSnapshot(
     rulesDocRef,
     (docSnap) => callback(docSnap.exists() && Array.isArray(docSnap.data().rules) ? docSnap.data().rules : []),
@@ -1402,13 +1563,13 @@ export function subscribeToRecurringRules(callback) {
 // all produced duplicate rent entries. Needs the server; returns how many
 // entries it created.
 export async function runRecurringGeneration(currentMonthKey) {
-  const rulesRef = doc(dbInstance, 'settings', 'recurring_rules');
+  const rulesRef = docAt('settings', 'recurring_rules');
   const { created, linkable } = await runTransaction(dbInstance, async (tx) => {
     const rulesSnap = await tx.get(rulesRef);
     const rules = rulesSnap.exists() && Array.isArray(rulesSnap.data().rules) ? rulesSnap.data().rules : [];
     const { toCreate, updatedRules } = computeRecurringEntriesToGenerate(rules, currentMonthKey);
     if (!updatedRules) return { created: 0, linkable: [] };
-    const refs = toCreate.map((item) => doc(expensesRef, item.id));
+    const refs = toCreate.map((item) => doc(expensesRef(), item.id));
     const existing = await Promise.all(refs.map((ref) => tx.get(ref)));
     let createdCount = 0;
     const linkableEntries = [];
@@ -1428,7 +1589,7 @@ export async function runRecurringGeneration(currentMonthKey) {
   // safely be combined with the runTransaction above.
   if (linkable.length > 0) {
     try {
-      const [paymentMethodsSnap, creditCardsSnap] = await Promise.all([getDocs(paymentMethodsRef), getDocs(creditCardsRef)]);
+      const [paymentMethodsSnap, creditCardsSnap] = await Promise.all([getDocs(paymentMethodsRef()), getDocs(creditCardsRef())]);
       const rawPaymentMethods = paymentMethodsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       const creditCardDocs = creditCardsSnap.docs.map((d) => /** @type {import('./types').Card} */ ({ id: d.id, ...d.data() }));
       const instruments = buildPaymentInstruments(rawPaymentMethods, creditCardDocs);
@@ -1465,7 +1626,7 @@ export async function runRecurringGeneration(currentMonthKey) {
 // deleting a different one on the other used to have whichever save landed
 // second silently overwrite the first's change with its own stale snapshot.
 export async function addRecurringRule(rule) {
-  const rulesRef = doc(dbInstance, 'settings', 'recurring_rules');
+  const rulesRef = docAt('settings', 'recurring_rules');
   await track(
     runTransaction(dbInstance, async (tx) => {
       const snap = await tx.get(rulesRef);
@@ -1482,7 +1643,7 @@ export async function addRecurringRule(rule) {
 // add/delete above. Editing never touches lastGeneratedMonth, so it can't
 // accidentally re-create or skip a month the rule already generated.
 export async function updateRecurringRule(ruleId, updates) {
-  const rulesRef = doc(dbInstance, 'settings', 'recurring_rules');
+  const rulesRef = docAt('settings', 'recurring_rules');
   await track(
     runTransaction(dbInstance, async (tx) => {
       const snap = await tx.get(rulesRef);
@@ -1498,7 +1659,7 @@ export async function updateRecurringRule(ruleId, updates) {
 }
 
 export async function deleteRecurringRule(ruleId) {
-  const rulesRef = doc(dbInstance, 'settings', 'recurring_rules');
+  const rulesRef = docAt('settings', 'recurring_rules');
   await track(
     runTransaction(dbInstance, async (tx) => {
       const snap = await tx.get(rulesRef);
@@ -1519,7 +1680,7 @@ export async function deleteRecurringRule(ruleId) {
 // PIN (see lib/pinAuth.js); `legacyPin` is a plaintext PIN saved before
 // hashing existed, kept working until the next save overwrites it.
 export function subscribeToPinConfig(callback) {
-  const pinDocRef = doc(dbInstance, 'settings', 'pin_config');
+  const pinDocRef = docAt('settings', 'pin_config');
   return onSnapshot(
     pinDocRef,
     { includeMetadataChanges: true },
@@ -1546,14 +1707,14 @@ export function subscribeToPinConfig(callback) {
 // plaintext copy next to the hash once a device that still has the PIN
 // disabled saves again.
 export async function savePinConfigToDb({ pinHash, enabled }) {
-  const pinDocRef = doc(dbInstance, 'settings', 'pin_config');
+  const pinDocRef = docAt('settings', 'pin_config');
   await setDoc(pinDocRef, { pinHash: pinHash || null, pin: deleteField(), enabled: Boolean(enabled), updatedAt: serverTimestamp() }, { merge: true });
 }
 
 // --- Credit cards - a handful of user-managed entities, one doc per card. ---
 
 export function subscribeToCreditCards(onData, onError) {
-  const q = query(creditCardsRef, orderBy('createdAt', 'asc'));
+  const q = query(creditCardsRef(), orderBy('createdAt', 'asc'));
   return onSnapshot(
     q,
     (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
@@ -1562,25 +1723,25 @@ export function subscribeToCreditCards(onData, onError) {
 }
 
 export async function addCreditCardToDb(card) {
-  const docRef = await addDoc(creditCardsRef, { ...card, createdAt: serverTimestamp() });
+  const docRef = await addDoc(creditCardsRef(), { ...card, createdAt: serverTimestamp() });
   return docRef.id;
 }
 
 export async function updateCreditCardInDb(cardId, updates) {
   if (!cardId) return;
-  await updateDoc(doc(dbInstance, 'creditCards', cardId), updates);
+  await updateDoc(docAt('creditCards', cardId), updates);
 }
 
 export async function deleteCreditCardFromDb(cardId) {
   if (!cardId) return;
-  await deleteDoc(doc(dbInstance, 'creditCards', cardId));
+  await deleteDoc(docAt('creditCards', cardId));
 }
 
 // --- Card transactions - potentially large over time, a real collection
 // like expenses rather than a single settings doc. ---
 
 export function subscribeToCardTransactions(onData, onError) {
-  const q = query(cardTransactionsRef, orderBy('date', 'desc'));
+  const q = query(cardTransactionsRef(), orderBy('date', 'desc'));
   const toTransactions = createStableDocs((d) => ({
     id: d.id,
     ...d.data(),
@@ -1594,18 +1755,18 @@ export function subscribeToCardTransactions(onData, onError) {
 }
 
 export async function addCardTransaction(transaction) {
-  const docRef = await track(addDoc(cardTransactionsRef, { ...transaction, createdAt: serverTimestamp() }), 'Could not save card transaction');
+  const docRef = await track(addDoc(cardTransactionsRef(), { ...transaction, createdAt: serverTimestamp() }), 'Could not save card transaction');
   return docRef.id;
 }
 
 export async function updateCardTransaction(id, updates) {
   if (!id) return;
-  await track(updateDoc(doc(dbInstance, 'cardTransactions', id), updates), 'Could not save card transaction');
+  await track(updateDoc(docAt('cardTransactions', id), updates), 'Could not save card transaction');
 }
 
 export async function deleteCardTransaction(id) {
   if (!id) return;
-  await track(deleteDoc(doc(dbInstance, 'cardTransactions', id)), 'Could not delete card transaction');
+  await track(deleteDoc(docAt('cardTransactions', id)), 'Could not delete card transaction');
 }
 
 // Atomic: creates a card transaction and stamps the entry it belongs to
@@ -1616,10 +1777,10 @@ export async function deleteCardTransaction(id) {
 // already saved by a separate, earlier call) - this only makes the "create
 // the card side and link it" pair atomic with each other.
 export async function addCardTransactionAndLink(entryId, cardTransaction) {
-  const cardTxnRef = doc(cardTransactionsRef);
+  const cardTxnRef = doc(cardTransactionsRef());
   const batch = writeBatch(dbInstance);
   batch.set(cardTxnRef, { ...cardTransaction, linkedEntryId: entryId, createdAt: serverTimestamp() });
-  batch.update(doc(dbInstance, 'expenses', entryId), { cardTransactionId: cardTxnRef.id });
+  batch.update(docAt('expenses', entryId), { cardTransactionId: cardTxnRef.id });
   await track(batch.commit(), 'Could not link the card transaction');
   return cardTxnRef.id;
 }
@@ -1634,10 +1795,10 @@ export async function addCardTransactionAndLink(entryId, cardTransaction) {
 export async function replaceCardTransaction(oldId, newData) {
   if (!oldId && !newData) return null;
   const batch = writeBatch(dbInstance);
-  if (oldId) batch.delete(doc(dbInstance, 'cardTransactions', oldId));
+  if (oldId) batch.delete(docAt('cardTransactions', oldId));
   let newId = null;
   if (newData) {
-    const newRef = doc(cardTransactionsRef);
+    const newRef = doc(cardTransactionsRef());
     batch.set(newRef, { ...newData, createdAt: serverTimestamp() });
     newId = newRef.id;
   }
@@ -1652,7 +1813,7 @@ export async function replaceCardTransaction(oldId, newData) {
 
 export function subscribeToCardBillingCycles(onData, onError) {
   return onSnapshot(
-    cardBillingCyclesRef,
+    cardBillingCyclesRef(),
     (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))),
     onError,
   );
@@ -1661,14 +1822,14 @@ export function subscribeToCardBillingCycles(onData, onError) {
 // Closed statements' headline numbers (shadow phase - written and checked, not yet shown). Its own
 // collection, not cardBillingCycles, so it can never shadow a bill/reward you confirmed there.
 export function subscribeToStatementSummaries(onData, onError) {
-  return onSnapshot(cardStatementSummariesRef, (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
+  return onSnapshot(cardStatementSummariesRef(), (snapshot) => onData(snapshot.docs.map((d) => ({ id: d.id, ...d.data() }))), onError);
 }
 
 export async function saveStatementSummaries(summaries) {
   if (!summaries.length) return;
   const batch = writeBatch(dbInstance);
   summaries.forEach((item) => {
-    batch.set(doc(dbInstance, 'cardStatementSummaries', getCardBillingCycleKey(item.cardId, item.cycleStart)), { ...item, computedAt: serverTimestamp() });
+    batch.set(docAt('cardStatementSummaries', getCardBillingCycleKey(item.cardId, item.cycleStart)), { ...item, computedAt: serverTimestamp() });
   });
   await track(batch.commit(), 'Could not save statement summaries');
 }
@@ -1676,7 +1837,7 @@ export async function saveStatementSummaries(summaries) {
 export async function saveCardBillingCycle(cardId, cycleStart, updates) {
   const key = getCardBillingCycleKey(cardId, cycleStart);
   await track(
-    setDoc(doc(dbInstance, 'cardBillingCycles', key), { cardId, cycleStart, ...updates, updatedAt: serverTimestamp() }, { merge: true }),
+    setDoc(docAt('cardBillingCycles', key), { cardId, cycleStart, ...updates, updatedAt: serverTimestamp() }, { merge: true }),
     'Could not save card billing cycle',
   );
 }
@@ -1691,7 +1852,7 @@ export async function addCategoryToDb(ledger, name, existingRawDocs = []) {
     (d) => d.name && d.name.trim().toLowerCase() === trimmed.toLowerCase() && (d.ledger === targetKey || (!d.ledger && targetKey === 'household')),
   );
   if (!exists) {
-    await addDoc(categoriesRef, { name: trimmed, ledger: targetKey, createdAt: serverTimestamp() });
+    await addDoc(categoriesRef(), { name: trimmed, ledger: targetKey, createdAt: serverTimestamp() });
   }
 }
 
@@ -1699,7 +1860,7 @@ export async function addCategoryToDb(ledger, name, existingRawDocs = []) {
 // per-ledger, so a household "Rent" and a travel "Rent" are unrelated.
 export async function countEntriesUsingCategory(ledger, name) {
   const targetKey = ledger === 'travel' ? 'travel' : 'household';
-  const snap = await getDocs(expensesRef);
+  const snap = await getDocs(expensesRef());
   return snap.docs.filter((d) => (d.data().ledger || 'household') === targetKey && d.data().category === name).length;
 }
 
@@ -1716,15 +1877,15 @@ export async function renameCategoryInDb(ledger, oldName, newName, existingRawDo
     (d) => d.name?.trim().toLowerCase() === trimmedOld.toLowerCase() && (d.ledger === targetKey || (!d.ledger && targetKey === 'household')),
   );
   if (catDoc?.id) {
-    await track(updateDoc(doc(dbInstance, 'categories', catDoc.id), { name: trimmedNew }), 'Could not rename category');
+    await track(updateDoc(docAt('categories', catDoc.id), { name: trimmedNew }), 'Could not rename category');
   }
 
-  const entriesUpdated = await batchUpdateDocs(expensesRef, (entry) =>
+  const entriesUpdated = await batchUpdateDocs(expensesRef(), (entry) =>
     (entry.ledger || 'household') === targetKey && entry.category === trimmedOld ? { category: trimmedNew } : null,
   );
 
   if (targetKey === 'household') {
-    const budgetsDocRef = doc(dbInstance, 'settings', 'household_budgets');
+    const budgetsDocRef = docAt('settings', 'household_budgets');
     const budgetsSnap = await getDoc(budgetsDocRef);
     const budgets = budgetsSnap.exists() ? budgetsSnap.data().budgets || {} : {};
     if (Object.prototype.hasOwnProperty.call(budgets, trimmedOld)) {
@@ -1738,14 +1899,14 @@ export async function renameCategoryInDb(ledger, oldName, newName, existingRawDo
       );
     }
   } else {
-    await batchUpdateDocs(tripsRef, (trip) => {
+    await batchUpdateDocs(tripsRef(), (trip) => {
       const cb = trip.categoryBudgets;
       if (!cb || !Object.prototype.hasOwnProperty.call(cb, trimmedOld)) return null;
       return { [`categoryBudgets.${trimmedOld}`]: deleteField(), [`categoryBudgets.${trimmedNew}`]: cb[trimmedOld] };
     });
   }
 
-  const rulesRef = doc(dbInstance, 'settings', 'recurring_rules');
+  const rulesRef = docAt('settings', 'recurring_rules');
   await track(
     runTransaction(dbInstance, async (tx) => {
       const snap = await tx.get(rulesRef);
@@ -1775,16 +1936,16 @@ export async function deleteCategoryFromDb(ledger, categoryName, rawDocs = []) {
     (d) => d.name && d.name.trim().toLowerCase() === trimmed.toLowerCase() && (d.ledger === targetKey || (!d.ledger && targetKey === 'household')),
   );
   if (docToDelete?.id) {
-    await deleteDoc(doc(dbInstance, 'categories', docToDelete.id));
+    await deleteDoc(docAt('categories', docToDelete.id));
     return;
   }
   // Fallback by name, limited to this ledger - it used to delete a same-named
   // category from the other ledger too (e.g. travel "Food" and household "Food").
-  const q = query(categoriesRef, where('name', '==', trimmed));
+  const q = query(categoriesRef(), where('name', '==', trimmed));
   const snap = await getDocs(q);
   const matches = snap.docs.filter((d) => {
     const docLedger = d.data().ledger;
     return docLedger === targetKey || (!docLedger && targetKey === 'household');
   });
-  await Promise.all(matches.map((d) => deleteDoc(doc(dbInstance, 'categories', d.id))));
+  await Promise.all(matches.map((d) => deleteDoc(docAt('categories', d.id))));
 }

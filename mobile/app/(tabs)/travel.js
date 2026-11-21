@@ -1,3 +1,5 @@
+import { Redirect } from 'expo-router';
+import { FEATURES } from '../../lib/edition';
 import { useEffect, useMemo, useState } from 'react';
 import { View, ScrollView, Platform, KeyboardAvoidingView, useWindowDimensions } from 'react-native';
 import {
@@ -31,7 +33,7 @@ import CategoryChart from '../../components/CategoryChart';
 import PaymentMethodChart from '../../components/PaymentMethodChart';
 import UndoToast from '../../components/UndoToast';
 
-export default function Travel() {
+function TravelScreen() {
   const { user } = useAuth();
   const { pendingJump, setPendingJump } = useJump();
   const [allTravelEntries, setAllTravelEntries] = useState(null);
@@ -313,4 +315,11 @@ export default function Travel() {
       />
     </View>
   );
+}
+
+// Not part of every edition (see lib/edition.js): where this screen is switched off, anyone who lands on its
+// URL goes to Household, and none of its data subscriptions ever start.
+export default function Travel() {
+  if (!FEATURES.travel) return <Redirect href="/household" />;
+  return <TravelScreen />;
 }

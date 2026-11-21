@@ -27,6 +27,7 @@ import { IBMPlexMono_600SemiBold } from '@expo-google-fonts/ibm-plex-mono/600Sem
 import { IBMPlexMono_700Bold } from '@expo-google-fonts/ibm-plex-mono/700Bold';
 import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider } from '../lib/AuthContext';
+import { GroupProvider } from '../lib/GroupContext';
 import { LockProvider } from '../lib/LockContext';
 import { JumpProvider } from '../lib/JumpContext';
 import { SettingsModalProvider, useSettingsModal } from '../lib/SettingsModalContext';
@@ -155,6 +156,7 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       <AuthProvider>
+        <GroupProvider>
         <LockProvider>
           <JumpProvider>
             <SettingsModalProvider>
@@ -182,6 +184,7 @@ export default function RootLayout() {
             </SettingsModalProvider>
           </JumpProvider>
         </LockProvider>
+        </GroupProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );
