@@ -22,7 +22,6 @@ import {
   parseImport,
   diffForPreview,
   computeOverlap,
-  computeMix,
   formatRupeesCompact,
   buildTrade,
   syncNudges,
@@ -38,7 +37,12 @@ import {
   simulateSip,
   periodReturnPct,
   computeBenchmarkTable,
+  sliceHistory,
+  computeAllocation,
+  computeRelativeLines,
   projectCorpus,
+  summariseProjection,
+  inTodaysMoney,
   holdingsToCsv,
   nudgeTarget,
 } from '../lib/portfolio.js';
@@ -300,17 +304,6 @@ test('computeOverlap: group exposure, shared stocks, pairs, and a fund held in t
   assert.deepEqual(o.pairs, [{ a: 'Alpha', b: 'Beta', pct: 10 }]); // min(10, 20) on X
 });
 
-test('computeMix sums value per category, largest first', () => {
-  const mix = computeMix([
-    { category: 'Thematic', value: 300 },
-    { category: 'Small cap', value: 700 },
-    { category: 'Thematic', value: 100 },
-  ]);
-  assert.deepEqual(mix.map((m) => [m.label, m.value]), [['Small cap', 700], ['Thematic', 400]]);
-  assert.ok(Math.abs(mix[0].pct - (700 / 1100) * 100) < 1e-9);
-  assert.ok(Math.abs(mix[0].pct + mix[1].pct - 100) < 1e-9);
-});
-
 test('formatRupeesCompact reads in lakh and crore', () => {
   assert.equal(formatRupeesCompact(5421351), '₹54.2L');
   assert.equal(formatRupeesCompact(250000), '₹2.50L');
@@ -566,6 +559,90 @@ test('projectCorpus: plain addition at 0%, a yearly step-up, and 12% a year comp
   assert.ok(Math.abs(stepped[2].value - 3520) < 1e-9); // 1000 + 12 x 100 + 12 x 110
   const grown = projectCorpus({ start: 100, monthlySip: 0, annualReturnPct: 12, years: 1 });
   assert.ok(Math.abs(grown[1].value - 112) < 1e-9);
+});
+
+test('summariseProjection: value, what you put in versus growth, and the value in today\'s money', () => {
+  const path = projectCorpus({ start: 1000, monthlySip: 100, annualReturnPct: 0, years: 2 });
+  const flat = summariseProjection(path, 2, 6);
+  assert.equal(flat.value, 3400);
+  assert.equal(flat.invested, 3400);
+  assert.equal(flat.growth, 0);
+  assert.equal(flat.investedShare, 1);
+  assert.ok(Math.abs(flat.real - 3400 / 1.06 ** 2) < 1e-9);
+  const grown = summariseProjection(projectCorpus({ start: 100, monthlySip: 0, annualReturnPct: 12, years: 1 }), 1, 0);
+  assert.ok(Math.abs(grown.growth - 12) < 1e-9);
+  assert.ok(Math.abs(grown.investedShare - 100 / 112) < 1e-9);
+  assert.equal(grown.real, grown.value); // no inflation: today's money is the same
+  // a year the path does not reach, and an empty path, never throw or divide by zero
+  assert.equal(summariseProjection(path, 9, 6).value, 0);
+  assert.equal(summariseProjection([], 1, 6).investedShare, 1);
+  assert.equal(inTodaysMoney(100, 0, 6), 100);
+});
+
+test('computeHistory: what was put in is the snapshot cost, plus SIP and buys after it, minus sales at the average cost', () => {
+  const base = { funds: [FUNDS[0]], snapshots: SNAP, navByCode: NAV, days: 10 };
+  assert.deepEqual(computeHistory({ ...base, sipPlan: {} }).invested, [800, 800, 800, 800]); // 100 units at 8, held flat
+  const sip = computeHistory({ ...base, sipPlan: { A: 120 } });
+  assert.deepEqual(sip.invested, [800, 800, 920, 1040]); // 120 a day on 19 and 20 Nov
+  const buy = computeHistory({ ...base, trades: [{ fundKey: 'A', kind: 'buy', date: '2026-11-19', units: 5, amount: 60 }] });
+  assert.deepEqual(buy.invested, [800, 800, 860, 860]);
+  const sell = computeHistory({ ...base, trades: [{ fundKey: 'A', kind: 'sell', date: '2026-11-19', units: 20, amount: 240 }] });
+  assert.deepEqual(sell.invested, [800, 800, 640, 640]); // 20 of 100 units leave at the average cost of 8
+  // the newest point meets the invested figure the portfolio table shows
+  const total = computePortfolio({ funds: [FUNDS[0]], snapshots: SNAP, navByCode: NAV, sipPlan: { A: 120 } }).total.cost;
+  assert.ok(Math.abs(sip.invested[sip.invested.length - 1] - total) < 1e-9);
+  assert.deepEqual(computeHistory({ funds: FUNDS, snapshots: [], navByCode: NAV }).invested, []);
+});
+
+test('sliceHistory keeps the last N calendar days of every series, and all of it when N is empty or too long', () => {
+  const h = { dates: ['2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20'], value: [1, 2, 3, 4], invested: [9, 9, 9, 9], day: [0, 1, 1, 1], constantBefore: '2026-11-18' };
+  const one = sliceHistory(h, 1);
+  assert.deepEqual(one.dates, ['2026-11-19', '2026-11-20']);
+  assert.deepEqual(one.value, [3, 4]);
+  assert.deepEqual(one.invested, [9, 9]);
+  assert.equal(one.constantBefore, '2026-11-18');
+  assert.equal(sliceHistory(h, 0), h);
+  assert.equal(sliceHistory(h, 365).dates.length, 4);
+  assert.deepEqual(sliceHistory({ dates: [], value: [], invested: [], day: [] }, 30).dates, []);
+});
+
+test('computeAllocation: slices by fund, fund house or category, largest first, small ones folded into Others, percentages add to 100', () => {
+  const rows = [
+    { key: 'A', short: 'Alpha', amc: 'Alp', category: 'Diversified', value: 500 },
+    { key: 'B', short: 'Beta', amc: 'Bet', category: 'Thematic', value: 300 },
+    { key: 'C', short: 'Gamma', amc: 'Alp', category: 'Thematic', value: 150 },
+    { key: 'D', short: 'Delta', amc: 'Del', category: null, value: 50 },
+    { key: 'E', short: 'Gone', amc: 'Gon', category: 'Thematic', value: 0 }, // sold out: no slice
+  ];
+  const cat = computeAllocation(rows, 'category');
+  assert.deepEqual(cat.map((c) => [c.label, c.value]), [['Diversified', 500], ['Thematic', 450], ['Other', 50]]);
+  assert.ok(Math.abs(cat.reduce((a, c) => a + c.pct, 0) - 100) < 1e-9);
+  const amc = computeAllocation(rows, 'amc');
+  assert.deepEqual(amc.map((c) => [c.label, c.value, c.count]), [['Alp', 650, 2], ['Bet', 300, 1], ['Del', 50, 1]]);
+  const folded = computeAllocation(rows, 'fund', 3);
+  assert.deepEqual(folded.map((c) => c.label), ['Alpha', 'Beta', 'Others']);
+  assert.equal(folded[2].value, 200);
+  assert.deepEqual(folded[2].others, ['Gamma', 'Delta']);
+  assert.deepEqual(computeAllocation([], 'fund'), []);
+});
+
+test('computeRelativeLines: percent change since the window start for the index and each fund; a window the history does not reach is reported', () => {
+  const rows = [{ key: 'B', schemeCode: '2', short: 'Beta', value: 1 }];
+  const navs = { 1: NAV[1], 2: NAV[2] };
+  const r = computeRelativeLines({ rows, navByCode: navs, benchmarkCode: '1', days: 3 });
+  assert.deepEqual(r.dates, ['2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20']);
+  const near = (got, want) => got.length === want.length && got.every((v, i) => Math.abs(v - want[i]) < 1e-9);
+  assert.ok(near(r.benchmark, [0, 10, 20, 30])); // 10 -> 13
+  assert.ok(near(r.funds[0].values, [0, 0, 10, 20])); // 100 -> 120
+  assert.ok(Math.abs(r.funds[0].last - 20) < 1e-9);
+  assert.equal(computeRelativeLines({ rows, navByCode: navs, benchmarkCode: '1', days: 365 }).tooShort, true);
+  assert.equal(computeRelativeLines({ rows, navByCode: navs, benchmarkCode: '9', days: 3 }).hasBenchmark, false);
+  // a fund whose NAVs start well after the window is left out, not drawn from a wrong start
+  const longBench = [['2026-10-01', 100], ['2026-10-21', 110], ['2026-11-20', 120]];
+  const late = { 1: longBench, 2: [['2026-11-10', 5], ['2026-11-20', 6]] };
+  const out = computeRelativeLines({ rows, navByCode: late, benchmarkCode: '1', days: 30 });
+  assert.ok(out.dates.length >= 2);
+  assert.equal(out.funds.length, 0);
 });
 
 test('holdingsToCsv: a header, one line per fund, and commas and quotes escaped', () => {

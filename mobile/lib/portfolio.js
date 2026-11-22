@@ -365,7 +365,7 @@ export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, si
 export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, sipSchedule = null, trades = [], days = 90 }) {
   const ordered = [...(snapshots || [])].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const live = (funds || []).filter((f) => navByCode?.[String(f.schemeCode)]?.length && ordered.some((s) => s.positions?.[f.key]));
-  if (live.length === 0) return { dates: [], value: [], day: [], constantBefore: null };
+  if (live.length === 0) return { dates: [], value: [], invested: [], day: [], constantBefore: null };
 
   // A trading day is one most of the funds priced (liquid funds also publish on weekends).
   const counts = new Map();
@@ -373,7 +373,7 @@ export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, sipS
   const need = Math.ceil(live.length / 2);
   const all = [...counts.entries()].filter(([, c]) => c >= need).map(([d]) => d).sort();
   const dates = all.slice(-(days + 1));
-  if (dates.length < 2) return { dates, value: [], day: [], constantBefore: null };
+  if (dates.length < 2) return { dates, value: [], invested: [], day: [], constantBefore: null };
 
   const perFund = live.map((f) => {
     const series = navByCode[String(f.schemeCode)];
@@ -401,13 +401,30 @@ export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, sipS
     return Math.max(units, 0);
   };
 
+  // What was put in (the cost of the units held) on a date: the position at its snapshot plus the SIP and trades after it,
+  // the same arithmetic as estimateHolding, so the line meets today's invested figure. Before the first snapshot it is
+  // held at that snapshot's cost, like the units.
+  const costAt = (pf, date) => {
+    let base = pf.snaps[0];
+    for (const s of pf.snaps) if (s.date <= date) base = s;
+    const pos = base.positions[pf.f.key];
+    if (date <= base.date) return (Number(pos.units) || 0) * (Number(pos.avgCost) || 0);
+    const position = { units: Number(pos.units) || 0, avgCost: Number(pos.avgCost) || 0, date: base.date };
+    return estimateHolding(position, pf.series, pf.amountOn, date, pf.trades).cost;
+  };
+  perFund.forEach((pf) => {
+    pf.amountOn = sipAmountFn(sipPlan, sipSchedule, pf.f.key);
+  });
+
   const value = [];
+  const invested = [];
   const day = [];
   let prevUnits = null;
   let prevNavs = null;
   for (const date of dates) {
     let v = 0;
     let d = 0;
+    let c = 0;
     const unitsNow = [];
     const navsNow = [];
     perFund.forEach((pf, i) => {
@@ -416,14 +433,16 @@ export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, sipS
       unitsNow.push(units);
       navsNow.push(nav);
       if (nav != null) v += units * nav;
+      c += costAt(pf, date);
       if (prevUnits && nav != null && prevNavs[i] != null) d += prevUnits[i] * (nav - prevNavs[i]);
     });
     value.push(v);
+    invested.push(c);
     day.push(prevUnits ? d : 0);
     prevUnits = unitsNow;
     prevNavs = navsNow;
   }
-  return { dates, value, day, constantBefore: ordered[0].date };
+  return { dates, value, invested, day, constantBefore: ordered[0].date };
 }
 
 // ---------- importing a snapshot ----------
@@ -592,14 +611,37 @@ export function computeOverlap(overlap, rows) {
   };
 }
 
-// Share of the portfolio per category (Small cap, Thematic, ...).
-export function computeMix(rows) {
-  const total = (rows || []).reduce((a, r) => a + r.value, 0);
-  const by = {};
-  for (const r of rows || []) by[r.category || 'Other'] = (by[r.category || 'Other'] || 0) + r.value;
-  return Object.entries(by)
-    .map(([label, value]) => ({ label, value, pct: total > 0 ? (value / total) * 100 : 0 }))
-    .sort((a, b) => b.value - a.value);
+// The last `days` calendar days of a computeHistory result (the whole thing when `days` is empty or longer than it).
+export function sliceHistory(history, days) {
+  const n = history?.dates?.length || 0;
+  if (!n || !days) return history;
+  const from = addDaysISO(history.dates[n - 1], -days);
+  const first = history.dates.findIndex((d) => d >= from);
+  const i = first < 0 ? 0 : first;
+  const cut = (a) => (a || []).slice(i);
+  return { ...history, dates: cut(history.dates), value: cut(history.value), invested: cut(history.invested), day: cut(history.day) };
+}
+
+// What the portfolio is made of, for a donut: slices by fund, fund house or category, largest first. Beyond `maxSlices`
+// the small ones are folded into "Others" so the donut and its legend stay readable.
+export function computeAllocation(rows, by = 'category', maxSlices = 6) {
+  const labelOf = (r) => (by === 'fund' ? r.short || r.name : by === 'amc' ? r.amc : r.category) || 'Other';
+  const total = (rows || []).reduce((a, r) => a + (r.value > 0 ? r.value : 0), 0);
+  const groups = new Map();
+  for (const r of rows || []) {
+    if (!(r.value > 0)) continue;
+    const label = labelOf(r);
+    const g = groups.get(label) || { label, value: 0, count: 0 };
+    g.value += r.value;
+    g.count += 1;
+    groups.set(label, g);
+  }
+  let slices = [...groups.values()].sort((a, b) => b.value - a.value);
+  if (slices.length > maxSlices) {
+    const rest = slices.slice(maxSlices - 1);
+    slices = [...slices.slice(0, maxSlices - 1), { label: 'Others', value: rest.reduce((a, g) => a + g.value, 0), count: rest.reduce((a, g) => a + g.count, 0), others: rest.map((g) => g.label) }];
+  }
+  return slices.map((g) => ({ ...g, pct: total > 0 ? (g.value / total) * 100 : 0 }));
 }
 
 // ---------- recorded trades ----------
@@ -832,6 +874,35 @@ export function computeBenchmarkTable({ rows, navByCode, benchmarkCode }) {
   return { benchmark: benchReturns, hasBenchmark: Boolean(bench), table };
 }
 
+// Percent change since the start of a window for the benchmark and for each distinct fund scheme, on the benchmark's own
+// trading days, for a line chart. A fund whose stored NAVs start too late for the window is left out rather than drawn
+// from a wrong starting point (like periodReturnPct).
+export function computeRelativeLines({ rows, navByCode, benchmarkCode, days }) {
+  const bench = navByCode?.[String(benchmarkCode)] || null;
+  if (!bench || bench.length < 2) return { dates: [], benchmark: [], funds: [], hasBenchmark: false };
+  const lastDate = bench[bench.length - 1][0];
+  const start = addDaysISO(lastDate, -days);
+  if (bench[0][0] > addDaysISO(start, 7)) return { dates: [], benchmark: [], funds: [], hasBenchmark: true, tooShort: true };
+  const dates = bench.map(([d]) => d).filter((d) => d >= start);
+  if (dates.length < 2) return { dates: [], benchmark: [], funds: [], hasBenchmark: true, tooShort: true };
+  const line = (series) => {
+    if (!series || series.length < 2 || series[0][0] > addDaysISO(start, 7)) return null;
+    const base = navOnOrBefore(series, dates[0]) || series[0];
+    if (!(base[1] > 0)) return null;
+    return dates.map((d) => ((navOnOrBefore(series, d)?.[1] ?? base[1]) / base[1] - 1) * 100);
+  };
+  const seen = new Set();
+  const funds = [];
+  for (const r of rows || []) {
+    const code = String(r.schemeCode);
+    if (seen.has(code)) continue;
+    seen.add(code);
+    const values = line(navByCode?.[code]);
+    if (values) funds.push({ key: r.key, short: r.short || r.name, value: r.value, values, last: values[values.length - 1] });
+  }
+  return { dates, benchmark: line(bench), funds, hasBenchmark: true };
+}
+
 // ---------- long-horizon illustration ----------
 
 // What a corpus could grow to if it earned `annualReturnPct` a year (compounded monthly) with `monthlySip` added at each
@@ -851,6 +922,27 @@ export function projectCorpus({ start, monthlySip, annualReturnPct, years, stepU
     }
   }
   return out;
+}
+
+// A rupee amount `year` years out, expressed in today's money after `inflationPct` a year.
+export function inTodaysMoney(value, year, inflationPct) {
+  return (Number(value) || 0) / Math.pow(1 + (Number(inflationPct) || 0) / 100, year);
+}
+
+// The headline for one scenario at one year of a projectCorpus path: what it grows to, how much of that you put in
+// versus what growth added (investedShare is 0..1, for the bar), and the same value in today's money.
+export function summariseProjection(path, year, inflationPct) {
+  const point = (path || []).find((p) => p.year === year) || { value: 0, invested: 0 };
+  const value = point.value;
+  const growth = Math.max(value - point.invested, 0);
+  return {
+    year,
+    value,
+    invested: point.invested,
+    growth,
+    investedShare: value > 0 ? Math.min(Math.max(point.invested / value, 0), 1) : 1,
+    real: inTodaysMoney(value, year, inflationPct),
+  };
 }
 
 // ---------- export ----------

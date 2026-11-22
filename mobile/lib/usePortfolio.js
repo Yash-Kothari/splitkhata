@@ -10,7 +10,6 @@ import {
   computePortfolio,
   computeHistory,
   computeOverlap,
-  computeMix,
   classifySync,
   syncNudges,
   normalizeSipSchedule,
@@ -105,9 +104,8 @@ export default function usePortfolio({ autoBackfill = true } = {}) {
   );
 
   const portfolio = useMemo(() => computePortfolio({ funds, snapshots, navByCode, sipPlan, sipSchedule, trades }), [funds, snapshots, navByCode, sipPlan, sipSchedule, trades]);
-  const history = useMemo(() => computeHistory({ funds, snapshots, navByCode, sipPlan, sipSchedule, trades, days: 90 }), [funds, snapshots, navByCode, sipPlan, sipSchedule, trades]);
+  const history = useMemo(() => computeHistory({ funds, snapshots, navByCode, sipPlan, sipSchedule, trades, days: 365 }), [funds, snapshots, navByCode, sipPlan, sipSchedule, trades]);
   const overlap = useMemo(() => (overlapData ? computeOverlap(overlapData, portfolio.rows) : null), [overlapData, portfolio.rows]);
-  const mix = useMemo(() => computeMix(portfolio.rows), [portfolio.rows]);
   const metrics = useMemo(() => computeMetrics(portfolio.rows, overlap), [portfolio.rows, overlap]);
   const limits = limitsSaved || DEFAULT_LIMITS;
   const evaluatedLimits = useMemo(() => evaluateLimits(limits, metrics), [limits, metrics]);
@@ -217,7 +215,6 @@ export default function usePortfolio({ autoBackfill = true } = {}) {
     history,
     overlap,
     overlapAsOf: overlapData?.asOf || null,
-    mix,
     sync,
     backfill,
     refreshNavs: () => runBackfill(true),

@@ -54,8 +54,8 @@ The tab only **shows**; anything you set up or change now and then is a **settin
 like the rest of the app (a reminder or button on the tab opens the right Settings page directly).
 
 - **Portfolio tab**, four short sections in the app's segmented style: **Overview** (summary with Hide amounts, sync
-  status and reminders, daily P&L, value chart), **Funds** (the fund list with **Record a trade**, a pop-up, and Fund vs
-  Nifty 50), **Insights** (limits as read-only bars, overlap) and **Plan** (SIP what-if, long-term illustration).
+  status and reminders, daily P&L, value against what you put in), **Funds** (the fund list with **Record a trade**, a pop-up, and Fund vs
+  Nifty 50), **Insights** (allocation donut, limits as read-only bars, overlap) and **Plan** (SIP what-if, long-term illustration).
 - **Settings -> Portfolio -> SIP plan:** edit the daily SIP plan. **Limits:** set the caps. **Import & export:** Update
   holdings (the setup file the first time, then Kite and CAS snapshots), Check NAVs, and the holdings CSV.
 
@@ -71,11 +71,22 @@ All of these use the same holdings, NAVs and overlap data, and fold on a phone l
   suggestions and raise no alerts; once saved, a breach also appears in the reminders at the top.
 - **SIP what-if.** Today, your current plan and a plan you try, after 3 months, 1 year or 3 years of SIPs, with prices
   held still, so it shows the effect of the SIP choice alone. It reuses the overlap data, so its shares are a floor.
+- **Charts.** Four line/donut charts share one chart (`PortfolioLineChart`: axis labels from `formatY`, a faint guide and dots on the
+  tapped point, taps on invisible columns) and one pill toggle (`PortfolioPills`), so Hide Amounts only has to mask one place.
+  *Portfolio value* draws value against **put in** (dashed) over 1M / 3M / 6M / 1Y; put in is `computeHistory().invested`, the cost of the
+  units held (snapshot cost, plus SIP and buys since, minus sales at the average cost), so its newest point equals the Invested
+  figure. *Allocation* is a donut by category, fund house or fund (`computeAllocation`; beyond 6 slices the small ones fold into
+  "Others"; tap a legend row, not a slice). *Fund vs Nifty* draws percent change since the start of 1M / 3M / 6M / 1Y
+  (`computeRelativeLines`) with the three largest funds on and a chip for each other fund. *Long-term illustration* draws the three
+  cases and the put-in line. A window the stored NAVs do not reach says so instead of drawing from a wrong start.
 - **Fund vs Nifty 50.** Each fund's NAV-to-NAV return over 1 month, 3 months, 6 months and 1 year next to the benchmark
   index fund's (`catalog.benchmark`, stored and backfilled like any fund) and the gap. These are fund returns, not
   what you earned on your own purchases; a dash means the stored history does not reach back that far.
 - **Long-term illustration.** Compounding arithmetic from today's value and a monthly SIP at a low, middle and high
-  yearly return you set, optionally with a yearly SIP increase and an inflation line. It is not a forecast.
+  yearly return you set, optionally with a yearly SIP increase and an inflation rate. A headline tile gives the middle
+  case at your horizon (what you put in versus what growth added, and the value in today's money); a one-line-per-year
+  table shows the three cases, switchable between future rupees and today's money (`summariseProjection`), under a chart of the
+  three cases and the money put in (always in future rupees). It is not a forecast.
 - **Hide amounts.** One switch (remembered on this device) that turns every rupee amount and unit count on the tab
   into dots; percentages stay.
 - **Export CSV (Settings).** The holdings table as a CSV (a download on the website, the share sheet on a phone).

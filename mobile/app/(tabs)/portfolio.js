@@ -12,6 +12,7 @@ import PortfolioSummary from '../../components/PortfolioSummary';
 import PortfolioSyncCard from '../../components/PortfolioSyncCard';
 import PortfolioFundList from '../../components/PortfolioFundList';
 import PortfolioBenchmark from '../../components/PortfolioBenchmark';
+import PortfolioAllocation from '../../components/PortfolioAllocation';
 import PortfolioLimits from '../../components/PortfolioLimits';
 import PortfolioOverlap from '../../components/PortfolioOverlap';
 import PortfolioWhatIf from '../../components/PortfolioWhatIf';
@@ -112,14 +113,19 @@ function PortfolioScreen() {
         <Columns
           wide={isWide}
           left={<PortfolioFundList portfolio={p.portfolio} onTrade={() => setTrading(true)} />}
-          right={<PortfolioBenchmark table={p.benchmarkTable} benchmark={p.benchmark} collapsible={fold} />}
+          right={<PortfolioBenchmark table={p.benchmarkTable} benchmark={p.benchmark} rows={p.portfolio.rows} navByCode={p.navByCode} collapsible={fold} />}
         />
       ),
       insights: (
         <Columns
           wide={isWide}
-          left={<PortfolioLimits evaluated={p.evaluatedLimits} saved={p.limitsSaved} collapsible={fold} defaultOpen onEdit={() => openSettings('portfolioLimits')} />}
-          right={<PortfolioOverlap overlap={p.overlap} mix={p.mix} asOfDate={p.overlapData?.asOfDate} collapsible={fold} />}
+          left={
+            <>
+              <PortfolioAllocation rows={p.portfolio.rows} collapsible={fold} defaultOpen />
+              <PortfolioLimits evaluated={p.evaluatedLimits} saved={p.limitsSaved} collapsible={fold} defaultOpen onEdit={() => openSettings('portfolioLimits')} />
+            </>
+          }
+          right={<PortfolioOverlap overlap={p.overlap} asOfDate={p.overlapData?.asOfDate} collapsible={fold} />}
         />
       ),
       plan: (

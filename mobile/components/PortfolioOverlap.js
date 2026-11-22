@@ -26,7 +26,7 @@ function BarRow({ label, right, pct, sub }) {
 
 // Which stocks you really own several times over, and which funds repeat each other. It uses each fund's top
 // disclosed holdings only, so every figure here is a floor.
-export default function PortfolioOverlap({ overlap, mix, asOfDate, collapsible = false }) {
+export default function PortfolioOverlap({ overlap, asOfDate, collapsible = false }) {
   const { money } = usePortfolioPrivacy();
   const [openState, setOpenState] = useState(false);
   const isOpen = !collapsible || openState;
@@ -64,13 +64,6 @@ export default function PortfolioOverlap({ overlap, mix, asOfDate, collapsible =
               <Text key={f.name} className="font-body text-2xs text-muted-text mt-1">
                 Not counted: {f.name} (about {f.weight}% of that fund, {money(f.value)}).
               </Text>
-            ))}
-          </View>
-
-          <Label>Mix by Type</Label>
-          <View className="mb-3">
-            {mix.map((m) => (
-              <BarRow key={m.label} label={m.label} right={`${m.pct.toFixed(1)}% · ${money(m.value)}`} pct={m.pct} />
             ))}
           </View>
 
