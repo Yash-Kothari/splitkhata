@@ -9,6 +9,7 @@ const TABS = [
   FEATURES.household && { href: '/household', label: '🏠 Household' },
   FEATURES.travel && { href: '/travel', label: '✈️ Travel' },
   FEATURES.cards && { href: '/cards', label: '💳 Cards' },
+  FEATURES.portfolio && { href: '/portfolio', label: '📈 Portfolio' },
 ].filter(Boolean);
 
 // The bottom tab bar is a phone idiom - above 768px, a top segmented

@@ -21,6 +21,7 @@ no `src/` or `/legacy` tree. Never recreate one or mirror changes into one.
 | `mobile/lib/utils.js` | The whole calculation engine (splits, balances, rewards, cards). **No React, no DOM, no Firebase.** |
 | `mobile/lib/firebase.js` | The only Firestore/Auth layer |
 | `mobile/lib/useEntryForm.js` + `components/EntryFormFields.js` | The shared Add/Edit entry form (see section 5) |
+| `mobile/lib/portfolio.js`, `usePortfolio.js`, `app/(tabs)/portfolio.js`, `components/Portfolio*.js` | The Portfolio tab (mutual-fund P&L, sync status, overlap); see `docs/PORTFOLIO.md`. Engine is pure and tested in `tests/portfolio.test.mjs` |
 | `mobile/public/sw.js` | Offline service worker (section 8) |
 | `firestore.rules`, `firebase.json`, `tests/` (repo root) | Firebase project config and security-rule tests |
 | `.github/workflows/deploy.yml` | Test, build, deploy to Pages |
@@ -96,6 +97,10 @@ and kill them if stuck. Never leave one running unattended.
 - **Rewards are computed, not stored.** Card rewards are recomputed from card
   transactions on every render. Only overrides (`rewardOverride`, `travelMultiplier`)
   and the flags below live on documents.
+- **Portfolio data is personal and the repo is public.** Holdings, units and values live only in Firestore (the
+  `portfolio` collection) and in the git-ignored `portfolio-private/` folder, never in a commit, a test fixture or a
+  doc. Tests use made-up funds. Holdings reach the database only through the Import snapshot form, pressed by the
+  signed-in user; Claude prepares the file (from Kite or a CAS) but never writes to the live database.
 - **Money:** amounts are rupees; sums use paise helpers (`toPaise`) to avoid float drift.
   A ₹0 entry is valid (a stay paid entirely with reward points).
 - **Cash and withdrawals:** an ATM withdrawal is always charged to a card or forex
@@ -413,6 +418,10 @@ local testing predicted.
   Category Breakdown counts (`isCountableSpend`), so the two totals match; entries with no method are "Not specified".
 - `EntryList` draws 100 rows at a time (`PAGE_SIZE`) with a "Show N More" button; the count in its header
   still covers every match, and a jump-to-entry highlight floats to the top so it is always drawn.
+- **The Portfolio tab's NAV source (api.mfapi.in) drops the CORS header on cached replies.** A bare `/mf/<code>` fails
+  in the browser for some schemes; the backfill asks with `?startDate=&endDate=` (answered fresh, only the missing rows),
+  two schemes at a time, with retries. Units between snapshots are an SIP-based estimate and are labelled "units est.";
+  Kite's `last_price` in its holdings is days stale, so only units and average cost are read from it (`docs/PORTFOLIO.md`).
 - GitHub's "AI Scan for PRs" is explicitly **disabled** on all repos
   (`gh api repos/Yash-Kothari/<repo>/code-scanning/ai-scan`).
 

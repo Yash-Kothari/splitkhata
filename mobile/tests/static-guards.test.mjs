@@ -30,6 +30,15 @@ test('no global crypto.randomUUID (undefined on Hermes) - use expo-crypto', () =
 });
 
 
+test('portfolio: personal holdings stay out of git (the repo is public) and the tab is admin-only', () => {
+  const ignore = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', '.gitignore'), 'utf8');
+  assert.ok(/^portfolio-private\/$/m.test(ignore), '.gitignore must ignore portfolio-private/');
+  const firebase = readFileSync(join(root, 'lib', 'firebase.js'), 'utf8');
+  assert.ok(!/collection\(dbInstance, 'portfolio'/.test(firebase), 'portfolio paths must go through col()/docAt()');
+  const tabs = readFileSync(join(root, 'app', '(tabs)', 'portfolio.js'), 'utf8');
+  assert.ok(tabs.includes('FEATURES.portfolio'), 'the Portfolio screen must be gated by FEATURES.portfolio');
+});
+
 test('offline support: service worker exists, is registered, and only touches same-origin files', () => {
   const sw = readFileSync(join(root, 'public', 'sw.js'), 'utf8');
   const html = readFileSync(join(root, 'public', 'index.html'), 'utf8');
@@ -61,11 +70,11 @@ test('shared edition: defaults to the admin edition with every feature on', asyn
     delete process.env.EXPO_PUBLIC_EDITION;
     const admin = await import(`../lib/edition.js?admin=${Math.random()}`);
     assert.equal(admin.IS_SHARED_EDITION, false);
-    assert.deepEqual(admin.FEATURES, { travel: true, cards: true, payments: true, ai: true, pin: true, recurring: true, household: true, groups: false });
+    assert.deepEqual(admin.FEATURES, { travel: true, cards: true, payments: true, ai: true, pin: true, recurring: true, household: true, portfolio: true, groups: false });
     process.env.EXPO_PUBLIC_EDITION = 'shared';
     const shared = await import(`../lib/edition.js?shared=${Math.random()}`);
     assert.equal(shared.IS_SHARED_EDITION, true);
-    assert.deepEqual(shared.FEATURES, { travel: false, cards: false, payments: false, ai: false, pin: false, recurring: false, household: false, groups: true });
+    assert.deepEqual(shared.FEATURES, { travel: false, cards: false, payments: false, ai: false, pin: false, recurring: false, household: false, portfolio: false, groups: true });
     process.env.EXPO_PUBLIC_EDITION = 'something-else';
     const other = await import(`../lib/edition.js?other=${Math.random()}`);
     assert.equal(other.IS_SHARED_EDITION, false, 'anything but "shared" is the admin edition');

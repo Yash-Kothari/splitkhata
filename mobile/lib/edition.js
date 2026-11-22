@@ -22,5 +22,6 @@ export const FEATURES = {
   pin: !IS_SHARED_EDITION,
   recurring: !IS_SHARED_EDITION,
   household: !IS_SHARED_EDITION, // the admin app's single Household tab
+  portfolio: !IS_SHARED_EDITION, // mutual-fund portfolio tab (Firestore `portfolio` collection, admin project only)
   groups: IS_SHARED_EDITION, // the shared edition's Personal + Groups tabs
 };

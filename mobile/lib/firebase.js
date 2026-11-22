@@ -836,6 +836,54 @@ export function subscribeToPaymentReminderConfig(callback) {
   );
 }
 
+// --- Portfolio (admin edition only; engine in lib/portfolio.js, flow in docs/PORTFOLIO.md) ---
+// One small collection, one document per thing:
+//   catalog / overlap / sip      the fund list, top holdings for the overlap view, the daily SIP plan
+//   state                        { lastSync: { kite|cas|manual: { date, at } }, lastNavFetchAt }
+//   snap_<date>_<source>         one imported snapshot of units and average cost per fund
+//   nav_<schemeCode>_<year>      { series: { 'YYYY-MM-DD': nav } }, filled in by the app from the AMFI mirror
+// Holdings are only ever imported by the signed-in user from the Portfolio tab; nothing else writes here.
+const portfolioRef = () => col('portfolio');
+
+export function subscribeToPortfolio(onData, onError) {
+  return onSnapshot(
+    portfolioRef(),
+    (snapshot) => {
+      const docs = {};
+      snapshot.docs.forEach((d) => {
+        docs[d.id] = d.data();
+      });
+      onData(docs);
+    },
+    onError,
+  );
+}
+
+// One commit: the snapshot, the bookkeeping, and (on the first setup) the catalog, overlap data and SIP plan.
+export async function importPortfolioSnapshot({ asOf, source, positions, catalog = null, overlap = null, sipPlan = null }) {
+  const batch = writeBatch(dbInstance);
+  // Same-day imports from different sources (Kite for Zerodha funds, a CAS for the rest) must not overwrite each other.
+  batch.set(docAt('portfolio', `snap_${asOf}_${source}`), { date: asOf, source, positions, createdAt: serverTimestamp() });
+  batch.set(docAt('portfolio', 'state'), { lastSync: { [source]: { date: asOf, at: serverTimestamp() } } }, { merge: true });
+  if (catalog) batch.set(docAt('portfolio', 'catalog'), catalog);
+  if (overlap) batch.set(docAt('portfolio', 'overlap'), overlap);
+  if (sipPlan) batch.set(docAt('portfolio', 'sip'), { plan: sipPlan });
+  await track(batch.commit(), 'Could not save the portfolio snapshot');
+}
+
+// NAVs for one scheme, grouped by year: { '2026': { '2026-11-20': 49.2266 } }. Merged, so re-running is harmless.
+export async function savePortfolioNavs(schemeCode, byYear) {
+  const batch = writeBatch(dbInstance);
+  Object.entries(byYear).forEach(([year, series]) => {
+    batch.set(docAt('portfolio', `nav_${schemeCode}_${year}`), { schemeCode: String(schemeCode), year: Number(year), series }, { merge: true });
+  });
+  await track(batch.commit(), 'Could not save NAVs');
+}
+
+export async function markPortfolioNavFetched() {
+  await track(setDoc(docAt('portfolio', 'state'), { lastNavFetchAt: serverTimestamp() }, { merge: true }), 'Could not save the NAV check time');
+}
+
 // --- Trips ---
 
 export function subscribeToTrips(onData, onError) {
