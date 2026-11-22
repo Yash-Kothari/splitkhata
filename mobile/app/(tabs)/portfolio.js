@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Redirect } from 'expo-router';
-import { View, Text, ScrollView, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, Platform, Share, useWindowDimensions } from 'react-native';
 import { FEATURES } from '../../lib/edition';
 import usePortfolio from '../../lib/usePortfolio';
 import AppHeader from '../../components/AppHeader';
@@ -9,6 +9,15 @@ import PortfolioSummary from '../../components/PortfolioSummary';
 import PortfolioSyncCard from '../../components/PortfolioSyncCard';
 import PortfolioImport from '../../components/PortfolioImport';
 import PortfolioTradeForm from '../../components/PortfolioTradeForm';
+import PortfolioSipEditor from '../../components/PortfolioSipEditor';
+import PortfolioLimits from '../../components/PortfolioLimits';
+import PortfolioWhatIf from '../../components/PortfolioWhatIf';
+import PortfolioBenchmark from '../../components/PortfolioBenchmark';
+import PortfolioProjection from '../../components/PortfolioProjection';
+import { PortfolioPrivacyProvider } from '../../lib/PortfolioPrivacyContext';
+import { holdingsToCsv } from '../../lib/portfolio';
+import { todayISO } from '../../lib/utils';
+import { reportError } from '../../lib/errorReporting';
 import PortfolioFundList from '../../components/PortfolioFundList';
 import PortfolioOverlap from '../../components/PortfolioOverlap';
 import { DailyPnlChart, ValueChart } from '../../components/PortfolioCharts';
@@ -20,6 +29,27 @@ function PortfolioScreen() {
   const isWide = width >= 1024;
   const [importing, setImporting] = useState(false);
   const [trading, setTrading] = useState(false);
+  const [editingSip, setEditingSip] = useState(false);
+
+  // Website: a file download. Phone: the share sheet with the CSV text.
+  async function exportCsv() {
+    const csv = holdingsToCsv(p.portfolio.rows);
+    const name = `portfolio-${todayISO()}.csv`;
+    try {
+      if (Platform.OS === 'web') {
+        const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        await Share.share({ title: name, message: csv });
+      }
+    } catch (err) {
+      reportError(err, 'Could not export the holdings');
+    }
+  }
 
   const sync = (
     <PortfolioSyncCard
@@ -30,6 +60,8 @@ function PortfolioScreen() {
       nudges={p.nudges}
       onImport={() => setImporting(true)}
       onTrade={() => setTrading(true)}
+      onSip={() => setEditingSip(true)}
+      onExport={exportCsv}
       onRefreshNavs={p.refreshNavs}
     />
   );
@@ -48,6 +80,7 @@ function PortfolioScreen() {
       {trading ? (
         <PortfolioTradeForm funds={p.funds} navByCode={p.navByCode} rows={p.portfolio.rows} trades={p.trades} onClose={() => setTrading(false)} />
       ) : null}
+      {editingSip ? <PortfolioSipEditor funds={p.funds} schedule={p.sipSchedule} onClose={() => setEditingSip(false)} /> : null}
     </>
   );
 
@@ -78,6 +111,12 @@ function PortfolioScreen() {
     const daily = <DailyPnlChart history={p.history} collapsible={!isWide} />;
     const value = <ValueChart history={p.history} collapsible={!isWide} />;
     const overlap = <PortfolioOverlap overlap={p.overlap} mix={p.mix} asOf={p.overlapAsOf} collapsible={!isWide} />;
+    const limits = <PortfolioLimits evaluated={p.evaluatedLimits} limits={p.limits} saved={p.limitsSaved} metrics={p.metrics} collapsible={!isWide} />;
+    const whatIf = (
+      <PortfolioWhatIf portfolio={p.portfolio} funds={p.funds} overlapData={p.overlapData} metrics={p.metrics} sipPlan={p.sipPlan} collapsible={!isWide} />
+    );
+    const benchmark = <PortfolioBenchmark table={p.benchmarkTable} benchmark={p.benchmark} collapsible={!isWide} />;
+    const projection = <PortfolioProjection portfolio={p.portfolio} sipPlan={p.sipPlan} collapsible={!isWide} />;
     body = (
       <View className="px-4">
         {importCard}
@@ -86,22 +125,30 @@ function PortfolioScreen() {
             <View style={{ flex: 1.15, minWidth: 0 }}>
               {summary}
               {sync}
+              {limits}
               {funds}
+              {benchmark}
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               {daily}
               {value}
               {overlap}
+              {whatIf}
+              {projection}
             </View>
           </View>
         ) : (
           <View>
             {summary}
             {sync}
+            {limits}
             {daily}
             {value}
             {funds}
             {overlap}
+            {whatIf}
+            {benchmark}
+            {projection}
           </View>
         )}
       </View>
@@ -122,5 +169,9 @@ function PortfolioScreen() {
 // none of its subscriptions ever start.
 export default function Portfolio() {
   if (!FEATURES.portfolio) return <Redirect href="/household" />;
-  return <PortfolioScreen />;
+  return (
+    <PortfolioPrivacyProvider>
+      <PortfolioScreen />
+    </PortfolioPrivacyProvider>
+  );
 }

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { View, Text } from 'react-native';
 import Card from './Card';
 import FoldHeader from './FoldHeader';
-import { formatCurrency } from '../lib/utils';
+import { usePortfolioPrivacy } from '../lib/PortfolioPrivacyContext';
 
 function Label({ children }) {
   return <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1.5">{children}</Text>;
@@ -26,6 +26,7 @@ function BarRow({ label, right, pct, sub }) {
 // Which stocks you really own several times over, and which funds repeat each other. It uses each fund's top
 // disclosed holdings only, so every figure here is a floor.
 export default function PortfolioOverlap({ overlap, mix, asOf, collapsible = false }) {
+  const { money } = usePortfolioPrivacy();
   const [openState, setOpenState] = useState(false);
   const isOpen = !collapsible || openState;
   if (!overlap) return null;
@@ -48,19 +49,19 @@ export default function PortfolioOverlap({ overlap, mix, asOf, collapsible = fal
         <View>
           <View className="rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5 mb-3">
             <Label>Adani group</Label>
-            <Text className="font-mono-bold text-xl text-ink">{formatCurrency(adani.total)}</Text>
+            <Text className="font-mono-bold text-xl text-ink">{money(adani.total)}</Text>
             <Text className="font-body text-xs text-muted-text mb-2">{adani.pct.toFixed(1)}% of the portfolio</Text>
             {adani.byStock.map((s) => (
-              <BarRow key={s.stock} label={s.name} right={formatCurrency(s.value)} pct={(s.value / maxStock) * 100} />
+              <BarRow key={s.stock} label={s.name} right={money(s.value)} pct={(s.value / maxStock) * 100} />
             ))}
             {adani.byFund.length ? (
               <Text className="font-body text-xs text-muted-text mt-1">
-                By fund: {adani.byFund.map((f) => `${f.fund} ${formatCurrency(f.value)}`).join(' · ')}
+                By fund: {adani.byFund.map((f) => `${f.fund} ${money(f.value)}`).join(' · ')}
               </Text>
             ) : null}
             {adani.futures.map((f) => (
               <Text key={f.name} className="font-body text-2xs text-muted-text mt-1">
-                Not counted: {f.name} (about {f.weight}% of that fund, {formatCurrency(f.value)}).
+                Not counted: {f.name} (about {f.weight}% of that fund, {money(f.value)}).
               </Text>
             ))}
           </View>
@@ -68,7 +69,7 @@ export default function PortfolioOverlap({ overlap, mix, asOf, collapsible = fal
           <Label>Mix by type</Label>
           <View className="mb-3">
             {mix.map((m) => (
-              <BarRow key={m.label} label={m.label} right={`${m.pct.toFixed(1)}% · ${formatCurrency(m.value)}`} pct={m.pct} />
+              <BarRow key={m.label} label={m.label} right={`${m.pct.toFixed(1)}% · ${money(m.value)}`} pct={m.pct} />
             ))}
           </View>
 
@@ -78,7 +79,7 @@ export default function PortfolioOverlap({ overlap, mix, asOf, collapsible = fal
               <View key={s.stock} className="py-1.5 border-b border-ink/10">
                 <View className="flex-row items-center justify-between gap-3">
                   <Text className="font-body-semibold text-sm text-ink flex-1" numberOfLines={1}>{s.name}</Text>
-                  <Text className="font-mono text-xs text-ink">{formatCurrency(s.value)}</Text>
+                  <Text className="font-mono text-xs text-ink">{money(s.value)}</Text>
                   <Text className="font-mono text-2xs text-muted-text w-10 text-right">{s.pct.toFixed(1)}%</Text>
                 </View>
                 <Text className="font-body text-2xs text-muted-text">{s.funds.length} funds: {s.funds.join(', ')}</Text>

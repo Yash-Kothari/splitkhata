@@ -25,6 +25,20 @@ import {
   formatRupeesCompact,
   buildTrade,
   syncNudges,
+  normalizeSipSchedule,
+  sipPlanAt,
+  sipAmountFn,
+  applySipChange,
+  computeMetrics,
+  evaluateLimits,
+  limitNudges,
+  DEFAULT_LIMITS,
+  projectRows,
+  simulateSip,
+  periodReturnPct,
+  computeBenchmarkTable,
+  projectCorpus,
+  holdingsToCsv,
 } from '../lib/portfolio.js';
 
 // Two made-up funds, nothing here is real data.
@@ -406,4 +420,167 @@ test('syncNudges: Kite after a week, CAS after about a month, nothing before set
   assert.match(old[0].text, /9 days ago/);
   assert.match(old[1].text, /40 days ago/);
   assert.match(syncNudges({ hasSetup: true, sync: sync(['never', null], ['never', null]) })[0].text, /not been synced/);
+});
+
+// ---------- SIP schedule ----------
+
+test('SIP schedule: a legacy plan is one entry that always applied, and a dated change only affects later days', () => {
+  assert.deepEqual(normalizeSipSchedule({ plan: { A: 100 } }), [{ from: '0000-01-01', plan: { A: 100 } }]);
+  assert.deepEqual(normalizeSipSchedule(null), []);
+  const sched = normalizeSipSchedule({ schedule: [{ from: '2026-11-20', plan: { A: 200 } }, { from: '2026-01-01', plan: { A: 100 } }] });
+  assert.deepEqual(sched.map((e) => e.from), ['2026-01-01', '2026-11-20'], 'sorted by date');
+  assert.deepEqual(sipPlanAt(sched, '2025-12-31'), {}, 'before the first entry there is no plan');
+  assert.deepEqual(sipPlanAt(sched, '2026-11-19'), { A: 100 });
+  assert.deepEqual(sipPlanAt(sched, '2026-11-20'), { A: 200 });
+  const amount = sipAmountFn({}, sched, 'A');
+  assert.deepEqual([amount('2026-11-19'), amount('2026-11-20'), amount('2027-01-01')], [100, 200, 200]);
+  assert.equal(sipAmountFn({ A: 50 }, null, 'A')('2026-11-19'), 50, 'with no schedule the plain plan is constant');
+  assert.equal(sipAmountFn({}, null, 'A')('2026-11-19'), 0);
+});
+
+test('applySipChange: replaces the same date, drops zero amounts and keeps earlier entries', () => {
+  const base = [{ from: '0000-01-01', plan: { A: 100, B: 50 } }];
+  const next = applySipChange(base, '2026-11-20', { A: '200', B: 0, C: 'x' });
+  assert.deepEqual(next, [{ from: '0000-01-01', plan: { A: 100, B: 50 } }, { from: '2026-11-20', plan: { A: 200 } }]);
+  const again = applySipChange(next, '2026-11-20', { A: 300 });
+  assert.equal(again.length, 2);
+  assert.deepEqual(again[1].plan, { A: 300 });
+  assert.deepEqual(base, [{ from: '0000-01-01', plan: { A: 100, B: 50 } }], 'the input is not changed');
+});
+
+test('estimateHolding and computeHistory follow a SIP that changed on a date', () => {
+  const schedule = [{ from: '0000-01-01', plan: { A: 120 } }, { from: '2026-11-20', plan: { A: 260 } }];
+  // 19 Nov at NAV 12 buys 120/12 = 10 units; 20 Nov at NAV 13 buys 260/13 = 20 units.
+  const h = estimateHolding(POS, NAV[1], sipAmountFn({}, schedule, 'A'), '2026-11-20');
+  assert.ok(Math.abs(h.units - 130) < 1e-9);
+  assert.equal(h.cost, 800 + 120 + 260);
+  const p = computePortfolio({ funds: [FUNDS[0]], snapshots: SNAP, navByCode: NAV, sipSchedule: schedule });
+  assert.ok(Math.abs(p.rows[0].units - 130) < 1e-9);
+  const hist = computeHistory({ funds: [FUNDS[0]], snapshots: SNAP, navByCode: NAV, sipSchedule: schedule, days: 10 });
+  assert.ok(Math.abs(hist.value[3] - 130 * 13) < 1e-9);
+  assert.ok(Math.abs(hist.day[3] - 110 * 1) < 1e-9, 'the 20th day P&L uses the 110 units held at the 19th close');
+});
+
+// ---------- limits, metrics, what-if ----------
+
+const MROWS = [
+  { key: 'A', holdingsKey: 'A', short: 'Alpha', amc: 'Q', category: 'Diversified', value: 1000 },
+  { key: 'B', holdingsKey: 'B', short: 'Beta', amc: 'T', category: 'Thematic', value: 1000 },
+];
+const MOVERLAP = { holdings: { A: { X: 10, Y: 5 }, B: { X: 20, Z: 4 } }, names: { X: 'X Corp' }, groups: { adani: ['X'] } };
+
+test('computeOverlap also lists every stock by exposure', () => {
+  const o = computeOverlap(MOVERLAP, MROWS);
+  assert.deepEqual(o.stocks.map((s) => [s.stock, s.value]), [['X', 300], ['Y', 50], ['Z', 40]]);
+  assert.equal(o.stocks[0].pct, 15);
+});
+
+test('computeMetrics: Adani share, fund house and category shares, largest stock and fund', () => {
+  const m = computeMetrics(MROWS, computeOverlap(MOVERLAP, MROWS));
+  assert.equal(m.adaniPct, 15);
+  assert.deepEqual(m.byAmc, { Q: 50, T: 50 });
+  assert.deepEqual(m.byCategory, { Diversified: 50, Thematic: 50 });
+  assert.deepEqual(m.maxStock, { name: 'X Corp', pct: 15 });
+  assert.equal(m.maxFund.pct, 50);
+  const noData = computeMetrics(MROWS, null);
+  assert.equal(noData.adaniPct, null);
+  assert.equal(noData.maxStock, null);
+});
+
+test('evaluateLimits: ok below 85%, near from 85% to the limit, breach above it', () => {
+  const m = computeMetrics(MROWS, computeOverlap(MOVERLAP, MROWS));
+  const ev = evaluateLimits(
+    [
+      { id: 'adani', metric: 'adani', max: 20 }, // 15 of 20 = 75%
+      { id: 'amc-Q', metric: 'amc', name: 'Q', max: 40 }, // 50 of 40
+      { id: 'stock', metric: 'stock', max: 15 }, // exactly at the limit
+      { id: 'bad', metric: 'adani', max: 0 },
+    ],
+    m,
+  );
+  assert.deepEqual(ev.map((e) => [e.id, e.status]), [['adani', 'ok'], ['amc-Q', 'breach'], ['stock', 'near']]);
+  assert.equal(ev[1].label, 'Q funds');
+  assert.equal(ev[2].detail, 'X Corp');
+  const nudges = limitNudges(ev);
+  assert.equal(nudges.length, 1);
+  assert.match(nudges[0].text, /Q funds is 50\.0% against your 40% limit/);
+  assert.ok(DEFAULT_LIMITS.length >= 5);
+});
+
+test('simulateSip: more days of SIP at a plan move the shares, and a new fund is added from the catalog', () => {
+  const funds = [
+    { key: 'A', holdingsKey: 'A', short: 'Alpha', amc: 'Q', category: 'Diversified' },
+    { key: 'B', holdingsKey: 'B', short: 'Beta', amc: 'T', category: 'Thematic' },
+    { key: 'C', holdingsKey: 'C', short: 'Gamma', amc: 'G', category: 'Large cap' },
+  ];
+  const rows = projectRows({ rows: MROWS, funds, plan: { A: 10, C: 100 }, days: 10 });
+  assert.deepEqual(rows.map((r) => [r.key, r.value]), [['A', 1100], ['B', 1000], ['C', 1000]]);
+  const sim = simulateSip({ rows: MROWS, funds, overlapData: MOVERLAP, plan: { A: 10, C: 100 }, days: 10 });
+  assert.equal(sim.metrics.total, 3100);
+  assert.equal(sim.perDay, 110);
+  assert.ok(Math.abs(sim.metrics.byAmc.Q - (1100 / 3100) * 100) < 1e-9);
+  assert.equal(sim.metrics.byCategory['Large cap'] > 0, true);
+});
+
+// ---------- benchmark ----------
+
+test('periodReturnPct: the return over a window, or null when the history does not reach back', () => {
+  const series = [['2026-01-01', 100], ['2026-06-01', 110], ['2026-11-20', 121]];
+  assert.ok(Math.abs(periodReturnPct(series, 91) - 10) < 1e-9);
+  assert.ok(Math.abs(periodReturnPct(series, 30) - 10) < 1e-9);
+  assert.ok(Math.abs(periodReturnPct(series, 182) - 21) < 1e-9);
+  assert.equal(periodReturnPct(series, 365), null, 'only 11 months of history');
+  assert.equal(periodReturnPct([['2026-01-01', 100]], 30), null);
+});
+
+test('computeBenchmarkTable: returns against the benchmark, one row per scheme, nothing invented without a benchmark', () => {
+  const navByCode = { 1: [['2026-01-01', 100], ['2026-11-20', 120]], 2: [['2026-01-01', 100], ['2026-11-20', 105]], 9: [['2026-01-01', 100], ['2026-11-20', 110]] };
+  const rows = [
+    { key: 'A', schemeCode: '1', short: 'Alpha' },
+    { key: 'A2', schemeCode: '1', short: 'Alpha (second folio)' },
+    { key: 'B', schemeCode: '2', short: 'Beta' },
+  ];
+  const t = computeBenchmarkTable({ rows, navByCode, benchmarkCode: '9' });
+  assert.equal(t.hasBenchmark, true);
+  assert.equal(t.table.length, 2, 'a scheme held twice is listed once');
+  assert.deepEqual(t.table.map((r) => r.key), ['A', 'B'], 'best against the benchmark first');
+  assert.ok(Math.abs(t.table[0].vs['6M'] - 10) < 1e-9);
+  assert.ok(Math.abs(t.table[1].vs['6M'] - -5) < 1e-9);
+  assert.equal(t.table[0].vs['1Y'], null);
+  const none = computeBenchmarkTable({ rows, navByCode: { 1: navByCode[1] }, benchmarkCode: '9' });
+  assert.equal(none.hasBenchmark, false);
+  assert.equal(none.table[0].vs['6M'], null);
+  assert.ok(none.table[0].returns['6M'] > 0);
+});
+
+// ---------- projection and export ----------
+
+test('projectCorpus: plain addition at 0%, a yearly step-up, and 12% a year compounding to 12% over a year', () => {
+  const flat = projectCorpus({ start: 1000, monthlySip: 100, annualReturnPct: 0, years: 2 });
+  assert.equal(flat[flat.length - 1].value, 3400);
+  assert.equal(flat[flat.length - 1].invested, 3400);
+  assert.deepEqual(flat.map((p) => p.year), [0, 1, 2]);
+  const stepped = projectCorpus({ start: 1000, monthlySip: 100, annualReturnPct: 0, years: 2, stepUpPct: 10 });
+  assert.ok(Math.abs(stepped[2].value - 3520) < 1e-9); // 1000 + 12 x 100 + 12 x 110
+  const grown = projectCorpus({ start: 100, monthlySip: 0, annualReturnPct: 12, years: 1 });
+  assert.ok(Math.abs(grown[1].value - 112) < 1e-9);
+});
+
+test('holdingsToCsv: a header, one line per fund, and commas and quotes escaped', () => {
+  const csv = holdingsToCsv([
+    { name: 'Fund, "X"', group: 'zerodha', amc: 'Q', category: 'Thematic', units: 10.5, avgCost: 8, cost: 84, nav: 12, navDate: '2026-11-20', value: 126, pnl: 42, pnlPct: 50, day: 3 },
+  ]);
+  const lines = csv.trim().split('\n');
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /^Fund,Held at,Fund house,Category,Units/);
+  assert.equal(lines[1], '"Fund, ""X""",Zerodha,Q,Thematic,10.500,8.0000,84.00,12,2026-11-20,126.00,42.00,50.00,3.00');
+});
+
+test('syncNudges: the overlap data is flagged once it is more than 45 days old', () => {
+  const sync = { kite: { level: 'fresh', days: 0 }, cas: { level: 'fresh', days: 0 } };
+  assert.deepEqual(syncNudges({ hasSetup: true, sync, overlapDate: '2026-10-31', today: '2026-11-22' }), []);
+  const old = syncNudges({ hasSetup: true, sync, overlapDate: '2026-10-31', today: '2026-12-20' });
+  assert.equal(old[0].key, 'overlap');
+  assert.match(old[0].text, /31 Oct disclosures, 50 days ago/);
+  assert.deepEqual(syncNudges({ hasSetup: true, sync, today: '2026-12-20' }), [], 'no date, no reminder');
 });

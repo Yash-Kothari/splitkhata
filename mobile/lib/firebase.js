@@ -838,7 +838,9 @@ export function subscribeToPaymentReminderConfig(callback) {
 
 // --- Portfolio (admin edition only; engine in lib/portfolio.js, flow in docs/PORTFOLIO.md) ---
 // One small collection, one document per thing:
-//   catalog / overlap / sip      the fund list, top holdings for the overlap view, the daily SIP plan
+//   catalog / overlap            the fund list (and benchmark scheme), top holdings for the overlap view
+//   sip                          { schedule: [{ from, plan }], plan }: the daily SIP plan over time (plan = the latest)
+//   limits                       { items: [...] }: the concentration limits you set
 //   state                        { lastSync: { kite|cas|manual: { date, at } }, lastNavFetchAt }
 //   snap_<date>_<source>         one imported snapshot of units and average cost per fund
 //   trade_<date>_<id>            a purchase or sale you recorded by hand: { fundKey, kind, date, units, amount }
@@ -891,6 +893,16 @@ export async function addPortfolioTrade(trade) {
 
 export async function deletePortfolioTrade(id) {
   await track(deleteDoc(docAt('portfolio', id)), 'Could not delete the trade');
+}
+
+// The SIP plan as a dated schedule (see applySipChange): a change only affects days from its own date.
+export async function saveSipSchedule(schedule) {
+  const latest = schedule.length ? schedule[schedule.length - 1].plan : {};
+  await track(setDoc(docAt('portfolio', 'sip'), { schedule, plan: latest, updatedAt: serverTimestamp() }), 'Could not save the SIP plan');
+}
+
+export async function savePortfolioLimits(items) {
+  await track(setDoc(docAt('portfolio', 'limits'), { items, updatedAt: serverTimestamp() }), 'Could not save the limits');
 }
 
 export async function markPortfolioNavFetched() {

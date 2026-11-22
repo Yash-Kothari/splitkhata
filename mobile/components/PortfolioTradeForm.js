@@ -7,7 +7,8 @@ import { addPortfolioTrade, deletePortfolioTrade } from '../lib/firebase';
 import { settleOrHandOff } from '../lib/saveHandoff';
 import { notify, confirmAsync } from '../lib/dialogs';
 import { reportError } from '../lib/errorReporting';
-import { formatCurrency, todayISO, parseAmountInput } from '../lib/utils';
+import { todayISO, parseAmountInput } from '../lib/utils';
+import { usePortfolioPrivacy } from '../lib/PortfolioPrivacyContext';
 import { buildTrade, formatShortDate } from '../lib/portfolio';
 
 const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper';
@@ -17,6 +18,7 @@ const num = (n) => Number(n).toLocaleString('en-IN', { maximumFractionDigits: 3 
 // A purchase or sale made outside the SIPs (a lump sum, a redemption). It is counted from the day after the latest
 // snapshot, so the next Kite sync or CAS, which already contains it, never double-counts it.
 export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onClose }) {
+  const { money } = usePortfolioPrivacy();
   const [fundKey, setFundKey] = useState('');
   const [kind, setKind] = useState('sell');
   const [date, setDate] = useState(todayISO());
@@ -123,7 +125,7 @@ export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onC
       {built ? (
         <Text className={`font-body text-xs mt-2 ${built.ok ? 'text-muted-text' : 'text-stamp-red'}`}>
           {built.ok
-            ? `${sale ? 'Sells' : 'Buys'} ${num(built.trade.units)} units for ${formatCurrency(built.trade.amount)}${built.nav ? ` (NAV ${built.nav.value} on ${formatShortDate(built.nav.date)})` : ''}. Type the units from your statement for an exact figure.`
+            ? `${sale ? 'Sells' : 'Buys'} ${num(built.trade.units)} units for ${money(built.trade.amount)}${built.nav ? ` (NAV ${built.nav.value} on ${formatShortDate(built.nav.date)})` : ''}. Type the units from your statement for an exact figure.`
             : built.error}
         </Text>
       ) : null}
@@ -151,7 +153,7 @@ export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onC
                   {t.kind === 'sell' ? 'Sold' : 'Bought'} · {shortOf(t.fundKey)}
                 </Text>
                 <Text className="font-body text-2xs text-muted-text">
-                  {formatShortDate(t.date)} · {num(t.units)} units · {formatCurrency(t.amount)}
+                  {formatShortDate(t.date)} · {num(t.units)} units · {money(t.amount)}
                 </Text>
               </View>
               <Pressable onPress={() => handleRemove(t)} accessibilityRole="button" accessibilityLabel="Remove trade" className="px-2 py-1">

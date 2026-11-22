@@ -13,6 +13,13 @@ import {
   computeMix,
   classifySync,
   syncNudges,
+  normalizeSipSchedule,
+  sipPlanAt,
+  computeMetrics,
+  evaluateLimits,
+  limitNudges,
+  computeBenchmarkTable,
+  DEFAULT_LIMITS,
 } from './portfolio';
 
 // The public AMFI mirror. NAVs are free and keyless; only the fund's scheme code is ever sent.
@@ -79,7 +86,11 @@ export default function usePortfolio() {
     [docs],
   );
   const navByCode = useMemo(() => buildNavByCode(docs), [docs]);
-  const sipPlan = useMemo(() => docs?.sip?.plan || {}, [docs]);
+  // The SIP plan is a dated schedule; `sipPlan` is the one in force today.
+  const sipSchedule = useMemo(() => normalizeSipSchedule(docs?.sip), [docs]);
+  const sipPlan = useMemo(() => sipPlanAt(sipSchedule, todayISO()), [sipSchedule]);
+  const benchmark = docs?.catalog?.benchmark || null;
+  const limitsSaved = docs?.limits?.items || null;
   const overlapData = docs?.overlap || null;
   // Newest first, for the list under the trade form.
   const trades = useMemo(
@@ -91,10 +102,17 @@ export default function usePortfolio() {
     [docs],
   );
 
-  const portfolio = useMemo(() => computePortfolio({ funds, snapshots, navByCode, sipPlan, trades }), [funds, snapshots, navByCode, sipPlan, trades]);
-  const history = useMemo(() => computeHistory({ funds, snapshots, navByCode, sipPlan, trades, days: 90 }), [funds, snapshots, navByCode, sipPlan, trades]);
+  const portfolio = useMemo(() => computePortfolio({ funds, snapshots, navByCode, sipPlan, sipSchedule, trades }), [funds, snapshots, navByCode, sipPlan, sipSchedule, trades]);
+  const history = useMemo(() => computeHistory({ funds, snapshots, navByCode, sipPlan, sipSchedule, trades, days: 90 }), [funds, snapshots, navByCode, sipPlan, sipSchedule, trades]);
   const overlap = useMemo(() => (overlapData ? computeOverlap(overlapData, portfolio.rows) : null), [overlapData, portfolio.rows]);
   const mix = useMemo(() => computeMix(portfolio.rows), [portfolio.rows]);
+  const metrics = useMemo(() => computeMetrics(portfolio.rows, overlap), [portfolio.rows, overlap]);
+  const limits = limitsSaved || DEFAULT_LIMITS;
+  const evaluatedLimits = useMemo(() => evaluateLimits(limits, metrics), [limits, metrics]);
+  const benchmarkTable = useMemo(
+    () => computeBenchmarkTable({ rows: portfolio.rows, navByCode, benchmarkCode: benchmark?.schemeCode }),
+    [portfolio.rows, navByCode, benchmark],
+  );
 
   const today = todayISO();
   const sync = useMemo(() => {
@@ -112,7 +130,16 @@ export default function usePortfolio() {
   }, [docs, snapshots, portfolio.navDate, today]);
 
   const hasSetup = funds.length > 0;
-  const nudges = useMemo(() => syncNudges({ sync, hasSetup }), [sync, hasSetup]);
+  // Limits only raise an alert once you have saved your own; until then they are suggestions.
+  const nudges = useMemo(
+    () => [
+      ...syncNudges({ sync, hasSetup, overlapDate: overlapData?.asOfDate || null, today }),
+      ...(limitsSaved ? limitNudges(evaluatedLimits) : []),
+    ],
+    [sync, hasSetup, overlapData, today, limitsSaved, evaluatedLimits],
+  );
+  // The benchmark's NAVs are stored and backfilled like a fund's, so it needs no separate path.
+  const navTargets = useMemo(() => (benchmark ? [...funds, { key: '__benchmark', schemeCode: benchmark.schemeCode }] : funds), [funds, benchmark]);
 
   const runBackfill = useCallback(
     async (force = false) => {
@@ -121,7 +148,7 @@ export default function usePortfolio() {
       if (!force && Date.now() - lastFetch < MIN_RECHECK_MS) return;
       const today = todayISO();
       // A manual check asks for anything newer than what is stored; the automatic one only for what should be out by now.
-      const plan = planNavFetch(funds, navByCode, today, 400, force ? today : undefined);
+      const plan = planNavFetch(navTargets, navByCode, today, 400, force ? today : undefined);
       if (plan.length === 0) {
         if (force) {
           markPortfolioNavFetched().catch((err) => reportError(err, 'Could not save the NAV check time'));
@@ -157,7 +184,7 @@ export default function usePortfolio() {
       if (failed === 0) await markPortfolioNavFetched().catch((err) => reportError(err, 'Could not save the NAV check time'));
       setBackfill({ running: false, done, total: plan.length, failed, updated, manual: force, lastRunAt: Date.now() });
     },
-    [docs, funds, navByCode],
+    [docs, funds, navTargets, navByCode],
   );
 
   // Once per visit, as soon as the fund list and stored NAVs have loaded.
@@ -174,6 +201,14 @@ export default function usePortfolio() {
     snapshots,
     trades,
     nudges,
+    sipSchedule,
+    limits,
+    limitsSaved: Boolean(limitsSaved),
+    evaluatedLimits,
+    metrics,
+    overlapData,
+    benchmark,
+    benchmarkTable,
     navByCode,
     sipPlan,
     portfolio,
