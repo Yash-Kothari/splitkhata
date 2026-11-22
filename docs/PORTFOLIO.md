@@ -16,6 +16,7 @@ Folio numbers and PAN are never stored; only fund id, units and average cost.
 | `sip` | `{ plan: { [fundKey]: rupees bought per trading day } }` |
 | `overlap` | `{ asOf, holdings: { [holdingsKey]: { [stock]: weightPct } }, names, groups: { adani: [...] }, futures }` |
 | `snap_<date>_<source>` | one snapshot: `{ date, source: 'kite'\|'cas'\|'manual', positions: { [fundKey]: { units, avgCost } } }` |
+| `trade_<date>_<id>` | a purchase or sale you recorded by hand: `{ fundKey, kind: 'buy'\|'sell', date, units, amount }` |
 | `nav_<schemeCode>_<year>` | `{ schemeCode, year, series: { 'YYYY-MM-DD': nav } }` |
 | `state` | `{ lastSync: { kite\|cas: { date, at } }, lastNavFetchAt }` |
 
@@ -36,13 +37,22 @@ with the same `schemeCode` and `holdingsKey`.
 3. **The sync status card** shows the last Kite sync, the last CAS import and the newest NAV date, each with a
    fresh (up to 1 day) / stale (up to 7) / old state, so a stale figure is never mistaken for a live one.
 
+4. **Your own trades, recorded in the app.** A lump sum or a redemption outside the SIPs is the main thing that
+   makes the estimate wrong. **Record a trade** takes the fund, bought or sold, the date and the amount (the units are
+   worked out at the NAV on or before that date; type the units from your statement for an exact figure) or the units.
+   A sale takes units out at the running average cost. A trade counts only after the latest snapshot's date, so the
+   next Kite sync or CAS, which already contains it, never double-counts it. Recorded trades can be removed from the
+   list under the form, and the import preview counts them in the estimate it compares against.
+5. **Reminders.** The Sync status card says so when the Kite holdings are more than 7 days old (SIP estimates cover
+   the days before that) or a CAS is more than 35 days old, with what to ask Claude for.
+
 Daily P&L uses the units held at the previous close, so a day's own SIP purchase never counts as profit. The value
 chart before the first snapshot assumes that snapshot's units (it says so under the chart).
 
 ## Importing (the only way holdings reach the database)
 
 Production data is changed by the signed-in user, not by automation. **Portfolio -> Import snapshot** takes pasted
-JSON, shows a preview (funds changed, units before and after, drift against the SIP estimate, warnings), and writes
+JSON (on the website there are also **Paste from clipboard** and **Choose file** buttons), shows a preview (funds changed, units before and after, drift against the SIP estimate, warnings), and writes
 only when you press **Confirm import**. Two shapes are accepted:
 
 - Kite's mutual-fund holdings array as returned (`[{ tradingsymbol, quantity, average_price, ... }]`), stamped with
@@ -61,10 +71,14 @@ steps:
    portfolio"**. Claude reads the mutual-fund holdings and saves the raw `data` array to
    `portfolio-private/kite-YYYY-MM-DD.json`. Only units and average cost are used; Kite's `last_price` is ignored
    because it was found to be days stale.
-2. Open Portfolio -> Import snapshot, paste the file, check the preview and Confirm.
+   Claude also copies the file to the clipboard (`pbcopy`) so the next step is one paste.
+2. Open Portfolio -> Import snapshot -> **Paste from clipboard**, check the preview and Confirm.
 
-Funds held outside Zerodha come from a CAS statement (MFCentral / CAMS / KFintech): convert it to a snapshot
-object with `source: 'cas'` the same way. Claude never writes to the live database.
+Funds held outside Zerodha come from a CAS statement (MFCentral / CAMS / KFintech). Give Claude the PDF (it can be read
+with `pdftotext -layout`; the password is the PAN, which Claude does not need if you export it unlocked) and it writes a
+snapshot object with `source: 'cas'` and `asOf` set to the statement date, the same shape as `cas-*.json` in
+`portfolio-private/`. Import it the same way. A CAS also lists the Zerodha demat funds, which makes a handy
+cross-check of the Kite units. Claude never writes to the live database.
 
 ## Gotchas
 

@@ -35,7 +35,18 @@ function syncChip(s) {
   return <Chip level={s.level}>Synced {s.label}</Chip>;
 }
 
-export default function PortfolioSyncCard({ sync, backfill, estimatedCount, hasSetup, onImport, onRefreshNavs }) {
+const NUDGE_STYLE = {
+  old: 'border-stamp-red/30 bg-stamp-red/10',
+  stale: 'border-mustard/40 bg-mustard/10',
+};
+// What to do about each reminder. The sync itself is a Claude session (Kite is only reachable there); the app only
+// takes the result, so these say what to ask for.
+const NUDGE_HINT = {
+  kite: 'Ask Claude to “sync the portfolio”, then paste the result under Import snapshot.',
+  cas: 'Give Claude the latest CAS, then paste the file it makes under Import snapshot.',
+};
+
+export default function PortfolioSyncCard({ sync, backfill, estimatedCount, hasSetup, nudges = [], onImport, onTrade, onRefreshNavs }) {
   const expected = previousWeekday(todayISO());
   const navCurrent = sync.navDate && sync.navDate >= expected;
 
@@ -43,6 +54,13 @@ export default function PortfolioSyncCard({ sync, backfill, estimatedCount, hasS
     <Card className="p-4 mb-4">
       <Text className="font-display text-lg text-ink">Sync status</Text>
       <Text className="font-body text-xs text-muted-text mb-3">When each part of these numbers was last brought up to date</Text>
+
+      {nudges.map((n) => (
+        <View key={n.key} className={`rounded-xl border px-3.5 py-2.5 mb-3 ${NUDGE_STYLE[n.level] || NUDGE_STYLE.stale}`}>
+          <Text className="font-body-semibold text-sm text-ink">{n.text}</Text>
+          <Text className="font-body text-xs text-muted-text mt-0.5">{NUDGE_HINT[n.key]}</Text>
+        </View>
+      ))}
 
       <View className="flex-row flex-wrap gap-2">
         <Tile label="Zerodha holdings (Kite)" value={sync.kiteDate ? formatShortDate(sync.kiteDate) : 'Never'}>
@@ -73,10 +91,15 @@ export default function PortfolioSyncCard({ sync, backfill, estimatedCount, hasS
         </Text>
       ) : null}
 
-      <View className="flex-row gap-2 mt-3">
+      <View className="flex-row flex-wrap gap-2 mt-3">
         <Pressable onPress={onImport} className="min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center">
           <Text className="font-body-semibold text-xs text-white">{hasSetup ? 'Import snapshot' : 'Import setup file'}</Text>
         </Pressable>
+        {hasSetup ? (
+          <Pressable onPress={onTrade} className="min-h-9 px-3.5 rounded-lg border border-ink/15 bg-paper items-center justify-center">
+            <Text className="font-body-semibold text-xs text-ink">Record a trade</Text>
+          </Pressable>
+        ) : null}
         {hasSetup ? (
           <Pressable
             onPress={onRefreshNavs}
