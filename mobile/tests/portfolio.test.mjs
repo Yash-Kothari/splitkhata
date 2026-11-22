@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isIsoDate,
+  limitLabel,
   daysBetween,
   addDaysISO,
   previousWeekday,
@@ -39,6 +40,7 @@ import {
   computeBenchmarkTable,
   projectCorpus,
   holdingsToCsv,
+  nudgeTarget,
 } from '../lib/portfolio.js';
 
 // Two made-up funds, nothing here is real data.
@@ -499,11 +501,11 @@ test('evaluateLimits: ok below 85%, near from 85% to the limit, breach above it'
     m,
   );
   assert.deepEqual(ev.map((e) => [e.id, e.status]), [['adani', 'ok'], ['amc-Q', 'breach'], ['stock', 'near']]);
-  assert.equal(ev[1].label, 'Q funds');
+  assert.equal(ev[1].label, 'Q Funds');
   assert.equal(ev[2].detail, 'X Corp');
   const nudges = limitNudges(ev);
   assert.equal(nudges.length, 1);
-  assert.match(nudges[0].text, /Q funds is 50\.0% against your 40% limit/);
+  assert.match(nudges[0].text, /Q Funds is 50\.0% against your 40% limit/);
   assert.ok(DEFAULT_LIMITS.length >= 5);
 });
 
@@ -583,4 +585,17 @@ test('syncNudges: the overlap data is flagged once it is more than 45 days old',
   assert.equal(old[0].key, 'overlap');
   assert.match(old[0].text, /31 Oct disclosures, 50 days ago/);
   assert.deepEqual(syncNudges({ hasSetup: true, sync, today: '2026-12-20' }), [], 'no date, no reminder');
+});
+
+test('nudgeTarget: imports for sync reminders, the limits tab for a breached limit', () => {
+  assert.equal(nudgeTarget('kite'), 'portfolioData');
+  assert.equal(nudgeTarget('cas'), 'portfolioData');
+  assert.equal(nudgeTarget('overlap'), 'portfolioData');
+  assert.equal(nudgeTarget('limit-amc-Quant'), 'portfolioLimits');
+  assert.equal(nudgeTarget('something-else'), null);
+});
+
+test('limitLabel capitalises category names that come from the data', () => {
+  assert.equal(limitLabel({ metric: 'category', name: 'Small cap' }), 'Small Cap Funds');
+  assert.equal(limitLabel({ metric: 'category', name: 'Banking and finance' }), 'Banking and Finance Funds');
 });

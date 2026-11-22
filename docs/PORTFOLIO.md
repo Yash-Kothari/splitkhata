@@ -30,7 +30,7 @@ with the same `schemeCode` and `holdingsKey`.
 1. **NAVs, automatically.** Opening the tab finds, per scheme, the last stored NAV date and fetches only the days
    since from the public AMFI mirror `api.mfapi.in` (a date-ranged request, see gotcha below), writing them back.
    It skips schemes that are already at the previous weekday's NAV and re-checks at most every 2 hours; a failed
-   run is retried on the next open. **Check NAVs** forces it.
+   run is retried on the next open. **Check NAVs** (on the Sync status card, and in Settings) forces it.
 2. **Units, by snapshot.** Units and average cost come from an imported snapshot. Between snapshots they are
    **estimated** from the daily SIP plan (`estimateHolding`): each NAV day after the snapshot adds
    `SIP amount / NAV` units and the SIP amount to cost. Rows with such units show a "units est." chip. The next
@@ -48,14 +48,25 @@ with the same `schemeCode` and `holdingsKey`.
    the days before that), a CAS is more than 35 days old, the overlap data (`overlap.asOfDate`) is more than 45 days
    old, or a limit you saved is breached, with what to ask Claude for.
 
+## Where things live
+
+The tab only **shows**; anything you set up or change now and then is a **setting** and lives in **Settings -> Portfolio**,
+like the rest of the app (a reminder or button on the tab opens the right Settings page directly).
+
+- **Portfolio tab**, four short sections in the app's segmented style: **Overview** (summary with Hide amounts, sync
+  status and reminders, daily P&L, value chart), **Funds** (the fund list with **Record a trade**, a pop-up, and Fund vs
+  Nifty 50), **Insights** (limits as read-only bars, overlap) and **Plan** (SIP what-if, long-term illustration).
+- **Settings -> Portfolio -> SIP plan:** edit the daily SIP plan. **Limits:** set the caps. **Import & export:** Update
+  holdings (the setup file the first time, then Kite and CAS snapshots), Check NAVs, and the holdings CSV.
+
 ## Planning cards
 
 All of these use the same holdings, NAVs and overlap data, and fold on a phone like the other charts.
 
-- **Edit SIPs.** Rupees a day per fund, saved as a dated schedule. A change applies from the date you pick (today by
+- **SIP plan (Settings).** Rupees a day per fund, saved as a dated schedule. A change applies from the date you pick (today by
   default), so days before it keep the plan they ran under and their estimated units do not move. The first edit of a
   plain plan keeps the old one in force up to the day before.
-- **Limits.** Caps on Adani group, a fund house, a category, the largest single stock and the largest single fund,
+- **Limits (shown in Insights, set in Settings).** Caps on Adani group, a fund house, a category, the largest single stock and the largest single fund,
   each shown as a bar against its limit (ok below 85%, near from 85%, breach above). Until you save your own they are
   suggestions and raise no alerts; once saved, a breach also appears in the reminders at the top.
 - **SIP what-if.** Today, your current plan and a plan you try, after 3 months, 1 year or 3 years of SIPs, with prices
@@ -67,14 +78,14 @@ All of these use the same holdings, NAVs and overlap data, and fold on a phone l
   yearly return you set, optionally with a yearly SIP increase and an inflation line. It is not a forecast.
 - **Hide amounts.** One switch (remembered on this device) that turns every rupee amount and unit count on the tab
   into dots; percentages stay.
-- **Export CSV.** The holdings table as a CSV (a download on the website, the share sheet on a phone).
+- **Export CSV (Settings).** The holdings table as a CSV (a download on the website, the share sheet on a phone).
 
 Daily P&L uses the units held at the previous close, so a day's own SIP purchase never counts as profit. The value
 chart before the first snapshot assumes that snapshot's units (it says so under the chart).
 
 ## Importing (the only way holdings reach the database)
 
-Production data is changed by the signed-in user, not by automation. **Portfolio -> Import snapshot** takes pasted
+Production data is changed by the signed-in user, not by automation. **Settings -> Portfolio -> Import & export** takes pasted
 JSON (on the website there are also **Paste from clipboard** and **Choose file** buttons), shows a preview (funds changed, units before and after, drift against the SIP estimate, warnings), and writes
 only when you press **Confirm import**. Two shapes are accepted:
 
@@ -95,7 +106,7 @@ steps:
    `portfolio-private/kite-YYYY-MM-DD.json`. Only units and average cost are used; Kite's `last_price` is ignored
    because it was found to be days stale.
    Claude also copies the file to the clipboard (`pbcopy`) so the next step is one paste.
-2. Open Portfolio -> Import snapshot -> **Paste from clipboard**, check the preview and Confirm.
+2. Open Settings -> Portfolio -> Import & export -> **Paste from clipboard**, check the preview and Confirm.
 
 Funds held outside Zerodha come from a CAS statement (MFCentral / CAMS / KFintech). Give Claude the PDF (it can be read
 with `pdftotext -layout`; the password is the PAN, which Claude does not need if you export it unlocked) and it writes a

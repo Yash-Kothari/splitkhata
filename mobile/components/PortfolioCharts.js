@@ -153,7 +153,7 @@ export function ValueChart({ history, collapsible = false }) {
   return (
     <Card className="p-4 mb-4">
       <FoldHeader
-        title="Portfolio value"
+        title="Portfolio Value"
         subtitle="Last 90 days"
         summary={n ? `${formatShortDate(dates[n - 1])}: ${money(value[n - 1])}` : null}
         collapsible={collapsible}

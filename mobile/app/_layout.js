@@ -65,8 +65,8 @@ export function ErrorBoundary({ error, retry }) {
 // Reads the shared open/close flag so <SettingsModal> itself stays a plain
 // visible/onClose component with no context awareness of its own.
 function RootSettingsModal() {
-  const { visible, close } = useSettingsModal();
-  return <SettingsModal visible={visible} onClose={close} />;
+  const { visible, close, requestedTab } = useSettingsModal();
+  return <SettingsModal visible={visible} onClose={close} initialTab={requestedTab} />;
 }
 
 // React Navigation paints screens with its own light-gray default

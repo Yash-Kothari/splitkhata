@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
-import Card from './Card';
+import PortfolioShell from './PortfolioShell';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import { addPortfolioTrade, deletePortfolioTrade } from '../lib/firebase';
@@ -81,11 +81,11 @@ export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onC
   const sale = kind === 'sell';
 
   return (
-    <Card className="p-4 mb-4">
-      <Text className="font-display text-lg text-ink">Record a trade</Text>
-      <Text className="font-body text-xs text-muted-text mb-3">
-        A purchase or sale outside your SIPs. It updates the units until your next sync, which already includes it.
-      </Text>
+    <PortfolioShell
+      variant="bare"
+      title="Record a Trade"
+      subtitle="A purchase or sale outside your SIPs. It updates the units until your next sync, which already includes it."
+    >
 
       <View className="flex-row flex-wrap" style={{ gap: 12 }}>
         <View style={{ width: '100%' }}>
@@ -117,7 +117,7 @@ export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onC
           <TextInput value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="125000" className={input} />
         </View>
         <View style={{ width: '47%' }}>
-          <Text className={label}>Units (optional)</Text>
+          <Text className={label}>Units (Optional)</Text>
           <TextInput value={units} onChangeText={setUnits} keyboardType="decimal-pad" placeholder="exact units" className={input} />
         </View>
       </View>
@@ -136,7 +136,7 @@ export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onC
           disabled={saving || !built?.ok}
           className="min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
         >
-          {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-xs text-white">Save trade</Text>}
+          {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-xs text-white">Save Trade</Text>}
         </Pressable>
         <Pressable onPress={onClose} className="min-h-9 px-3.5 rounded-lg border border-ink/15 bg-paper items-center justify-center">
           <Text className="font-body-semibold text-xs text-ink">Close</Text>
@@ -145,7 +145,7 @@ export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onC
 
       {trades.length ? (
         <View className="mt-4 pt-3 border-t border-ink/10">
-          <Text className={label}>Recorded trades</Text>
+          <Text className={label}>Recorded Trades</Text>
           {trades.slice(0, 8).map((t) => (
             <View key={t.id} className="flex-row items-center justify-between gap-3 py-1.5">
               <View className="flex-1 min-w-0">
@@ -163,6 +163,6 @@ export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onC
           ))}
         </View>
       ) : null}
-    </Card>
+    </PortfolioShell>
   );
 }

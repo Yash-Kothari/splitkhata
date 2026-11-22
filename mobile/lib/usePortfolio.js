@@ -63,7 +63,9 @@ function latestDate(snapshots, source) {
 
 // Everything the Portfolio tab shows, plus the NAV backfill: when the tab opens it finds, per fund, the last NAV
 // date already stored and fetches only the days since, writing them back so the next open starts from there.
-export default function usePortfolio() {
+// `autoBackfill: false` is for the Settings pages: they read the same data but leave the once-per-visit NAV check to the
+// Portfolio tab (the Check NAVs button still works).
+export default function usePortfolio({ autoBackfill = true } = {}) {
   const [docs, setDocs] = useState(null);
   const [backfill, setBackfill] = useState({ running: false, done: 0, total: 0, failed: 0, updated: 0, manual: false, lastRunAt: null });
   const startedRef = useRef(false);
@@ -189,10 +191,10 @@ export default function usePortfolio() {
 
   // Once per visit, as soon as the fund list and stored NAVs have loaded.
   useEffect(() => {
-    if (!docs || funds.length === 0 || startedRef.current) return;
+    if (!autoBackfill || !docs || funds.length === 0 || startedRef.current) return;
     startedRef.current = true;
     runBackfill(false);
-  }, [docs, funds.length, runBackfill]);
+  }, [autoBackfill, docs, funds.length, runBackfill]);
 
   return {
     loading: docs === null,
