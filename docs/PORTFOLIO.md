@@ -12,9 +12,10 @@ Folio numbers and PAN are never stored; only fund id, units and average cost.
 
 | Document | Holds |
 |---|---|
-| `catalog` | `{ funds: [{ key, isin, schemeCode, name, short, amc, group: 'zerodha'\|'other', category, holdingsKey }] }` |
-| `sip` | `{ plan: { [fundKey]: rupees bought per trading day } }` |
-| `overlap` | `{ asOf, holdings: { [holdingsKey]: { [stock]: weightPct } }, names, groups: { adani: [...] }, futures }` |
+| `catalog` | `{ funds: [{ key, isin, schemeCode, name, short, amc, group: 'zerodha'\|'other', category, holdingsKey }], benchmark: { schemeCode, name } }` |
+| `sip` | `{ schedule: [{ from, plan: { [fundKey]: rupees bought per trading day } }], plan }`, the plan over time (`plan` is the latest). A setup import with a plain `sipPlan` writes `{ plan }`, read as one entry that always applied |
+| `limits` | `{ items: [{ id, metric: 'adani'\|'amc'\|'category'\|'stock'\|'fund', name?, max }] }`, the concentration caps you saved |
+| `overlap` | `{ asOf, asOfDate: 'YYYY-MM-DD', holdings: { [holdingsKey]: { [stock]: weightPct } }, names, groups: { adani: [...] }, futures }` |
 | `snap_<date>_<source>` | one snapshot: `{ date, source: 'kite'\|'cas'\|'manual', positions: { [fundKey]: { units, avgCost } } }` |
 | `trade_<date>_<id>` | a purchase or sale you recorded by hand: `{ fundKey, kind: 'buy'\|'sell', date, units, amount }` |
 | `nav_<schemeCode>_<year>` | `{ schemeCode, year, series: { 'YYYY-MM-DD': nav } }` |
@@ -44,7 +45,29 @@ with the same `schemeCode` and `holdingsKey`.
    next Kite sync or CAS, which already contains it, never double-counts it. Recorded trades can be removed from the
    list under the form, and the import preview counts them in the estimate it compares against.
 5. **Reminders.** The Sync status card says so when the Kite holdings are more than 7 days old (SIP estimates cover
-   the days before that) or a CAS is more than 35 days old, with what to ask Claude for.
+   the days before that), a CAS is more than 35 days old, the overlap data (`overlap.asOfDate`) is more than 45 days
+   old, or a limit you saved is breached, with what to ask Claude for.
+
+## Planning cards
+
+All of these use the same holdings, NAVs and overlap data, and fold on a phone like the other charts.
+
+- **Edit SIPs.** Rupees a day per fund, saved as a dated schedule. A change applies from the date you pick (today by
+  default), so days before it keep the plan they ran under and their estimated units do not move. The first edit of a
+  plain plan keeps the old one in force up to the day before.
+- **Limits.** Caps on Adani group, a fund house, a category, the largest single stock and the largest single fund,
+  each shown as a bar against its limit (ok below 85%, near from 85%, breach above). Until you save your own they are
+  suggestions and raise no alerts; once saved, a breach also appears in the reminders at the top.
+- **SIP what-if.** Today, your current plan and a plan you try, after 3 months, 1 year or 3 years of SIPs, with prices
+  held still, so it shows the effect of the SIP choice alone. It reuses the overlap data, so its shares are a floor.
+- **Fund vs Nifty 50.** Each fund's NAV-to-NAV return over 1 month, 3 months, 6 months and 1 year next to the benchmark
+  index fund's (`catalog.benchmark`, stored and backfilled like any fund) and the gap. These are fund returns, not
+  what you earned on your own purchases; a dash means the stored history does not reach back that far.
+- **Long-term illustration.** Compounding arithmetic from today's value and a monthly SIP at a low, middle and high
+  yearly return you set, optionally with a yearly SIP increase and an inflation line. It is not a forecast.
+- **Hide amounts.** One switch (remembered on this device) that turns every rupee amount and unit count on the tab
+  into dots; percentages stay.
+- **Export CSV.** The holdings table as a CSV (a download on the website, the share sheet on a phone).
 
 Daily P&L uses the units held at the previous close, so a day's own SIP purchase never counts as profit. The value
 chart before the first snapshot assumes that snapshot's units (it says so under the chart).

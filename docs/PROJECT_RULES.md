@@ -418,6 +418,9 @@ local testing predicted.
   Category Breakdown counts (`isCountableSpend`), so the two totals match; entries with no method are "Not specified".
 - `EntryList` draws 100 rows at a time (`PAGE_SIZE`) with a "Show N More" button; the count in its header
   still covers every match, and a jump-to-entry highlight floats to the top so it is always drawn.
+- **Portfolio SIP plan is a dated schedule** (`normalizeSipSchedule`, `sipAmountFn`): an edit applies from its own date and
+  never rewrites earlier estimated units. Every rupee amount on the tab goes through `usePortfolioPrivacy()` (the "Hide
+  amounts" switch), not `formatCurrency` directly.
 - **The Portfolio tab's NAV source (api.mfapi.in) drops the CORS header on cached replies.** A bare `/mf/<code>` fails
   in the browser for some schemes; the backfill asks with `?startDate=&endDate=` (answered fresh, only the missing rows),
   two schemes at a time, with retries. Units between snapshots are an SIP-based estimate and are labelled "units est.";

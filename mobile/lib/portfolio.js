@@ -134,10 +134,11 @@ export function lastNavDate(series) {
   return series?.length ? series[series.length - 1][0] : null;
 }
 
-// Which schemes need NAVs fetched, and from when. A scheme is current when its newest NAV is at least the previous
-// weekday's. With nothing stored yet it asks for `historyDays` of history.
-export function planNavFetch(funds, navByCode, today, historyDays = 400) {
-  const expected = previousWeekday(today);
+// Which schemes need NAVs fetched, and from when. A scheme is current when its newest NAV is at least `expected`,
+// by default the previous weekday's (the newest one that should be published). A manual check passes today's date
+// as `expected` instead, so it asks for anything newer than what is stored. With nothing stored yet it asks for
+// `historyDays` of history.
+export function planNavFetch(funds, navByCode, today, historyDays = 400, expected = previousWeekday(today)) {
   const seen = new Set();
   const plan = [];
   for (const f of funds || []) {
@@ -163,6 +164,59 @@ export function newNavPointsByYear(parsedSeries, from, today) {
   return { byYear, count };
 }
 
+// ---------- SIP plan over time ----------
+
+const FAR_PAST = '0000-01-01';
+
+// The SIP plan as a dated schedule: [{ from, plan: { [fundKey]: rupeesPerDay } }]. A plan saved before schedules
+// existed ({ plan }) is one entry that has always applied. A change only affects days from its own date, so an edit
+// today never rewrites what was bought last month.
+export function normalizeSipSchedule(doc) {
+  const list = Array.isArray(doc?.schedule) ? doc.schedule : null;
+  if (list && list.length) {
+    return list
+      .filter((e) => e && typeof e.from === 'string' && e.plan && typeof e.plan === 'object')
+      .map((e) => ({ from: e.from, plan: e.plan }))
+      .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  }
+  if (doc?.plan && typeof doc.plan === 'object') return [{ from: FAR_PAST, plan: doc.plan }];
+  return [];
+}
+
+// The plan in force on `date`.
+export function sipPlanAt(schedule, date) {
+  let plan = {};
+  for (const e of schedule || []) {
+    if (e.from <= date) plan = e.plan;
+    else break;
+  }
+  return plan;
+}
+
+// Rupees a day for one fund as a function of the date, for estimateHolding. With no schedule it falls back to a
+// constant from the plain plan map.
+export function sipAmountFn(sipPlan, schedule, key) {
+  if (schedule && schedule.length) {
+    return (date) => Number(sipPlanAt(schedule, date)[key]) || 0;
+  }
+  const a = Number(sipPlan?.[key]) || 0;
+  return () => a;
+}
+
+// A new schedule with `plan` taking effect from `from`. The same date replaces that entry; the first edit of a
+// legacy plan keeps the old plan in force up to the day before.
+export function applySipChange(schedule, from, plan) {
+  const clean = {};
+  for (const [k, v] of Object.entries(plan || {})) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) clean[k] = Math.round(n * 100) / 100;
+  }
+  const next = (schedule || []).filter((e) => e.from !== from).map((e) => ({ from: e.from, plan: e.plan }));
+  next.push({ from, plan: clean });
+  next.sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  return next;
+}
+
 // ---------- holdings ----------
 
 // The latest position per fund across all snapshots (a later snapshot overrides an earlier one for the funds it
@@ -179,11 +233,11 @@ export function latestPositions(snapshots) {
 }
 
 // Cumulative rupees-per-NAV for a SIP, so units bought between two dates are a subtraction.
-function cumulativeSipUnits(series, amount) {
+function cumulativeSipUnits(series, amountOn) {
   const cum = new Array(series.length);
   let run = 0;
   for (let i = 0; i < series.length; i += 1) {
-    run += amount / series[i][1];
+    run += amountOn(series[i][0]) / series[i][1];
     cum[i] = run;
   }
   return cum;
@@ -200,8 +254,15 @@ export function estimateHolding(position, series, sipAmount, asOf, trades = []) 
   let sipDays = 0;
   let tradeCount = 0;
   const events = [];
-  if (sipAmount > 0 && series?.length) {
-    for (const [d, nav] of series) if (d > position.date && d <= asOf) events.push({ d, order: 1, sip: sipAmount / nav });
+  // `sipAmount` is rupees a day, or a function of the date when the SIP changed over time (see sipAmountFn).
+  const amountOn = typeof sipAmount === 'function' ? sipAmount : () => Number(sipAmount) || 0;
+  if (series?.length) {
+    for (const [d, nav] of series) {
+      if (d > position.date && d <= asOf) {
+        const a = amountOn(d);
+        if (a > 0) events.push({ d, order: 1, sip: a / nav, amount: a });
+      }
+    }
   }
   for (const t of trades || []) if (t.date > position.date && t.date <= asOf) events.push({ d: t.date, order: 0, trade: t });
   events.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : a.order - b.order));
@@ -219,7 +280,7 @@ export function estimateHolding(position, series, sipAmount, asOf, trades = []) 
       tradeCount += 1;
     } else {
       units += e.sip;
-      cost += sipAmount;
+      cost += e.amount;
       sipDays += 1;
     }
   }
@@ -234,7 +295,7 @@ export function estimateHolding(position, series, sipAmount, asOf, trades = []) 
 }
 
 // Per-fund rows and totals as of the newest NAV on hand.
-export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, trades = [] }) {
+export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, sipSchedule = null, trades = [] }) {
   const positions = latestPositions(snapshots);
   const rows = [];
   for (const f of funds || []) {
@@ -245,8 +306,9 @@ export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, tr
     const prev = series.length > 1 ? series[series.length - 2] : series[series.length - 1];
     const mine = (trades || []).filter((t) => t.fundKey === f.key);
     // Today's holding includes a trade made after the newest NAV; the day's P&L is on what was held at the prior close.
-    const h = estimateHolding(pos, series, sipPlan[f.key] || 0, '9999-12-31', mine);
-    const before = estimateHolding(pos, series, sipPlan[f.key] || 0, prev[0], mine);
+    const amountOn = sipAmountFn(sipPlan, sipSchedule, f.key);
+    const h = estimateHolding(pos, series, amountOn, '9999-12-31', mine);
+    const before = estimateHolding(pos, series, amountOn, prev[0], mine);
     const value = h.units * nav;
     const day = before.units * (nav - prev[1]);
     rows.push({
@@ -300,7 +362,7 @@ export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, tr
 // Portfolio value and day-over-day P&L for the last `days` trading days. Units at each date come from the nearest
 // earlier snapshot plus SIP-estimated units; before the first snapshot they are held at the first snapshot's units
 // (there is nothing earlier to go on), which `constantBefore` reports so the chart can say so.
-export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, trades = [], days = 90 }) {
+export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, sipSchedule = null, trades = [], days = 90 }) {
   const ordered = [...(snapshots || [])].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const live = (funds || []).filter((f) => navByCode?.[String(f.schemeCode)]?.length && ordered.some((s) => s.positions?.[f.key]));
   if (live.length === 0) return { dates: [], value: [], day: [], constantBefore: null };
@@ -320,7 +382,7 @@ export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, trad
       f,
       series,
       snaps,
-      cum: sipPlan[f.key] > 0 ? cumulativeSipUnits(series, sipPlan[f.key]) : null,
+      cum: sipPlan[f.key] > 0 || sipSchedule?.length ? cumulativeSipUnits(series, sipAmountFn(sipPlan, sipSchedule, f.key)) : null,
       trades: (trades || []).filter((t) => t.fundKey === f.key),
     };
   });
@@ -434,7 +496,7 @@ export function parseImport(text, { catalog = null, asOfDefault, today }) {
 }
 
 // Preview rows: what changes per fund, and for a fund with an estimate, how far the estimate was from reality.
-export function diffForPreview({ funds, snapshots, navByCode, sipPlan = {}, trades = [], next, asOf }) {
+export function diffForPreview({ funds, snapshots, navByCode, sipPlan = {}, sipSchedule = null, trades = [], next, asOf }) {
   const before = latestPositions(snapshots);
   const rows = [];
   for (const f of funds || []) {
@@ -443,7 +505,7 @@ export function diffForPreview({ funds, snapshots, navByCode, sipPlan = {}, trad
     const prev = before[f.key];
     const series = navByCode?.[String(f.schemeCode)] || [];
     const mine = (trades || []).filter((t) => t.fundKey === f.key);
-    const est = prev ? estimateHolding(prev, series, sipPlan[f.key] || 0, asOf, mine) : null;
+    const est = prev ? estimateHolding(prev, series, sipAmountFn(sipPlan, sipSchedule, f.key), asOf, mine) : null;
     rows.push({
       key: f.key,
       name: f.short || f.name,
@@ -509,9 +571,14 @@ export function computeOverlap(overlap, rows) {
   }
   pairs.sort((x, y) => y.pct - x.pct);
 
+  const stocks = Object.entries(exposure)
+    .map(([st, v]) => ({ stock: st, name: nameOf(st), value: v, pct: total > 0 ? (v / total) * 100 : 0 }))
+    .sort((a, b) => b.value - a.value);
+
   const futures = overlap?.futures || [];
   return {
     total,
+    stocks,
     adani: {
       total: adaniTotal,
       pct: total > 0 ? (adaniTotal / total) * 100 : 0,
@@ -575,10 +642,11 @@ export function buildTrade({ fundKey, kind, date, amount, units, funds, navByCod
 // ---------- sync reminders ----------
 
 const CAS_DUE_DAYS = 35;
+const OVERLAP_DUE_DAYS = 45;
 
 // Reminders shown above the numbers. Kite holdings are due after a week (SIP estimates cover the days between); a
 // CAS is due after about a month. Nothing is said before the first setup.
-export function syncNudges({ sync, hasSetup }) {
+export function syncNudges({ sync, hasSetup, overlapDate = null, today = null }) {
   if (!hasSetup || !sync) return [];
   const out = [];
   if (sync.kite.level === 'never') {
@@ -589,7 +657,221 @@ export function syncNudges({ sync, hasSetup }) {
   if (sync.cas.level !== 'never' && sync.cas.days > CAS_DUE_DAYS) {
     out.push({ key: 'cas', level: 'stale', text: `Funds outside Zerodha were last updated from a CAS ${sync.cas.days} days ago.` });
   }
+  // The overlap numbers come from monthly portfolio disclosures, so they go stale on their own.
+  if (overlapDate && today && isIsoDate(overlapDate) && daysBetween(overlapDate, today) > OVERLAP_DUE_DAYS) {
+    out.push({ key: 'overlap', level: 'stale', text: `The overlap data is from the ${formatShortDate(overlapDate)} disclosures, ${daysBetween(overlapDate, today)} days ago.` });
+  }
   return out;
+}
+
+// ---------- concentration limits ----------
+
+// Where the portfolio stands on the things worth capping. `overlap` is computeOverlap's result (null without data).
+export function computeMetrics(rows, overlap) {
+  const total = (rows || []).reduce((a, r) => a + r.value, 0);
+  const pct = (v) => (total > 0 ? (v / total) * 100 : 0);
+  const byAmc = {};
+  const byCategory = {};
+  for (const r of rows || []) {
+    byAmc[r.amc || 'Other'] = (byAmc[r.amc || 'Other'] || 0) + pct(r.value);
+    byCategory[r.category || 'Other'] = (byCategory[r.category || 'Other'] || 0) + pct(r.value);
+  }
+  const byHoldings = valuesByHoldingsKey(rows);
+  const nameOfFund = (k) => (rows || []).find((r) => (r.holdingsKey || r.key) === k)?.short || k;
+  const topFund = Object.entries(byHoldings).sort((a, b) => b[1] - a[1])[0];
+  const topStock = overlap?.stocks?.[0] || null;
+  return {
+    total,
+    adaniPct: overlap ? overlap.adani.pct : null,
+    byAmc,
+    byCategory,
+    maxFund: topFund ? { name: nameOfFund(topFund[0]), pct: pct(topFund[1]) } : null,
+    maxStock: topStock ? { name: topStock.name, pct: topStock.pct } : null,
+  };
+}
+
+// Starting points, shown as suggestions until you save your own. They are placeholders, not advice.
+export const DEFAULT_LIMITS = [
+  { id: 'adani', metric: 'adani', max: 8 },
+  { id: 'amc-Quant', metric: 'amc', name: 'Quant', max: 40 },
+  { id: 'cat-Thematic', metric: 'category', name: 'Thematic', max: 35 },
+  { id: 'cat-Small cap', metric: 'category', name: 'Small cap', max: 25 },
+  { id: 'stock', metric: 'stock', max: 3 },
+  { id: 'fund', metric: 'fund', max: 15 },
+];
+
+export function limitLabel(limit) {
+  switch (limit.metric) {
+    case 'adani':
+      return 'Adani group';
+    case 'amc':
+      return `${limit.name} funds`;
+    case 'category':
+      return `${limit.name} funds`;
+    case 'stock':
+      return 'Largest single stock';
+    case 'fund':
+      return 'Largest single fund';
+    default:
+      return limit.id;
+  }
+}
+
+export function limitValue(metrics, limit) {
+  switch (limit.metric) {
+    case 'adani':
+      return metrics.adaniPct;
+    case 'amc':
+      return metrics.byAmc[limit.name] ?? 0;
+    case 'category':
+      return metrics.byCategory[limit.name] ?? 0;
+    case 'stock':
+      return metrics.maxStock ? metrics.maxStock.pct : null;
+    case 'fund':
+      return metrics.maxFund ? metrics.maxFund.pct : null;
+    default:
+      return null;
+  }
+}
+
+// Each limit with its current value and a status: ok, near (from 85% of the limit) or breach (over it).
+export function evaluateLimits(limits, metrics) {
+  const out = [];
+  for (const l of limits || []) {
+    const value = limitValue(metrics, l);
+    if (value == null || !(Number(l.max) > 0)) continue;
+    const usage = value / Number(l.max);
+    const detail = l.metric === 'stock' ? metrics.maxStock?.name : l.metric === 'fund' ? metrics.maxFund?.name : null;
+    out.push({ ...l, label: limitLabel(l), value, usage, detail, status: usage > 1 ? 'breach' : usage >= 0.85 ? 'near' : 'ok' });
+  }
+  return out;
+}
+
+export function limitNudges(evaluated) {
+  return (evaluated || [])
+    .filter((e) => e.status === 'breach')
+    .map((e) => ({ key: `limit-${e.id}`, level: 'old', text: `${e.label}${e.detail ? ` (${e.detail})` : ''} is ${e.value.toFixed(1)}% against your ${Number(e.max)}% limit.` }));
+}
+
+// ---------- SIP what-if ----------
+
+// The portfolio after `days` more trading days of SIPs at `plan` rupees a day, with prices unchanged (a way to see
+// where the money would sit, not a forecast). A fund held in no row yet (a new SIP) is added from the catalog.
+export function projectRows({ rows, funds, plan, days }) {
+  const have = new Set((rows || []).map((r) => r.key));
+  const out = (rows || []).map((r) => ({ ...r, value: r.value + (Number(plan?.[r.key]) || 0) * days }));
+  for (const f of funds || []) {
+    const a = Number(plan?.[f.key]) || 0;
+    if (!have.has(f.key) && a > 0) out.push({ ...f, value: a * days });
+  }
+  return out;
+}
+
+export function simulateSip({ rows, funds, overlapData, plan, days }) {
+  const projected = projectRows({ rows, funds, plan, days });
+  const overlap = overlapData ? computeOverlap(overlapData, projected) : null;
+  return { rows: projected, metrics: computeMetrics(projected, overlap), perDay: Object.values(plan || {}).reduce((a, v) => a + (Number(v) || 0), 0) };
+}
+
+// ---------- fund versus benchmark ----------
+
+export const BENCHMARK_PERIODS = [
+  ['1M', 30],
+  ['3M', 91],
+  ['6M', 182],
+  ['1Y', 365],
+];
+
+// Percent change from the NAV on or before (latest date - days) to the latest, or null when the history does not
+// reach back that far.
+export function periodReturnPct(series, days) {
+  if (!series || series.length < 2) return null;
+  const [lastDate, last] = series[series.length - 1];
+  const target = addDaysISO(lastDate, -days);
+  if (series[0][0] > addDaysISO(target, 7)) return null; // the history starts too late to answer
+  const base = navOnOrBefore(series, target) || series[0];
+  return base[1] > 0 ? (last / base[1] - 1) * 100 : null;
+}
+
+// One row per distinct scheme, with the return over each period and how far it is from the benchmark's.
+export function computeBenchmarkTable({ rows, navByCode, benchmarkCode }) {
+  const bench = navByCode?.[String(benchmarkCode)] || null;
+  const benchReturns = {};
+  for (const [label, days] of BENCHMARK_PERIODS) benchReturns[label] = bench ? periodReturnPct(bench, days) : null;
+  const seen = new Set();
+  const table = [];
+  for (const r of rows || []) {
+    const code = String(r.schemeCode);
+    if (seen.has(code)) continue;
+    seen.add(code);
+    const series = navByCode?.[code];
+    const returns = {};
+    const vs = {};
+    for (const [label, days] of BENCHMARK_PERIODS) {
+      const v = series ? periodReturnPct(series, days) : null;
+      returns[label] = v;
+      vs[label] = v != null && benchReturns[label] != null ? v - benchReturns[label] : null;
+    }
+    table.push({ key: r.key, short: r.short || r.name, category: r.category, returns, vs });
+  }
+  table.sort((a, b) => (b.vs['1Y'] ?? -Infinity) - (a.vs['1Y'] ?? -Infinity));
+  return { benchmark: benchReturns, hasBenchmark: Boolean(bench), table };
+}
+
+// ---------- long-horizon illustration ----------
+
+// What a corpus could grow to if it earned `annualReturnPct` a year (compounded monthly) with `monthlySip` added at each
+// month end, optionally rising by `stepUpPct` each year. An illustration of arithmetic, not a forecast.
+export function projectCorpus({ start, monthlySip, annualReturnPct, years, stepUpPct = 0 }) {
+  const r = Math.pow(1 + annualReturnPct / 100, 1 / 12) - 1;
+  let value = Number(start) || 0;
+  let invested = Number(start) || 0;
+  let sip = Number(monthlySip) || 0;
+  const out = [{ year: 0, value, invested }];
+  for (let m = 1; m <= Math.round(years * 12); m += 1) {
+    value = value * (1 + r) + sip;
+    invested += sip;
+    if (m % 12 === 0) {
+      out.push({ year: m / 12, value, invested });
+      sip *= 1 + stepUpPct / 100;
+    }
+  }
+  return out;
+}
+
+// ---------- export ----------
+
+function csvCell(v) {
+  const t = v == null ? '' : String(v);
+  return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+}
+
+// The holdings table as CSV (rupees and units unrounded enough to re-add), for a spreadsheet.
+export function holdingsToCsv(rows) {
+  const head = ['Fund', 'Held at', 'Fund house', 'Category', 'Units', 'Average cost', 'Invested', 'NAV', 'NAV date', 'Value', 'P&L', 'P&L %', 'Day change'];
+  const lines = [head.join(',')];
+  for (const r of rows || []) {
+    lines.push(
+      [
+        r.name,
+        r.group === 'zerodha' ? 'Zerodha' : 'Other',
+        r.amc,
+        r.category,
+        r.units.toFixed(3),
+        r.avgCost.toFixed(4),
+        r.cost.toFixed(2),
+        r.nav,
+        r.navDate,
+        r.value.toFixed(2),
+        r.pnl.toFixed(2),
+        r.pnlPct.toFixed(2),
+        r.day.toFixed(2),
+      ]
+        .map(csvCell)
+        .join(','),
+    );
+  }
+  return lines.join('\n') + '\n';
 }
 
 // ---------- display ----------

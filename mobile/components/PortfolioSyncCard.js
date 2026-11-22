@@ -44,9 +44,12 @@ const NUDGE_STYLE = {
 const NUDGE_HINT = {
   kite: 'Ask Claude to “sync the portfolio”, then paste the result under Import snapshot.',
   cas: 'Give Claude the latest CAS, then paste the file it makes under Import snapshot.',
+  overlap: 'Ask Claude to refresh the overlap data from the latest monthly disclosures, then import the new setup file.',
+  limit: 'See Limits below, or change the limit if it no longer suits you.',
 };
+const hintFor = (key) => NUDGE_HINT[key] || (key.startsWith('limit') ? NUDGE_HINT.limit : '');
 
-export default function PortfolioSyncCard({ sync, backfill, estimatedCount, hasSetup, nudges = [], onImport, onTrade, onRefreshNavs }) {
+export default function PortfolioSyncCard({ sync, backfill, estimatedCount, hasSetup, nudges = [], onImport, onTrade, onSip, onExport, onRefreshNavs }) {
   const expected = previousWeekday(todayISO());
   const navCurrent = sync.navDate && sync.navDate >= expected;
 
@@ -58,7 +61,7 @@ export default function PortfolioSyncCard({ sync, backfill, estimatedCount, hasS
       {nudges.map((n) => (
         <View key={n.key} className={`rounded-xl border px-3.5 py-2.5 mb-3 ${NUDGE_STYLE[n.level] || NUDGE_STYLE.stale}`}>
           <Text className="font-body-semibold text-sm text-ink">{n.text}</Text>
-          <Text className="font-body text-xs text-muted-text mt-0.5">{NUDGE_HINT[n.key]}</Text>
+          <Text className="font-body text-xs text-muted-text mt-0.5">{hintFor(n.key)}</Text>
         </View>
       ))}
 
@@ -85,6 +88,13 @@ export default function PortfolioSyncCard({ sync, backfill, estimatedCount, hasS
           Units bought since {formatShortDate(sync.kiteDate)} are estimated from your SIP plan until the next Kite sync.
         </Text>
       ) : null}
+      {backfill.manual && backfill.lastRunAt && !backfill.running && backfill.failed === 0 ? (
+        <Text className="font-body text-xs text-muted-text mt-2">
+          {backfill.updated > 0
+            ? `Checked just now: new NAVs found for ${backfill.updated} fund${backfill.updated === 1 ? '' : 's'}.`
+            : 'Checked just now: no newer NAVs have been published. Funds publish in the evening, and not on market holidays or weekends.'}
+        </Text>
+      ) : null}
       {backfill.failed > 0 && !backfill.running ? (
         <Text className="font-body text-xs text-stamp-red mt-2">
           {backfill.failed} fund{backfill.failed === 1 ? '' : 's'} could not be updated. Tap Check NAVs to try again.
@@ -98,6 +108,16 @@ export default function PortfolioSyncCard({ sync, backfill, estimatedCount, hasS
         {hasSetup ? (
           <Pressable onPress={onTrade} className="min-h-9 px-3.5 rounded-lg border border-ink/15 bg-paper items-center justify-center">
             <Text className="font-body-semibold text-xs text-ink">Record a trade</Text>
+          </Pressable>
+        ) : null}
+        {hasSetup ? (
+          <Pressable onPress={onSip} className="min-h-9 px-3.5 rounded-lg border border-ink/15 bg-paper items-center justify-center">
+            <Text className="font-body-semibold text-xs text-ink">Edit SIPs</Text>
+          </Pressable>
+        ) : null}
+        {hasSetup ? (
+          <Pressable onPress={onExport} className="min-h-9 px-3.5 rounded-lg border border-ink/15 bg-paper items-center justify-center">
+            <Text className="font-body-semibold text-xs text-ink">Export CSV</Text>
           </Pressable>
         ) : null}
         {hasSetup ? (
