@@ -15,7 +15,7 @@ const units = (n) => (n == null ? '-' : Number(n).toLocaleString('en-IN', { maxi
 
 // Website only: a phone pastes with a long press in the box (and has no file picker without a new dependency).
 // Both resolve to the text, or null when the browser refuses or the user cancels.
-async function readClipboardText() {
+export async function readClipboardText() {
   try {
     return await navigator.clipboard.readText();
   } catch {
@@ -23,7 +23,7 @@ async function readClipboardText() {
   }
 }
 
-function pickTextFile() {
+export function pickTextFile() {
   return new Promise((resolve) => {
     const el = document.createElement('input');
     el.type = 'file';

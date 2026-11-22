@@ -40,6 +40,7 @@ import {
   sliceHistory,
   computeAllocation,
   computeRelativeLines,
+  parseBenchmarkInput,
   projectCorpus,
   summariseProjection,
   inTodaysMoney,
@@ -643,6 +644,27 @@ test('computeRelativeLines: percent change since the window start for the index 
   const out = computeRelativeLines({ rows, navByCode: late, benchmarkCode: '1', days: 30 });
   assert.ok(out.dates.length >= 2);
   assert.equal(out.funds.length, 0);
+});
+
+test('parseBenchmarkInput: takes a bare benchmark or a setup file, reads only the benchmark, and rejects anything malformed', () => {
+  const bench = { schemeCode: '120716', name: 'Test Nifty 50 Index' };
+  assert.deepEqual(parseBenchmarkInput(JSON.stringify(bench)), { ok: true, benchmark: bench });
+  assert.deepEqual(parseBenchmarkInput(JSON.stringify({ benchmark: bench })).benchmark, bench);
+  // A whole setup file: only catalog.benchmark comes out, never a holding, a fund or a plan.
+  const setup = { asOf: '2026-11-01', catalog: { funds: [{ key: 'A' }], benchmark: bench }, positions: { A: { units: 1, avgCost: 2 } }, sipPlan: { A: 5 } };
+  const r = parseBenchmarkInput(JSON.stringify(setup));
+  assert.deepEqual(r, { ok: true, benchmark: bench });
+  assert.deepEqual(Object.keys(r), ['ok', 'benchmark']);
+  assert.equal(parseBenchmarkInput(JSON.stringify({ schemeCode: 120716, name: ' Padded ' })).benchmark.name, 'Padded'); // a number code is accepted as text
+  assert.equal(parseBenchmarkInput('not json').ok, false);
+  assert.equal(parseBenchmarkInput('').ok, false);
+  assert.equal(parseBenchmarkInput(JSON.stringify({ catalog: { funds: [] } })).ok, false); // no benchmark in it
+  assert.equal(parseBenchmarkInput(JSON.stringify({ schemeCode: 'abc', name: 'X' })).ok, false); // not digits
+  assert.equal(parseBenchmarkInput(JSON.stringify({ schemeCode: '12', name: 'X' })).ok, false); // too short
+  assert.equal(parseBenchmarkInput(JSON.stringify({ schemeCode: '120716', name: '' })).ok, false);
+  assert.equal(parseBenchmarkInput(JSON.stringify({ schemeCode: '120716', name: 'x'.repeat(121) })).ok, false);
+  assert.equal(parseBenchmarkInput('[1,2]').ok, false);
+  assert.equal(parseBenchmarkInput('null').ok, false);
 });
 
 test('holdingsToCsv: a header, one line per fund, and commas and quotes escaped', () => {

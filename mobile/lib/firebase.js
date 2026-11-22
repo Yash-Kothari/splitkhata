@@ -905,6 +905,12 @@ export async function savePortfolioLimits(items) {
   await track(setDoc(docAt('portfolio', 'limits'), { items, updatedAt: serverTimestamp() }), 'Could not save the limits');
 }
 
+// ONE-OFF (with PortfolioBenchmarkTool): names the index fund the benchmark comparison uses. Only the benchmark field of the
+// catalog changes, so the funds, units, SIP plan and overlap are untouched; it fails if there is no catalog yet.
+export async function setPortfolioBenchmark(benchmark) {
+  await track(updateDoc(docAt('portfolio', 'catalog'), { benchmark: { schemeCode: String(benchmark.schemeCode), name: String(benchmark.name) } }), 'Could not save the benchmark');
+}
+
 export async function markPortfolioNavFetched() {
   await track(setDoc(docAt('portfolio', 'state'), { lastNavFetchAt: serverTimestamp() }, { merge: true }), 'Could not save the NAV check time');
 }
