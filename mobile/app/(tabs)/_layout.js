@@ -270,6 +270,10 @@ export default function TabsLayout() {
             name="cards"
             options={{ href: FEATURES.cards ? undefined : null, title: 'Cards', tabBarIcon: ({ focused }) => <TabIcon emoji="💳" focused={focused} /> }}
           />
+          <Tabs.Screen
+            name="portfolio"
+            options={{ href: FEATURES.portfolio ? undefined : null, title: 'Portfolio', tabBarIcon: ({ focused }) => <TabIcon emoji="📈" focused={focused} /> }}
+          />
         </Tabs>
         {FEATURES.ai ? <AskQuestion /> : null}
       </View>

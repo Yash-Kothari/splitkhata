@@ -8,6 +8,7 @@ A shared expense tracker for two people. Log an expense, say who paid, split it 
 - **Quick add form**: amount, payer, category, payment method, split toggle, date, note - plus a natural-language Quick Add and receipt scanning
 - **Card rewards**: tracks credit card reward rules against each bank's real terms, links card transactions to ledger entries, and ranks which card to use for a given entry
 - **Recurring rules & budgets**: recurring bills auto-generate their monthly entry, and category budgets warn before they're exceeded, including a month-end forecast
+- **Portfolio**: mutual-fund value, total and daily P&L, when each number was last synced, and how much your funds overlap (see `docs/PORTFOLIO.md`)
 - **Charts**: monthly spend by payer, category donut with month filter
 - **Entry list**: passbook-style rows, filtered by month, search filter, deletable with undo
 - **Export & backup**: CSV per ledger or a full JSON backup of everything, from Settings

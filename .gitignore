@@ -5,3 +5,6 @@ dist-shared
 .env.local
 .DS_Store
 *-debug.log
+
+# Personal portfolio data (holdings, units, values): never commit. The repo is public.
+portfolio-private/
