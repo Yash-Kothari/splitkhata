@@ -20,7 +20,8 @@ const num = (n) => Number(n).toLocaleString('en-IN', { maximumFractionDigits: 3 
 export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onClose }) {
   const { money } = usePortfolioPrivacy();
   const [fundKey, setFundKey] = useState('');
-  const [kind, setKind] = useState('sell');
+  // Buying is the usual reason to open this (a lump sum); a sale is the exception.
+  const [kind, setKind] = useState('buy');
   const [date, setDate] = useState(todayISO());
   const [amount, setAmount] = useState('');
   const [units, setUnits] = useState('');
@@ -34,7 +35,8 @@ export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onC
   const shortOf = (key) => funds.find((f) => f.key === key)?.short || key;
 
   const built = useMemo(() => {
-    if (!fundKey && !amount && !units) return null;
+    // Nothing typed yet (or just saved): no hint, so a fresh form never opens on a red error.
+    if (!amount && !units) return null;
     return buildTrade({
       fundKey,
       kind,
@@ -95,8 +97,8 @@ export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onC
           <Text className={label}>Type</Text>
           <View className="flex-row gap-1.5">
             {[
-              ['sell', 'Sold'],
               ['buy', 'Bought'],
+              ['sell', 'Sold'],
             ].map(([k, text]) => (
               <Pressable
                 key={k}
