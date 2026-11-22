@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, Platform } from 'react-native';
-import Card from './Card';
+import PortfolioShell from './PortfolioShell';
 import DateField from './DateField';
 import { importPortfolioSnapshot } from '../lib/firebase';
 import { settleOrHandOff } from '../lib/saveHandoff';
@@ -42,10 +42,11 @@ function pickTextFile() {
 
 // Paste what you were given, see exactly what will change, then confirm. This is the only way holdings reach the
 // database: the signed-in user presses Confirm here (see docs/PORTFOLIO.md).
-export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, trades = [], onClose }) {
+export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, sipSchedule = null, trades = [], variant = 'settings', onClose }) {
   const [text, setText] = useState('');
   const [asOf, setAsOf] = useState(todayISO());
   const [saving, setSaving] = useState(false);
+  const [imported, setImported] = useState(null);
 
   const today = todayISO();
   const parsed = useMemo(
@@ -60,11 +61,12 @@ export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, 
       snapshots,
       navByCode,
       sipPlan: p.sipPlan || sipPlan,
+      sipSchedule: p.sipPlan ? null : sipSchedule,
       trades,
       next: p.positions,
       asOf: p.asOf,
     });
-  }, [parsed, funds, snapshots, navByCode, sipPlan, trades]);
+  }, [parsed, funds, snapshots, navByCode, sipPlan, sipSchedule, trades]);
 
   async function handlePaste() {
     const clip = await readClipboardText();
@@ -86,30 +88,33 @@ export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, 
       notify('Could not import', outcome.error?.message || String(outcome.error));
       return;
     }
-    onClose();
+    setImported(`${Object.keys(parsed.payload.positions).length} holdings as of ${parsed.payload.asOf}`);
+    setText('');
+    onClose?.();
   }
 
   const p = parsed?.ok ? parsed.payload : null;
 
   return (
-    <Card className="p-4 mb-4">
-      <Text className="font-display text-lg text-ink">Import snapshot</Text>
-      <Text className="font-body text-xs text-muted-text mb-3">
-        Paste the holdings file Claude made from Kite (or your setup / CAS file). Nothing is saved until you confirm.
-      </Text>
-
-      <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Holdings as of</Text>
-      <View className="mb-3" style={{ maxWidth: 200 }}>
-        <DateField value={asOf} onChange={setAsOf} className={input} />
+    <PortfolioShell
+      variant={variant}
+      title="Update Holdings"
+      subtitle="Paste the setup file the first time, then the holdings file Claude makes from Kite or your CAS. Nothing is saved until you confirm."
+    >
+      <View>
+        <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Holdings As Of</Text>
+        <View style={{ maxWidth: 200 }}>
+          <DateField value={asOf} onChange={setAsOf} className={input} />
+        </View>
       </View>
 
       {Platform.OS === 'web' ? (
         <View className="flex-row flex-wrap gap-2 mb-2">
           <Pressable onPress={handlePaste} className="min-h-9 px-3.5 rounded-lg border border-ink/15 bg-paper items-center justify-center">
-            <Text className="font-body-semibold text-xs text-ink">Paste from clipboard</Text>
+            <Text className="font-body-semibold text-xs text-ink">Paste from Clipboard</Text>
           </Pressable>
           <Pressable onPress={handlePickFile} className="min-h-9 px-3.5 rounded-lg border border-ink/15 bg-paper items-center justify-center">
-            <Text className="font-body-semibold text-xs text-ink">Choose file</Text>
+            <Text className="font-body-semibold text-xs text-ink">Choose File</Text>
           </Pressable>
         </View>
       ) : null}
@@ -162,12 +167,15 @@ export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, 
           disabled={!p || saving}
           className="min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
         >
-          {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-xs text-white">Confirm import</Text>}
+          {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-xs text-white">Confirm Import</Text>}
         </Pressable>
-        <Pressable onPress={onClose} className="min-h-9 px-3.5 rounded-lg border border-ink/15 bg-paper items-center justify-center">
-          <Text className="font-body-semibold text-xs text-ink">Cancel</Text>
-        </Pressable>
+        {text ? (
+          <Pressable onPress={() => setText('')} className="min-h-9 px-3.5 rounded-lg border border-ink/15 bg-paper items-center justify-center">
+            <Text className="font-body-semibold text-xs text-ink">Clear</Text>
+          </Pressable>
+        ) : null}
       </View>
-    </Card>
+      {imported ? <Text className="font-body text-xs text-ledger-green">Imported {imported}.</Text> : null}
+    </PortfolioShell>
   );
 }

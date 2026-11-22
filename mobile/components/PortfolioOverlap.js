@@ -3,6 +3,7 @@ import { View, Text } from 'react-native';
 import Card from './Card';
 import FoldHeader from './FoldHeader';
 import { usePortfolioPrivacy } from '../lib/PortfolioPrivacyContext';
+import { formatShortDate } from '../lib/portfolio';
 
 function Label({ children }) {
   return <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1.5">{children}</Text>;
@@ -25,7 +26,7 @@ function BarRow({ label, right, pct, sub }) {
 
 // Which stocks you really own several times over, and which funds repeat each other. It uses each fund's top
 // disclosed holdings only, so every figure here is a floor.
-export default function PortfolioOverlap({ overlap, mix, asOf, collapsible = false }) {
+export default function PortfolioOverlap({ overlap, mix, asOfDate, collapsible = false }) {
   const { money } = usePortfolioPrivacy();
   const [openState, setOpenState] = useState(false);
   const isOpen = !collapsible || openState;
@@ -39,7 +40,7 @@ export default function PortfolioOverlap({ overlap, mix, asOf, collapsible = fal
     <Card className="p-4 mb-4">
       <FoldHeader
         title="Overlap"
-        subtitle={`Top holdings${asOf ? `, ${asOf}` : ''}. A floor, not the full picture`}
+        subtitle={asOfDate ? `Disclosures of ${formatShortDate(asOfDate)}` : 'Top disclosed holdings'}
         summary={`Adani group ${adani.pct.toFixed(1)}% of the portfolio`}
         collapsible={collapsible}
         open={isOpen}
@@ -48,7 +49,7 @@ export default function PortfolioOverlap({ overlap, mix, asOf, collapsible = fal
       {isOpen ? (
         <View>
           <View className="rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5 mb-3">
-            <Label>Adani group</Label>
+            <Label>Adani Group</Label>
             <Text className="font-mono-bold text-xl text-ink">{money(adani.total)}</Text>
             <Text className="font-body text-xs text-muted-text mb-2">{adani.pct.toFixed(1)}% of the portfolio</Text>
             {adani.byStock.map((s) => (
@@ -66,14 +67,14 @@ export default function PortfolioOverlap({ overlap, mix, asOf, collapsible = fal
             ))}
           </View>
 
-          <Label>Mix by type</Label>
+          <Label>Mix by Type</Label>
           <View className="mb-3">
             {mix.map((m) => (
               <BarRow key={m.label} label={m.label} right={`${m.pct.toFixed(1)}% · ${money(m.value)}`} pct={m.pct} />
             ))}
           </View>
 
-          <Label>Stocks you own through several funds</Label>
+          <Label>Stocks You Own Through Several Funds</Label>
           <View className="mb-3">
             {topShared.map((s) => (
               <View key={s.stock} className="py-1.5 border-b border-ink/10">
@@ -87,11 +88,14 @@ export default function PortfolioOverlap({ overlap, mix, asOf, collapsible = fal
             ))}
           </View>
 
-          <Label>Funds that overlap most</Label>
+          <Label>Funds That Overlap Most</Label>
           {topPairs.map((p) => (
             <BarRow key={`${p.a}|${p.b}`} label={`${p.a} + ${p.b}`} right={`${p.pct.toFixed(0)}%`} pct={(p.pct / (topPairs[0].pct || 1)) * 100} />
           ))}
           <Text className="font-body text-2xs text-muted-text mt-1">Overlap is the sum of the smaller weight for each stock two funds share.</Text>
+          <Text className="font-body text-2xs text-muted-text mt-1">
+            Built from each fund's top 15 to 20 disclosed holdings (aggregator data), so every figure here is a floor, and futures positions are left out.
+          </Text>
         </View>
       ) : null}
     </Card>

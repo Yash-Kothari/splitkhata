@@ -181,6 +181,9 @@ at 375px wide as well as desktop.
   `ink`, `paper`, `paper-card`, `ledger-green`, `mustard`, `stamp-red`, `muted-text`.
   Never hard-code a colour (dark mode re-themes through the tokens). For raw SVG or
   style colours use `themeColor` / `themeRgba` from `lib/theme.js`.
+- **Capitalisation:** every title, section name, tab, button and field label is **Title Case** ("SIP Plan", "Import & Export",
+  "Record a Trade", "Points per Unit"; small words like a, of, per, by, vs stay lower-case). Body text, captions and status
+  chips are sentence case. Check this on every new screen against the existing ones.
 - **Type:** display font (`font-display`) for card titles at `text-lg`; body font
   for text; **mono bold for every number**; small-caps labels are
   `font-body-semibold text-2xs uppercase tracking-wider text-muted-text`.
@@ -418,6 +421,10 @@ local testing predicted.
   Category Breakdown counts (`isCountableSpend`), so the two totals match; entries with no method are "Not specified".
 - `EntryList` draws 100 rows at a time (`PAGE_SIZE`) with a "Show N More" button; the count in its header
   still covers every match, and a jump-to-entry highlight floats to the top so it is always drawn.
+- **The Portfolio tab shows; Settings -> Portfolio changes.** The SIP plan, limits and imports are Settings pages (a group in
+  `SettingsModal`, components in `PortfolioSettings.js`); the tab opens them with `useSettingsModal().open('portfolioLimits')`
+  and friends. Quick actions that belong where you are (Record a trade) are a pop-up (`PortfolioSheet`), never a form
+  inserted at the top of the page.
 - **Portfolio SIP plan is a dated schedule** (`normalizeSipSchedule`, `sipAmountFn`): an edit applies from its own date and
   never rewrites earlier estimated units. Every rupee amount on the tab goes through `usePortfolioPrivacy()` (the "Hide
   amounts" switch), not `formatCurrency` directly.

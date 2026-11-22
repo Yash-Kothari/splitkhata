@@ -60,7 +60,7 @@ export default function PortfolioSipAmounts({ funds, draft, onChange }) {
       ))}
       {options.length ? (
         <View className="mb-2">
-          <PickerField label="Add a fund" value="" options={options} onChange={(v) => onChange({ ...draft, [v]: '' })} />
+          <PickerField label="Add a Fund" value="" options={options} onChange={(v) => onChange({ ...draft, [v]: '' })} />
         </View>
       ) : null}
       <Text className="font-body text-xs text-muted-text">

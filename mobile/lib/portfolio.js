@@ -664,6 +664,13 @@ export function syncNudges({ sync, hasSetup, overlapDate = null, today = null })
   return out;
 }
 
+// Which Settings tab fixes a reminder: holdings, CAS and overlap data are imported; limits are edited.
+export function nudgeTarget(key) {
+  if (typeof key === 'string' && key.startsWith('limit')) return 'portfolioLimits';
+  if (key === 'kite' || key === 'cas' || key === 'overlap') return 'portfolioData';
+  return null;
+}
+
 // ---------- concentration limits ----------
 
 // Where the portfolio stands on the things worth capping. `overlap` is computeOverlap's result (null without data).
@@ -700,18 +707,25 @@ export const DEFAULT_LIMITS = [
   { id: 'fund', metric: 'fund', max: 15 },
 ];
 
+const SMALL_WORDS = new Set(['a', 'an', 'and', 'of', 'the', 'in', 'on', 'to', 'for']);
+const titleCase = (text) =>
+  String(text || '')
+    .split(' ')
+    .map((w, i) => (i > 0 && SMALL_WORDS.has(w.toLowerCase()) ? w.toLowerCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+
 export function limitLabel(limit) {
   switch (limit.metric) {
     case 'adani':
-      return 'Adani group';
+      return 'Adani Group';
     case 'amc':
-      return `${limit.name} funds`;
+      return `${titleCase(limit.name)} Funds`;
     case 'category':
-      return `${limit.name} funds`;
+      return `${titleCase(limit.name)} Funds`;
     case 'stock':
-      return 'Largest single stock';
+      return 'Largest Single Stock';
     case 'fund':
-      return 'Largest single fund';
+      return 'Largest Single Fund';
     default:
       return limit.id;
   }

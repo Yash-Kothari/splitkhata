@@ -50,15 +50,15 @@ export default function PortfolioSummary({ portfolio }) {
         <Pressable
           onPress={toggle}
           accessibilityRole="button"
-          accessibilityLabel={hidden ? 'Show amounts' : 'Hide amounts'}
+          accessibilityLabel={hidden ? 'Show Amounts' : 'Hide Amounts'}
           className="min-h-8 px-2.5 rounded-lg border border-ink/15 bg-paper items-center justify-center"
         >
-          <Text className="font-body-semibold text-xs text-ink">{hidden ? '👁 Show amounts' : '🙈 Hide amounts'}</Text>
+          <Text className="font-body-semibold text-xs text-ink">{hidden ? '👁 Show Amounts' : '🙈 Hide Amounts'}</Text>
         </Pressable>
       </View>
 
       <View className="rounded-xl bg-ledger-green/10 px-3.5 py-2.5 mb-2">
-        <Text className="font-body-semibold text-2xs text-ledger-green uppercase tracking-wider">Current value</Text>
+        <Text className="font-body-semibold text-2xs text-ledger-green uppercase tracking-wider">Current Value</Text>
         <Text className="font-mono-bold text-ledger-green text-2xl">{money(total.value)}</Text>
         <Text className="font-body text-2xs text-muted-text mt-0.5">
           Invested <Text className="font-mono-bold text-ink">{money(total.cost)}</Text>
@@ -67,13 +67,13 @@ export default function PortfolioSummary({ portfolio }) {
 
       <View className="flex-row flex-wrap gap-2">
         <Tile label="Total P&L" amount={total.pnl} pct={total.pnlPct} stacked={stacked} />
-        <Tile label="Day change" amount={total.day} pct={total.dayPct} stacked={stacked} />
+        <Tile label="Day Change" amount={total.day} pct={total.dayPct} stacked={stacked} />
       </View>
 
       <View className="mt-3 pt-3 border-t border-ink/10">
         {[
           ['Zerodha', byGroup.zerodha],
-          ['Other funds', byGroup.other],
+          ['Other Funds', byGroup.other],
         ]
           .filter(([, g]) => g.count > 0)
           .map(([label, g]) => (

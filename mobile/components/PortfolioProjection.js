@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { View, Text, TextInput, ScrollView } from 'react-native';
+import { View, Text, TextInput } from 'react-native';
 import Card from './Card';
 import FoldHeader from './FoldHeader';
 import { projectCorpus } from '../lib/portfolio';
@@ -24,7 +24,7 @@ function Field({ label, value, onChange, suffix }) {
 // What the SIPs and today's value could grow to over a long horizon at a low, middle and high yearly return. This is
 // compounding arithmetic on numbers you can change, an illustration of how time and return interact, not a forecast.
 export default function PortfolioProjection({ portfolio, sipPlan, collapsible = false }) {
-  const { money } = usePortfolioPrivacy();
+  const { money, compact } = usePortfolioPrivacy();
   const [openState, setOpenState] = useState(false);
   const isOpen = !collapsible || openState;
   const perDay = Object.values(sipPlan || {}).reduce((a, b) => a + (Number(b) || 0), 0);
@@ -62,7 +62,7 @@ export default function PortfolioProjection({ portfolio, sipPlan, collapsible = 
   return (
     <Card className="p-4 mb-4">
       <FoldHeader
-        title="Long-term illustration"
+        title="Long-Term Illustration"
         subtitle="Arithmetic on numbers you set, not a forecast"
         summary={`${horizon} years at ${n(mid, 11)}%: ${money(at(scenarios[1].path, horizon)?.value ?? 0)}`}
         collapsible={collapsible}
@@ -72,58 +72,53 @@ export default function PortfolioProjection({ portfolio, sipPlan, collapsible = 
       {isOpen ? (
         <View>
           <View className="flex-row flex-wrap" style={{ gap: 12 }}>
-            <Field label="SIP per month (₹)" value={monthly} onChange={setMonthly} />
+            <Field label="SIP per Month (₹)" value={monthly} onChange={setMonthly} />
             <Field label="Years" value={years} onChange={setYears} />
-            <Field label="Yearly SIP increase" value={stepUp} onChange={setStepUp} suffix="%" />
+            <Field label="Yearly SIP Increase" value={stepUp} onChange={setStepUp} suffix="%" />
             <Field label="Inflation" value={inflation} onChange={setInflation} suffix="%" />
-            <Field label="Low return a year" value={low} onChange={setLow} suffix="%" />
-            <Field label="Middle return" value={mid} onChange={setMid} suffix="%" />
-            <Field label="High return" value={high} onChange={setHigh} suffix="%" />
+            <Field label="Low Return a Year" value={low} onChange={setLow} suffix="%" />
+            <Field label="Middle Return" value={mid} onChange={setMid} suffix="%" />
+            <Field label="High Return" value={high} onChange={setHigh} suffix="%" />
           </View>
           <Text className="font-body text-2xs text-muted-text mt-2">
             Starts from today's value of {money(portfolio.total.value)} and adds the monthly SIP at each month end. The SIP field starts at your current plan.
           </Text>
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mt-3">
-            <View style={{ minWidth: 420 }}>
-              <View className="flex-row border-b border-ink/10 pb-1">
-                <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text" style={{ width: 70 }}>Year</Text>
-                {scenarios.map((s) => (
-                  <Text key={s.label} className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text" style={{ width: 110, textAlign: 'right' }}>
-                    {s.label} {s.r}%
-                  </Text>
-                ))}
-              </View>
-              {marks.map((year) => (
-                <View key={year} className="py-1.5 border-b border-ink/10">
-                  <View className="flex-row">
-                    <Text className="font-body-semibold text-sm text-ink" style={{ width: 70 }}>{year}</Text>
-                    {scenarios.map((s) => (
-                      <Text key={s.label} className="font-mono-bold text-xs text-ink" style={{ width: 110, textAlign: 'right' }}>
-                        {money(at(s.path, year)?.value ?? 0)}
-                      </Text>
-                    ))}
-                  </View>
-                  <View className="flex-row">
-                    <Text className="font-body text-2xs text-muted-text" style={{ width: 70 }}>today's ₹</Text>
-                    {scenarios.map((s) => (
-                      <Text key={s.label} className="font-mono text-2xs text-muted-text" style={{ width: 110, textAlign: 'right' }}>
-                        {money(real(at(s.path, year)?.value ?? 0, year))}
-                      </Text>
-                    ))}
-                  </View>
-                </View>
-              ))}
-              <View className="flex-row pt-1.5">
-                <Text className="font-body text-2xs text-muted-text" style={{ width: 70 }}>put in</Text>
-                <Text className="font-mono text-2xs text-muted-text" style={{ width: 330, textAlign: 'right' }}>
-                  {money(at(scenarios[1].path, horizon)?.invested ?? 0)} by year {horizon}
+          <View className="mt-3">
+            <View className="flex-row gap-2 border-b border-ink/10 pb-1">
+              <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text" style={{ width: 44 }}>Year</Text>
+              {scenarios.map((s) => (
+                <Text key={s.label} className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text" style={{ flex: 1, textAlign: 'right' }} numberOfLines={1}>
+                  {s.label} {s.r}%
                 </Text>
-              </View>
+              ))}
             </View>
-          </ScrollView>
+            {marks.map((year) => (
+              <View key={year} className="py-1.5 border-b border-ink/10">
+                <View className="flex-row gap-2">
+                  <Text className="font-body-semibold text-sm text-ink" style={{ width: 44 }}>{year}</Text>
+                  {scenarios.map((s) => (
+                    <Text key={s.label} className="font-mono-bold text-xs text-ink" style={{ flex: 1, textAlign: 'right' }} numberOfLines={1}>
+                      {compact(at(s.path, year)?.value ?? 0)}
+                    </Text>
+                  ))}
+                </View>
+                <View className="flex-row gap-2">
+                  <Text className="font-body text-2xs text-muted-text" style={{ width: 44 }}>real</Text>
+                  {scenarios.map((s) => (
+                    <Text key={s.label} className="font-mono text-2xs text-muted-text" style={{ flex: 1, textAlign: 'right' }} numberOfLines={1}>
+                      {compact(real(at(s.path, year)?.value ?? 0, year))}
+                    </Text>
+                  ))}
+                </View>
+              </View>
+            ))}
+            <Text className="font-body text-2xs text-muted-text pt-1.5">
+              Put in by year {horizon}: {money(at(scenarios[1].path, horizon)?.invested ?? 0)}. Figures in lakh (L) and crore (Cr); "real" is the same amount in today's money after the inflation you set.
+            </Text>
+          </View>
           <Text className="font-body text-2xs text-muted-text mt-2">
-            Real returns vary a lot from year to year and can be negative for long stretches. The "today's ₹" line takes the inflation you set off each figure.
+            Real returns vary a lot from year to year and can be negative for long stretches. The "real" line takes the inflation you set off each figure.
           </Text>
         </View>
       ) : null}

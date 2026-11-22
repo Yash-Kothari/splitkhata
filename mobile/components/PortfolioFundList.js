@@ -44,10 +44,10 @@ const FundRow = memo(function FundRow({ r }) {
         <View className="mt-2 rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5">
           {[
             ['Units', units(num(r.units))],
-            ['Average cost', money(r.avgCost)],
+            ['Average Cost', money(r.avgCost)],
             ['Latest NAV', `₹${r.nav}`],
-            ['Share of portfolio', `${r.share.toFixed(1)}%`],
-            ['Units from', `${formatShortDate(r.snapshotDate)} snapshot${r.estimated ? ` + ${r.sipDays} SIP days` : ''}`],
+            ['Share of Portfolio', `${r.share.toFixed(1)}%`],
+            ['Units From', `${formatShortDate(r.snapshotDate)} snapshot${r.estimated ? ` + ${r.sipDays} SIP days` : ''}`],
           ].map(([k, v]) => (
             <View key={k} className="flex-row justify-between gap-3 py-0.5">
               <Text className="font-body text-xs text-muted-text">{k}</Text>
@@ -77,14 +77,21 @@ function Group({ title, rows, total }) {
 }
 
 // Passbook-style rows, largest first, grouped by where the units are held. Tap a row for units and average cost.
-export default function PortfolioFundList({ portfolio }) {
+export default function PortfolioFundList({ portfolio, onTrade }) {
   const { rows, byGroup } = portfolio;
   return (
     <Card className="p-4 mb-4">
-      <Text className="font-display text-lg text-ink">Your funds</Text>
-      <Text className="font-body text-xs text-muted-text mb-2">Tap a fund for units and average cost</Text>
+      <View className="flex-row items-start justify-between gap-2 mb-2">
+        <View className="flex-1">
+          <Text className="font-display text-lg text-ink">Your Funds</Text>
+          <Text className="font-body text-xs text-muted-text">Tap a fund for units and average cost</Text>
+        </View>
+        <Pressable onPress={onTrade} accessibilityRole="button" className="min-h-8 px-3 rounded-lg border border-ink/15 bg-paper items-center justify-center">
+          <Text className="font-body-semibold text-xs text-ink">＋ Record a Trade</Text>
+        </Pressable>
+      </View>
       <Group title="Zerodha" rows={rows.filter((r) => r.group === 'zerodha')} total={byGroup.zerodha} />
-      <Group title="Other funds" rows={rows.filter((r) => r.group === 'other')} total={byGroup.other} />
+      <Group title="Other Funds" rows={rows.filter((r) => r.group === 'other')} total={byGroup.other} />
     </Card>
   );
 }

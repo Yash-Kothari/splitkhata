@@ -8,12 +8,25 @@ import { createContext, useContext, useState } from 'react';
 // whether that tab's sheet was actually open (see P1-11). This context lets
 // every AppHeader (and Cards' own empty-state CTA) share one open/close flag
 // for the single <SettingsModal> rendered once at the root (app/_layout.js).
-const SettingsModalContext = createContext({ visible: false, open: () => {}, close: () => {} });
+const SettingsModalContext = createContext({ visible: false, requestedTab: null, open: () => {}, close: () => {} });
 
 export function SettingsModalProvider({ children }) {
   const [visible, setVisible] = useState(false);
+  // `open('portfolioData')` lands on that Settings tab (a reminder on a screen can point at the page that fixes it);
+  // `open()` or an onPress event lands on the group picker as before.
+  const [requestedTab, setRequestedTab] = useState(null);
   return (
-    <SettingsModalContext.Provider value={{ visible, open: () => setVisible(true), close: () => setVisible(false) }}>
+    <SettingsModalContext.Provider
+      value={{
+        visible,
+        requestedTab,
+        open: (tab) => {
+          setRequestedTab(typeof tab === 'string' ? tab : null);
+          setVisible(true);
+        },
+        close: () => setVisible(false),
+      }}
+    >
       {children}
     </SettingsModalContext.Provider>
   );

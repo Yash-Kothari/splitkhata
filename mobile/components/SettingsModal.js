@@ -2,6 +2,7 @@ import { FEATURES, IS_SHARED_EDITION } from '../lib/edition';
 import { useGroup } from '../lib/GroupContext';
 import { usePathname } from 'expo-router';
 import GroupPeople from './GroupPeople';
+import { PortfolioSettingsSip, PortfolioSettingsLimits, PortfolioSettingsData } from './PortfolioSettings';
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, Modal, ScrollView, Switch, useWindowDimensions, Platform, KeyboardAvoidingView } from 'react-native';
 import { notify, confirmAsync } from '../lib/dialogs';
@@ -186,6 +187,9 @@ const TABS = [
   { key: 'export', label: 'Export' },
   { key: 'appearance', label: 'Appearance' },
   { key: 'security', label: '🔒 Security PIN' },
+  { key: 'portfolioSip', label: 'SIP Plan' },
+  { key: 'portfolioLimits', label: 'Limits' },
+  { key: 'portfolioData', label: 'Import & Export' },
 ];
 
 // P1-11: 11 flat tabs crammed into one scrolling row read as cramped,
@@ -197,12 +201,22 @@ const ALL_TAB_GROUPS = [
   { key: 'payments', label: 'Payments & Cards', icon: '💳', description: 'Currencies, Payment Methods, Credit Cards', tabs: ['currencies', 'paymentMethods'] },
   { key: 'people', label: 'People', icon: '👥', description: 'Household Members', tabs: ['members'] },
   { key: 'data', label: 'Data & Backup', icon: '☁️', description: 'Sync Status & Export', tabs: ['database', 'export'] },
+  { key: 'portfolio', label: 'Portfolio', icon: '📈', description: 'SIP Plan, Limits, Import & Export', tabs: ['portfolioSip', 'portfolioLimits', 'portfolioData'] },
   { key: 'general', label: 'General', icon: '⚙️', description: 'Appearance & Security PIN', tabs: ['appearance', 'security'] },
 ];
 // The shared edition is Household only: no currencies / payment methods / credit cards (all travel & card features).
 const HOME_TAB = '__home__';
 // Which settings tabs exist in this edition, and which of those edit a group's data (and so need one open).
-const TAB_ENABLED = { recurring: FEATURES.recurring, reminders: FEATURES.household, currencies: FEATURES.cards, paymentMethods: FEATURES.cards, security: FEATURES.pin };
+const TAB_ENABLED = {
+  recurring: FEATURES.recurring,
+  reminders: FEATURES.household,
+  currencies: FEATURES.cards,
+  paymentMethods: FEATURES.cards,
+  security: FEATURES.pin,
+  portfolioSip: FEATURES.portfolio,
+  portfolioLimits: FEATURES.portfolio,
+  portfolioData: FEATURES.portfolio,
+};
 const GROUP_DATA_TABS = new Set(['categories', 'budgets', 'recurring', 'reminders', 'currencies', 'paymentMethods', 'members', 'database', 'export']);
 function settingsTabGroups(dataReady) {
   return ALL_TAB_GROUPS
@@ -248,7 +262,7 @@ const input = 'font-body text-sm text-ink border border-ink/15 rounded-xl px-3 p
 // is opened from the global AppHeader, present on every tab, so it
 // subscribes to all its own Firestore data rather than needing each of the
 // 4 screens to thread half a dozen datasets down to it.
-export default function SettingsModal({ visible, onClose }) {
+export default function SettingsModal({ visible, onClose, initialTab = null }) {
   const { height: windowHeight } = useWindowDimensions();
   // Shared edition: Settings is about the open group (categories, people, export...) only while a group is
   // open on the Groups tab; anywhere else it is just the app's own preferences.
@@ -266,9 +280,12 @@ export default function SettingsModal({ visible, onClose }) {
   // Land on the group picker every time Settings reopens, rather than
   // wherever the last session's activeTab happened to be - a predictable
   // entry point, same as the sub-tab bar reset it replaces.
+  // (or on the tab a screen asked for, e.g. a Portfolio reminder pointing at its import page).
   useEffect(() => {
-    if (visible) setActiveTab(HOME_TAB);
-  }, [visible]);
+    if (visible) setActiveTab(initialTab && tabToGroup[initialTab] ? initialTab : HOME_TAB);
+    // tabToGroup is rebuilt every render; only opening (or a new request) should reset the tab.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, initialTab]);
   const { colorScheme, setColorScheme } = useColorScheme();
   // NativeWind's own colorScheme only ever reports the *resolved* light/dark
   // (never the literal string 'system'), so which button reads as "selected"
@@ -2249,6 +2266,9 @@ export default function SettingsModal({ visible, onClose }) {
             </View>
           )}
 
+          {activeTab === 'portfolioSip' && <PortfolioSettingsSip />}
+          {activeTab === 'portfolioLimits' && <PortfolioSettingsLimits />}
+          {activeTab === 'portfolioData' && <PortfolioSettingsData />}
           {activeTab === 'export' && (
             <View className="gap-3">
               <View>

@@ -1,55 +1,61 @@
 import { useState } from 'react';
 import { Redirect } from 'expo-router';
-import { View, Text, ScrollView, ActivityIndicator, Platform, Share, useWindowDimensions } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { FEATURES } from '../../lib/edition';
 import usePortfolio from '../../lib/usePortfolio';
+import { useSettingsModal } from '../../lib/SettingsModalContext';
+import { PortfolioPrivacyProvider } from '../../lib/PortfolioPrivacyContext';
 import AppHeader from '../../components/AppHeader';
 import Card from '../../components/Card';
+import PortfolioSectionNav from '../../components/PortfolioSectionNav';
 import PortfolioSummary from '../../components/PortfolioSummary';
 import PortfolioSyncCard from '../../components/PortfolioSyncCard';
-import PortfolioImport from '../../components/PortfolioImport';
-import PortfolioTradeForm from '../../components/PortfolioTradeForm';
-import PortfolioSipEditor from '../../components/PortfolioSipEditor';
-import PortfolioLimits from '../../components/PortfolioLimits';
-import PortfolioWhatIf from '../../components/PortfolioWhatIf';
-import PortfolioBenchmark from '../../components/PortfolioBenchmark';
-import PortfolioProjection from '../../components/PortfolioProjection';
-import { PortfolioPrivacyProvider } from '../../lib/PortfolioPrivacyContext';
-import { holdingsToCsv } from '../../lib/portfolio';
-import { todayISO } from '../../lib/utils';
-import { reportError } from '../../lib/errorReporting';
 import PortfolioFundList from '../../components/PortfolioFundList';
+import PortfolioBenchmark from '../../components/PortfolioBenchmark';
+import PortfolioLimits from '../../components/PortfolioLimits';
 import PortfolioOverlap from '../../components/PortfolioOverlap';
+import PortfolioWhatIf from '../../components/PortfolioWhatIf';
+import PortfolioProjection from '../../components/PortfolioProjection';
+import PortfolioSheet from '../../components/PortfolioSheet';
+import PortfolioTradeForm from '../../components/PortfolioTradeForm';
 import { DailyPnlChart, ValueChart } from '../../components/PortfolioCharts';
+
+// The tab only shows things; changing anything (the SIP plan, the limits, new holdings) is a setting and lives in Settings ->
+// Portfolio. Recording a trade is a quick action on the fund list, in a pop-up. Four short sections instead of one long page.
+const SECTIONS = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'funds', label: 'Funds' },
+  { key: 'insights', label: 'Insights' },
+  { key: 'plan', label: 'Plan' },
+];
+
+// Two columns on a wide screen (like Household's main area and side rail), one column on a phone.
+function Columns({ wide, left, right }) {
+  if (!wide) {
+    return (
+      <View>
+        {left}
+        {right}
+      </View>
+    );
+  }
+  return (
+    <View className="flex-row" style={{ gap: 16, alignItems: 'flex-start' }}>
+      <View style={{ flex: 1, minWidth: 0 }}>{left}</View>
+      <View style={{ flex: 1, minWidth: 0 }}>{right}</View>
+    </View>
+  );
+}
 
 function PortfolioScreen() {
   const p = usePortfolio();
+  const { open: openSettings } = useSettingsModal();
   const { width } = useWindowDimensions();
-  // Same rule as the other tabs: above 1024px there is a side rail and the charts stay open; on a phone they fold.
+  // Same rule as the other tabs: above 1024px there is room for two columns and the charts stay open; on a phone they fold.
   const isWide = width >= 1024;
-  const [importing, setImporting] = useState(false);
+  const fold = !isWide;
+  const [section, setSection] = useState('overview');
   const [trading, setTrading] = useState(false);
-  const [editingSip, setEditingSip] = useState(false);
-
-  // Website: a file download. Phone: the share sheet with the CSV text.
-  async function exportCsv() {
-    const csv = holdingsToCsv(p.portfolio.rows);
-    const name = `portfolio-${todayISO()}.csv`;
-    try {
-      if (Platform.OS === 'web') {
-        const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = name;
-        a.click();
-        URL.revokeObjectURL(url);
-      } else {
-        await Share.share({ title: name, message: csv });
-      }
-    } catch (err) {
-      reportError(err, 'Could not export the holdings');
-    }
-  }
 
   const sync = (
     <PortfolioSyncCard
@@ -58,30 +64,9 @@ function PortfolioScreen() {
       estimatedCount={p.portfolio.estimatedCount}
       hasSetup={p.hasSetup}
       nudges={p.nudges}
-      onImport={() => setImporting(true)}
-      onTrade={() => setTrading(true)}
-      onSip={() => setEditingSip(true)}
-      onExport={exportCsv}
+      onOpenSettings={(tab) => openSettings(tab)}
       onRefreshNavs={p.refreshNavs}
     />
-  );
-  const importCard = (
-    <>
-      {importing ? (
-        <PortfolioImport
-          funds={p.funds}
-          snapshots={p.snapshots}
-          navByCode={p.navByCode}
-          sipPlan={p.sipPlan}
-          trades={p.trades}
-          onClose={() => setImporting(false)}
-        />
-      ) : null}
-      {trading ? (
-        <PortfolioTradeForm funds={p.funds} navByCode={p.navByCode} rows={p.portfolio.rows} trades={p.trades} onClose={() => setTrading(false)} />
-      ) : null}
-      {editingSip ? <PortfolioSipEditor funds={p.funds} schedule={p.sipSchedule} onClose={() => setEditingSip(false)} /> : null}
-    </>
   );
 
   let body;
@@ -93,64 +78,73 @@ function PortfolioScreen() {
     );
   } else if (!p.hasSetup || p.portfolio.rows.length === 0) {
     body = (
-      <View className="px-4">
-        {importCard}
+      <View>
         {sync}
         <Card className="p-4 mb-4">
           <Text className="font-display text-lg text-ink mb-1">Nothing here yet</Text>
           <Text className="font-body text-sm text-muted-text">
-            Import the setup file to add your funds, units and SIP plan. After that, NAVs fill in by themselves each time you open this tab, and a
-            fresh Kite snapshot keeps the units exact.
+            Open Settings → Portfolio → Import & export and paste the setup file to add your funds, units and SIP plan. After that, NAVs fill in by
+            themselves each time you open this tab, and a fresh Kite snapshot keeps the units exact.
           </Text>
         </Card>
       </View>
     );
   } else {
-    const summary = <PortfolioSummary portfolio={p.portfolio} />;
-    const funds = <PortfolioFundList portfolio={p.portfolio} />;
-    const daily = <DailyPnlChart history={p.history} collapsible={!isWide} />;
-    const value = <ValueChart history={p.history} collapsible={!isWide} />;
-    const overlap = <PortfolioOverlap overlap={p.overlap} mix={p.mix} asOf={p.overlapAsOf} collapsible={!isWide} />;
-    const limits = <PortfolioLimits evaluated={p.evaluatedLimits} limits={p.limits} saved={p.limitsSaved} metrics={p.metrics} collapsible={!isWide} />;
-    const whatIf = (
-      <PortfolioWhatIf portfolio={p.portfolio} funds={p.funds} overlapData={p.overlapData} metrics={p.metrics} sipPlan={p.sipPlan} collapsible={!isWide} />
-    );
-    const benchmark = <PortfolioBenchmark table={p.benchmarkTable} benchmark={p.benchmark} collapsible={!isWide} />;
-    const projection = <PortfolioProjection portfolio={p.portfolio} sipPlan={p.sipPlan} collapsible={!isWide} />;
-    body = (
-      <View className="px-4">
-        {importCard}
-        {isWide ? (
-          <View className="flex-row" style={{ gap: 16, alignItems: 'flex-start' }}>
-            <View style={{ flex: 1.15, minWidth: 0 }}>
-              {summary}
+    const columns = {
+      overview: (
+        <Columns
+          wide={isWide}
+          left={
+            <>
+              <PortfolioSummary portfolio={p.portfolio} />
               {sync}
-              {limits}
-              {funds}
-              {benchmark}
-            </View>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              {daily}
-              {value}
-              {overlap}
-              {whatIf}
-              {projection}
-            </View>
-          </View>
-        ) : (
-          <View>
-            {summary}
-            {sync}
-            {limits}
-            {daily}
-            {value}
-            {funds}
-            {overlap}
-            {whatIf}
-            {benchmark}
-            {projection}
-          </View>
-        )}
+            </>
+          }
+          right={
+            <>
+              <DailyPnlChart history={p.history} collapsible={fold} />
+              <ValueChart history={p.history} collapsible={fold} />
+            </>
+          }
+        />
+      ),
+      funds: (
+        <Columns
+          wide={isWide}
+          left={<PortfolioFundList portfolio={p.portfolio} onTrade={() => setTrading(true)} />}
+          right={<PortfolioBenchmark table={p.benchmarkTable} benchmark={p.benchmark} collapsible={fold} />}
+        />
+      ),
+      insights: (
+        <Columns
+          wide={isWide}
+          left={<PortfolioLimits evaluated={p.evaluatedLimits} saved={p.limitsSaved} collapsible={fold} defaultOpen onEdit={() => openSettings('portfolioLimits')} />}
+          right={<PortfolioOverlap overlap={p.overlap} mix={p.mix} asOfDate={p.overlapData?.asOfDate} collapsible={fold} />}
+        />
+      ),
+      plan: (
+        <Columns
+          wide={isWide}
+          left={
+            <PortfolioWhatIf
+              key={JSON.stringify(p.sipPlan)}
+              portfolio={p.portfolio}
+              funds={p.funds}
+              overlapData={p.overlapData}
+              metrics={p.metrics}
+              sipPlan={p.sipPlan}
+              collapsible={fold}
+              defaultOpen
+            />
+          }
+          right={<PortfolioProjection portfolio={p.portfolio} sipPlan={p.sipPlan} collapsible={fold} />}
+        />
+      ),
+    };
+    body = (
+      <View>
+        <PortfolioSectionNav sections={SECTIONS} active={section} onChange={setSection} />
+        {columns[section]}
       </View>
     );
   }
@@ -158,9 +152,12 @@ function PortfolioScreen() {
   return (
     <View className="flex-1 bg-paper">
       <AppHeader badge="📈 Portfolio" />
-      <ScrollView contentContainerStyle={{ paddingTop: 16, paddingBottom: 32 }} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={{ paddingTop: 16, paddingBottom: 32, paddingHorizontal: 16 }} keyboardShouldPersistTaps="handled">
         {body}
       </ScrollView>
+      <PortfolioSheet visible={trading} onClose={() => setTrading(false)}>
+        <PortfolioTradeForm funds={p.funds} navByCode={p.navByCode} rows={p.portfolio.rows} trades={p.trades} onClose={() => setTrading(false)} />
+      </PortfolioSheet>
     </View>
   );
 }
