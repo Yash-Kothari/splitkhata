@@ -1,13 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Redirect } from 'expo-router';
 import { View, Text, ScrollView, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { FEATURES } from '../../lib/edition';
 import usePortfolio from '../../lib/usePortfolio';
+import { getJSON, setJSON } from '../../lib/deviceStore';
 import { useSettingsModal } from '../../lib/SettingsModalContext';
 import { PortfolioPrivacyProvider } from '../../lib/PortfolioPrivacyContext';
 import AppHeader from '../../components/AppHeader';
 import Card from '../../components/Card';
 import PortfolioSectionNav from '../../components/PortfolioSectionNav';
+import PortfolioPeopleSwitch from '../../components/PortfolioPeopleSwitch';
 import PortfolioSummary from '../../components/PortfolioSummary';
 import PortfolioSyncCard from '../../components/PortfolioSyncCard';
 import PortfolioFundList from '../../components/PortfolioFundList';
@@ -48,8 +50,25 @@ function Columns({ wide, left, right }) {
   );
 }
 
+const VIEW_KEY = 'portfolio_view';
+
 function PortfolioScreen() {
-  const p = usePortfolio();
+  // Whose holdings are shown (a person's name, or null for everyone together), remembered on this device.
+  const [view, setView] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    getJSON(VIEW_KEY, null).then((stored) => {
+      if (!cancelled) setView(stored || null);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const changeView = (next) => {
+    setView(next);
+    setJSON(VIEW_KEY, next);
+  };
+  const p = usePortfolio({ view });
   const { open: openSettings } = useSettingsModal();
   const { width } = useWindowDimensions();
   // Same rule as the other tabs: above 1024px there is room for two columns and the charts stay open; on a phone they fold.
@@ -97,7 +116,7 @@ function PortfolioScreen() {
           wide={isWide}
           left={
             <>
-              <PortfolioSummary portfolio={p.portfolio} />
+              <PortfolioSummary portfolio={p.portfolio} view={p.view} />
               {sync}
             </>
           }
@@ -112,7 +131,7 @@ function PortfolioScreen() {
       funds: (
         <Columns
           wide={isWide}
-          left={<PortfolioFundList portfolio={p.portfolio} onTrade={() => setTrading(true)} />}
+          left={<PortfolioFundList portfolio={p.portfolio} view={p.view} onTrade={() => setTrading(true)} />}
           right={<PortfolioBenchmark table={p.benchmarkTable} benchmark={p.benchmark} rows={p.portfolio.rows} navByCode={p.navByCode} collapsible={fold} />}
         />
       ),
@@ -121,7 +140,7 @@ function PortfolioScreen() {
           wide={isWide}
           left={
             <>
-              <PortfolioAllocation rows={p.portfolio.rows} collapsible={fold} defaultOpen />
+              <PortfolioAllocation rows={p.portfolio.rows} byPerson={p.owners.length > 1 && !p.view} hasStocks={p.portfolio.byKind.stocks.count > 0} collapsible={fold} defaultOpen />
               <PortfolioLimits evaluated={p.evaluatedLimits} saved={p.limitsSaved} collapsible={fold} defaultOpen onEdit={() => openSettings('portfolioLimits')} />
             </>
           }
@@ -133,22 +152,27 @@ function PortfolioScreen() {
           wide={isWide}
           left={
             <PortfolioWhatIf
-              key={JSON.stringify(p.sipPlan)}
+              key={JSON.stringify(p.viewSipPlan)}
               portfolio={p.portfolio}
-              funds={p.funds}
+              funds={p.viewFunds}
               overlapData={p.overlapData}
               metrics={p.metrics}
-              sipPlan={p.sipPlan}
+              sipPlan={p.viewSipPlan}
               collapsible={fold}
               defaultOpen
             />
           }
-          right={<PortfolioProjection portfolio={p.portfolio} sipPlan={p.sipPlan} collapsible={fold} />}
+          right={<PortfolioProjection portfolio={p.portfolio} sipPlan={p.viewSipPlan} collapsible={fold} />}
         />
       ),
     };
     body = (
       <View>
+        {p.owners.length > 1 ? (
+          <View className="mb-3">
+            <PortfolioPeopleSwitch owners={p.owners} view={p.view} onChange={changeView} />
+          </View>
+        ) : null}
         <PortfolioSectionNav sections={SECTIONS} active={section} onChange={setSection} />
         {columns[section]}
       </View>
@@ -162,7 +186,7 @@ function PortfolioScreen() {
         {body}
       </ScrollView>
       <PortfolioSheet visible={trading} onClose={() => setTrading(false)}>
-        <PortfolioTradeForm funds={p.funds} navByCode={p.navByCode} rows={p.portfolio.rows} trades={p.trades} onClose={() => setTrading(false)} />
+        <PortfolioTradeForm funds={p.viewFunds} navByCode={p.navByCode} rows={p.portfolio.rows} trades={p.viewTrades} onClose={() => setTrading(false)} />
       </PortfolioSheet>
     </View>
   );

@@ -11,6 +11,11 @@ import {
   computeHistory,
   computeOverlap,
   classifySync,
+  computeSyncStatus,
+  ownersOf,
+  fundsForView,
+  planForFunds,
+  isStock,
   syncNudges,
   normalizeSipSchedule,
   sipPlanAt,
@@ -56,15 +61,12 @@ async function fetchScheme(code, from, to) {
   throw lastError;
 }
 
-function latestDate(snapshots, source) {
-  return snapshots.reduce((d, s) => (s.source === source && s.date > d ? s.date : d), '');
-}
-
 // Everything the Portfolio tab shows, plus the NAV backfill: when the tab opens it finds, per fund, the last NAV
 // date already stored and fetches only the days since, writing them back so the next open starts from there.
+// `view` is whose holdings to show (a person's name), or null for everyone together; the NAV check always covers every fund.
 // `autoBackfill: false` is for the Settings pages: they read the same data but leave the once-per-visit NAV check to the
 // Portfolio tab (the Check NAVs button still works).
-export default function usePortfolio({ autoBackfill = true } = {}) {
+export default function usePortfolio({ autoBackfill = true, view = null } = {}) {
   const [docs, setDocs] = useState(null);
   const [backfill, setBackfill] = useState({ running: false, done: 0, total: 0, failed: 0, updated: 0, manual: false, lastRunAt: null });
   const startedRef = useRef(false);
@@ -103,8 +105,27 @@ export default function usePortfolio({ autoBackfill = true } = {}) {
     [docs],
   );
 
-  const portfolio = useMemo(() => computePortfolio({ funds, snapshots, navByCode, sipPlan, sipSchedule, trades }), [funds, snapshots, navByCode, sipPlan, sipSchedule, trades]);
-  const history = useMemo(() => computeHistory({ funds, snapshots, navByCode, sipPlan, sipSchedule, trades, days: 365 }), [funds, snapshots, navByCode, sipPlan, sipSchedule, trades]);
+  // Who is in view: every calculation below runs on these funds and their share of the SIP plan.
+  const owners = useMemo(() => ownersOf(funds), [funds]);
+  // A remembered person who is no longer on the portfolio falls back to everyone, rather than an empty screen.
+  const activeView = view && owners.includes(view) ? view : null;
+  const viewFunds = useMemo(() => fundsForView(funds, activeView), [funds, activeView]);
+  const viewSipPlan = useMemo(() => planForFunds(sipPlan, viewFunds), [sipPlan, viewFunds]);
+
+  // Trades of the funds in view (the trade form lists them; another person's would show as bare keys).
+  const viewTrades = useMemo(() => {
+    const keys = new Set(viewFunds.map((f) => f.key));
+    return trades.filter((t) => keys.has(t.fundKey));
+  }, [trades, viewFunds]);
+
+  const portfolio = useMemo(
+    () => computePortfolio({ funds: viewFunds, snapshots, navByCode, sipPlan, sipSchedule, trades }),
+    [viewFunds, snapshots, navByCode, sipPlan, sipSchedule, trades],
+  );
+  const history = useMemo(
+    () => computeHistory({ funds: viewFunds, calendarFunds: funds, snapshots, navByCode, sipPlan, sipSchedule, trades, days: 365 }),
+    [viewFunds, funds, snapshots, navByCode, sipPlan, sipSchedule, trades],
+  );
   const overlap = useMemo(() => (overlapData ? computeOverlap(overlapData, portfolio.rows) : null), [overlapData, portfolio.rows]);
   const metrics = useMemo(() => computeMetrics(portfolio.rows, overlap), [portfolio.rows, overlap]);
   const limits = limitsSaved || DEFAULT_LIMITS;
@@ -115,19 +136,11 @@ export default function usePortfolio({ autoBackfill = true } = {}) {
   );
 
   const today = todayISO();
+  const syncState = docs?.state;
   const sync = useMemo(() => {
-    const kiteDate = docs?.state?.lastSync?.kite?.date || latestDate(snapshots, 'kite') || null;
-    const casDate = docs?.state?.lastSync?.cas?.date || latestDate(snapshots, 'cas') || null;
-    return {
-      kite: classifySync(kiteDate, today),
-      kiteDate,
-      kiteAt: docs?.state?.lastSync?.kite?.at?.toDate?.() ?? null,
-      cas: classifySync(casDate, today),
-      casDate,
-      navDate: portfolio.navDate || null,
-      nav: classifySync(portfolio.navDate || null, today),
-    };
-  }, [docs, snapshots, portfolio.navDate, today]);
+    const fresh = computeSyncStatus({ funds, snapshots, state: syncState, view: activeView, today });
+    return { ...fresh, navDate: portfolio.navDate || null, nav: classifySync(portfolio.navDate || null, today) };
+  }, [funds, snapshots, syncState, activeView, portfolio.navDate, today]);
 
   const hasSetup = funds.length > 0;
   // Limits only raise an alert once you have saved your own; until then they are suggestions.
@@ -139,7 +152,11 @@ export default function usePortfolio({ autoBackfill = true } = {}) {
     [sync, hasSetup, overlapData, today, limitsSaved, evaluatedLimits],
   );
   // The benchmark's NAVs are stored and backfilled like a fund's, so it needs no separate path.
-  const navTargets = useMemo(() => (benchmark ? [...funds, { key: '__benchmark', schemeCode: benchmark.schemeCode }] : funds), [funds, benchmark]);
+  // Stocks are priced at imports (there is no price feed to ask), so only mutual funds are fetched.
+  const navTargets = useMemo(() => {
+    const mf = funds.filter((f) => !isStock(f));
+    return benchmark ? [...mf, { key: '__benchmark', schemeCode: benchmark.schemeCode }] : mf;
+  }, [funds, benchmark]);
 
   const runBackfill = useCallback(
     async (force = false) => {
@@ -198,8 +215,12 @@ export default function usePortfolio({ autoBackfill = true } = {}) {
     loading: docs === null,
     hasSetup,
     funds,
+    viewFunds,
+    owners,
+    view: activeView,
     snapshots,
     trades,
+    viewTrades,
     nudges,
     sipSchedule,
     limits,
@@ -207,10 +228,13 @@ export default function usePortfolio({ autoBackfill = true } = {}) {
     evaluatedLimits,
     metrics,
     overlapData,
+    catalogDoc: docs?.catalog || null,
+    sipDoc: docs?.sip || null,
     benchmark,
     benchmarkTable,
     navByCode,
     sipPlan,
+    viewSipPlan,
     portfolio,
     history,
     overlap,

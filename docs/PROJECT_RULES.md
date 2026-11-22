@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.24.1**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.25.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -425,6 +425,11 @@ local testing predicted.
   `SettingsModal`, components in `PortfolioSettings.js`); the tab opens them with `useSettingsModal().open('portfolioLimits')`
   and friends. Quick actions that belong where you are (Record a trade) are a pop-up (`PortfolioSheet`), never a form
   inserted at the top of the page.
+- **Portfolio holdings have an owner, and an import never overwrites another person's data.** `owner` on a catalog fund (absent = Yash) is
+  the only per-person field; every other number is filtered by it (`fundsForView`). Import writes are computed by `buildImportWrites` (merge,
+  never replace: `mergeCatalog`, `mergeOverlap`, `mergeSipPlan`), snapshot ids and `lastSync` keys carry the owner. A stock is a catalog
+  entry with `kind: 'stock'`, priced at each import and excluded from the NAV fetch, the NAV date, SIPs and fund-only metrics
+  (`docs/PORTFOLIO.md`, Whose holdings / Stocks).
 - **Portfolio SIP plan is a dated schedule** (`normalizeSipSchedule`, `sipAmountFn`): an edit applies from its own date and
   never rewrites earlier estimated units. Every rupee amount on the tab goes through `usePortfolioPrivacy()` (the "Hide
   amounts" switch), not `formatCurrency` directly.

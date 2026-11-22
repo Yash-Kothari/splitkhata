@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, Platform } from 'react-native';
 import PortfolioShell from './PortfolioShell';
+import PortfolioPills from './PortfolioPills';
 import DateField from './DateField';
 import { importPortfolioSnapshot } from '../lib/firebase';
 import { settleOrHandOff } from '../lib/saveHandoff';
 import { notify } from '../lib/dialogs';
 import { reportError } from '../lib/errorReporting';
 import { todayISO } from '../lib/utils';
-import { parseImport, diffForPreview } from '../lib/portfolio';
+import { parseImport, diffForPreview, buildImportWrites, DEFAULT_OWNER } from '../lib/portfolio';
 
 const input = 'font-mono text-xs text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper';
 
@@ -42,22 +43,25 @@ function pickTextFile() {
 
 // Paste what you were given, see exactly what will change, then confirm. This is the only way holdings reach the
 // database: the signed-in user presses Confirm here (see docs/PORTFOLIO.md).
-export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, sipSchedule = null, trades = [], variant = 'settings', onClose }) {
+export default function PortfolioImport({ funds, existing = {}, people = [DEFAULT_OWNER], heldKeys = null, snapshots, navByCode, sipPlan, sipSchedule = null, trades = [], variant = 'settings', onClose }) {
   const [text, setText] = useState('');
+  // null until you tap a name: then the file says whose it is (a setup file names its owner), else the default person.
+  const [chosen, setChosen] = useState(null);
   const [asOf, setAsOf] = useState(todayISO());
   const [saving, setSaving] = useState(false);
   const [imported, setImported] = useState(null);
 
   const today = todayISO();
   const parsed = useMemo(
-    () => (text.trim() ? parseImport(text, { catalog: funds.length ? { funds } : null, asOfDefault: asOf, today }) : null),
-    [text, asOf, funds, today],
+    () => (text.trim() ? parseImport(text, { catalog: existing.catalog || (funds.length ? { funds } : null), asOfDefault: asOf, today, owner: chosen, people, heldKeys }) : null),
+    [text, asOf, funds, existing.catalog, chosen, people, heldKeys, today],
   );
+  const shownOwner = chosen || (parsed?.ok ? parsed.payload.owner : DEFAULT_OWNER);
   const preview = useMemo(() => {
     if (!parsed?.ok) return [];
     const p = parsed.payload;
     return diffForPreview({
-      funds: p.catalog?.funds || funds,
+      funds: parsed.funds,
       snapshots,
       navByCode,
       sipPlan: p.sipPlan || sipPlan,
@@ -66,7 +70,7 @@ export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, 
       next: p.positions,
       asOf: p.asOf,
     });
-  }, [parsed, funds, snapshots, navByCode, sipPlan, sipSchedule, trades]);
+  }, [parsed, snapshots, navByCode, sipPlan, sipSchedule, trades]);
 
   async function handlePaste() {
     const clip = await readClipboardText();
@@ -81,15 +85,21 @@ export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, 
 
   async function handleConfirm() {
     if (!parsed?.ok) return;
+    const built = buildImportWrites({ payload: parsed.payload, existing: { ...existing, catalog: existing.catalog || (funds.length ? { funds } : null) } });
+    if (!built.ok) {
+      notify('Could not import', built.error);
+      return;
+    }
     setSaving(true);
-    const outcome = await settleOrHandOff(importPortfolioSnapshot(parsed.payload), (err) => reportError(err, 'The portfolio import did not save'));
+    const outcome = await settleOrHandOff(importPortfolioSnapshot(built.writes), (err) => reportError(err, 'The portfolio import did not save'));
     setSaving(false);
     if (outcome.status === 'error') {
       notify('Could not import', outcome.error?.message || String(outcome.error));
       return;
     }
-    setImported(`${Object.keys(parsed.payload.positions).length} holdings as of ${parsed.payload.asOf}`);
+    setImported(`${Object.keys(parsed.payload.positions).length} holdings for ${parsed.payload.owner} as of ${parsed.payload.asOf}`);
     setText('');
+    setChosen(null);
     onClose?.();
   }
 
@@ -101,6 +111,13 @@ export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, 
       title="Update Holdings"
       subtitle="Paste the setup file the first time, then the holdings file Claude makes from Kite or your CAS. Nothing is saved until you confirm."
     >
+      {people.length > 1 ? (
+        <View>
+          <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Whose Holdings</Text>
+          <PortfolioPills options={people.map((name) => [name, name])} value={shownOwner} onChange={setChosen} />
+        </View>
+      ) : null}
+
       <View>
         <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">Holdings As Of</Text>
         <View style={{ maxWidth: 200 }}>
@@ -136,11 +153,23 @@ export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, 
       {p ? (
         <View className="mt-3 rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5">
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-            Will save {Object.keys(p.positions).length} holdings from {p.source}, as of {p.asOf}
+            Will save {Object.keys(p.positions).length} holdings for {p.owner} from {p.source}, as of {p.asOf}
           </Text>
-          {p.catalog ? <Text className="font-body text-xs text-ink">Fund list: {p.catalog.funds.length} funds</Text> : null}
-          {p.overlap ? <Text className="font-body text-xs text-ink">Overlap data: {p.overlap.asOf || 'included'}</Text> : null}
-          {p.sipPlan ? <Text className="font-body text-xs text-ink">SIP plan: {Object.keys(p.sipPlan).length} funds</Text> : null}
+          {p.catalog ? (
+            <Text className="font-body text-xs text-ink">
+              Fund list: {p.catalog.funds.length} funds for {p.owner}
+              {parsed.summary.replacedFunds > 0 ? `, replacing ${parsed.summary.replacedFunds} they have now` : ''}
+              {parsed.summary.keptOtherFunds > 0 ? `. The other ${parsed.summary.keptOtherFunds} funds are kept as they are` : ''}
+            </Text>
+          ) : null}
+          {Object.keys(p.prices || {}).length ? (
+            <Text className="font-body text-xs text-ink">Prices: {Object.keys(p.prices).length} stocks, as of {p.asOf} (a stock is priced at each import)</Text>
+          ) : null}
+          {parsed.summary.removed?.length ? (
+            <Text className="font-body text-xs text-mustard">Will be set to zero (not in this list, so sold): {parsed.summary.removed.join(', ')}</Text>
+          ) : null}
+          {p.overlap ? <Text className="font-body text-xs text-ink">Overlap data: {p.overlap.asOf || 'included'}, added to what is stored</Text> : null}
+          {p.sipPlan ? <Text className="font-body text-xs text-ink">SIP plan: {Object.keys(p.sipPlan).length} {Object.keys(p.sipPlan).length === 1 ? 'fund' : 'funds'} for {p.owner}, from {p.asOf}</Text> : null}
           {parsed.warnings.map((w) => (
             <Text key={w} className="font-body text-xs text-mustard mt-1">{w}</Text>
           ))}
@@ -175,7 +204,7 @@ export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, 
           </Pressable>
         ) : null}
       </View>
-      {imported ? <Text className="font-body text-xs text-ledger-green">Imported {imported}.</Text> : null}
+      {imported && !text ? <Text className="font-body text-xs text-ledger-green">Imported {imported}.</Text> : null}
     </PortfolioShell>
   );
 }

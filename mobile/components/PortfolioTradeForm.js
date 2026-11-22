@@ -9,7 +9,7 @@ import { notify, confirmAsync } from '../lib/dialogs';
 import { reportError } from '../lib/errorReporting';
 import { todayISO, parseAmountInput } from '../lib/utils';
 import { usePortfolioPrivacy } from '../lib/PortfolioPrivacyContext';
-import { buildTrade, formatShortDate } from '../lib/portfolio';
+import { buildTrade, formatShortDate, ownerOf, ownersOf, isStock } from '../lib/portfolio';
 
 const input = 'font-mono text-base text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper';
 const label = 'font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1';
@@ -27,11 +27,13 @@ export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onC
   const [units, setUnits] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const fundOptions = useMemo(
-    () => funds.map((f) => ({ value: f.key, label: `${f.short || f.name}${f.group === 'other' ? ' (other)' : ''}` })),
-    [funds],
-  );
+  // With more than one person's funds on offer, each is labelled with whose it is (two people can hold the same fund).
+  const fundOptions = useMemo(() => {
+    const multi = ownersOf(funds).length > 1;
+    return funds.map((f) => ({ value: f.key, label: `${f.short || f.name}${f.group === 'other' ? ' (other)' : ''}${multi ? ` · ${ownerOf(f)}` : ''}` }));
+  }, [funds]);
   const held = rows.find((r) => r.key === fundKey)?.units ?? null;
+  const stock = isStock(funds.find((f) => f.key === fundKey));
   const shortOf = (key) => funds.find((f) => f.key === key)?.short || key;
 
   const built = useMemo(() => {
@@ -119,8 +121,8 @@ export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onC
           <TextInput value={amount} onChangeText={setAmount} keyboardType="decimal-pad" placeholder="125000" className={input} />
         </View>
         <View style={{ width: '47%' }}>
-          <Text className={label}>Units (Optional)</Text>
-          <TextInput value={units} onChangeText={setUnits} keyboardType="decimal-pad" placeholder="exact units" className={input} />
+          <Text className={label}>{stock ? 'Shares' : 'Units (Optional)'}</Text>
+          <TextInput value={units} onChangeText={setUnits} keyboardType="decimal-pad" placeholder={stock ? 'number of shares' : 'exact units'} className={input} />
         </View>
       </View>
 

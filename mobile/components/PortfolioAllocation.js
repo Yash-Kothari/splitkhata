@@ -18,7 +18,7 @@ const VIEWS = [
 
 // What the portfolio is made of, as a donut you can switch between category, fund house and fund. Tapping a legend row
 // (not a slice: a press on an SVG shape does not work on the website) lights up its slice and dims the rest.
-export default function PortfolioAllocation({ rows, collapsible = false, defaultOpen = false }) {
+export default function PortfolioAllocation({ rows, byPerson = false, hasStocks = false, collapsible = false, defaultOpen = false }) {
   const { money, compact } = usePortfolioPrivacy();
   const c = useChartColors();
   const [by, setBy] = useState('category');
@@ -27,7 +27,10 @@ export default function PortfolioAllocation({ rows, collapsible = false, default
   const [cardWidth, setCardWidth] = useState(0);
   const isOpen = !collapsible || openState;
 
-  const slices = useMemo(() => computeAllocation(rows, by), [rows, by]);
+  // "Person" only exists when more than one person is in view; if it was picked and then goes away, fall back to Category.
+  const mode = (!byPerson && by === 'owner') || (!hasStocks && by === 'kind') ? 'category' : by;
+  const views = [...VIEWS, ...(byPerson ? [['owner', 'Person']] : []), ...(hasStocks ? [['kind', 'Type']] : [])];
+  const slices = useMemo(() => computeAllocation(rows, mode), [rows, mode]);
   const total = slices.reduce((a, s) => a + s.value, 0);
   const colorOf = (s, i) => (s.label === 'Others' && s.others ? c.axis : CATEGORY_COLORS[i % CATEGORY_COLORS.length]);
 
@@ -58,7 +61,7 @@ export default function PortfolioAllocation({ rows, collapsible = false, default
         <Text className="font-body text-sm text-muted-text">No holdings to show yet.</Text>
       ) : (
         <View>
-          <PortfolioPills options={VIEWS} value={by} onChange={(k) => { setBy(k); setPicked(null); }} />
+          <PortfolioPills options={views} value={mode} onChange={(k) => { setBy(k); setPicked(null); }} />
           <View className="items-center justify-center mt-3" style={{ height: size }}>
             <Svg width={size} height={size}>
               {arcs.map(({ s, i, start, end }) => (

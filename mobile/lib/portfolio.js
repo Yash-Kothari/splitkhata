@@ -68,6 +68,76 @@ export function classifySync(lastSnapshotDate, today) {
   return { level, days, label };
 }
 
+// ---------- whose holdings ----------
+
+// A catalog fund (and a snapshot) says whose it is with `owner`, a household member's name. Without one it is the default
+// person's, so everything imported before a second person existed needs no migration.
+export const DEFAULT_OWNER = 'Yash';
+export const ownerOf = (item) => item?.owner || DEFAULT_OWNER;
+
+// A catalog entry is a mutual fund unless it says `kind: 'stock'`: a share held directly. A stock is priced from the price saved
+// with each import (a price point in the same store as NAVs, under its own key), has no SIP, and counts as 100% of its own
+// company in the overlap and concentration numbers.
+export const isStock = (f) => f?.kind === 'stock';
+
+// The people who hold something, the default person first, the rest in the order they appear.
+export function ownersOf(funds) {
+  const seen = [];
+  for (const f of funds || []) if (!seen.includes(ownerOf(f))) seen.push(ownerOf(f));
+  return [...seen.filter((o) => o === DEFAULT_OWNER), ...seen.filter((o) => o !== DEFAULT_OWNER)];
+}
+
+// One person's funds, or all of them when `view` is empty ("Combined").
+export function fundsForView(funds, view) {
+  return view ? (funds || []).filter((f) => ownerOf(f) === view) : funds || [];
+}
+
+// A { fundKey: rupees } plan cut down to the given funds, so a sum over it is that view's SIP and not everyone's.
+export function planForFunds(plan, funds) {
+  const keep = new Set((funds || []).map((f) => f.key));
+  return Object.fromEntries(Object.entries(plan || {}).filter(([k]) => keep.has(k)));
+}
+
+// Where each person's last import is recorded (`state.lastSync`): the default person keeps the plain source name, so what
+// was saved before stays valid, and anyone else gets "kite:Kruti".
+export function lastSyncKey(source, owner) {
+  return !owner || owner === DEFAULT_OWNER ? source : `${source}:${owner}`;
+}
+
+const SYNC_RANK = { never: 3, old: 2, stale: 1, fresh: 0 };
+
+// How fresh the holdings in a view are, for each place they come from (mutual funds at Zerodha / Kite, funds elsewhere / CAS, and
+// stocks at Kite). A view with several people is only as fresh as its stalest part, and a person who holds nothing at a place
+// is not counted for it.
+export function computeSyncStatus({ funds, snapshots, state, view = null, today }) {
+  const inView = fundsForView(funds, view);
+  const people = ownersOf(inView);
+  if (people.length === 0) people.push(view || DEFAULT_OWNER);
+  const out = {};
+  const places = [
+    { name: 'kite', source: 'kite', holds: (f) => !isStock(f) && f.group === 'zerodha' },
+    { name: 'cas', source: 'cas', holds: (f) => !isStock(f) && f.group === 'other' },
+    { name: 'stocks', source: 'kite_stocks', holds: (f) => isStock(f) && f.group === 'zerodha' },
+  ];
+  for (const { name, source, holds } of places) {
+    let relevant = people.filter((o) => inView.some((f) => ownerOf(f) === o && holds(f)));
+    out[`${name}Used`] = relevant.length > 0;
+    if (relevant.length === 0) relevant = [people[0]];
+    const per = relevant.map((o) => {
+      const recorded = state?.lastSync?.[lastSyncKey(source, o)];
+      const fromSnapshots = (snapshots || []).reduce((d, sn) => (sn.source === source && ownerOf(sn) === o && sn.date > d ? sn.date : d), '');
+      const date = recorded?.date || fromSnapshots || null;
+      return { owner: o, date, at: recorded?.at?.toDate?.() ?? null, status: classifySync(date, today) };
+    });
+    per.sort((a, b) => SYNC_RANK[b.status.level] - SYNC_RANK[a.status.level] || (a.date || '').localeCompare(b.date || ''));
+    out[name] = per[0].status;
+    out[`${name}Date`] = per[0].date;
+    out[`${name}At`] = per[0].at;
+    out[`${name}ByOwner`] = per;
+  }
+  return out;
+}
+
 // ---------- NAV series ----------
 
 // mfapi.in gives dates as dd-mm-yyyy.
@@ -309,10 +379,13 @@ export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, si
     const amountOn = sipAmountFn(sipPlan, sipSchedule, f.key);
     const h = estimateHolding(pos, series, amountOn, '9999-12-31', mine);
     const before = estimateHolding(pos, series, amountOn, prev[0], mine);
+    // A stock whose units have gone to zero (sold) is left out; a stock's price only moves at imports, so it has no "today".
+    if (isStock(f) && h.units <= 0) continue;
     const value = h.units * nav;
-    const day = before.units * (nav - prev[1]);
+    const day = isStock(f) ? 0 : before.units * (nav - prev[1]);
     rows.push({
       ...f,
+      owner: ownerOf(f),
       units: h.units,
       avgCost: h.avgCost,
       cost: h.cost,
@@ -323,7 +396,7 @@ export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, si
       pnl: value - h.cost,
       pnlPct: h.cost > 0 ? (value / h.cost - 1) * 100 : 0,
       day,
-      dayPct: prev[1] > 0 ? (nav / prev[1] - 1) * 100 : 0,
+      dayPct: !isStock(f) && prev[1] > 0 ? (nav / prev[1] - 1) * 100 : 0,
       estimated: h.estimated,
       sipDays: h.sipDays,
       tradeCount: h.tradeCount,
@@ -354,7 +427,10 @@ export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, si
     rows,
     total,
     byGroup: { zerodha: totalOf(rows.filter((r) => r.group === 'zerodha')), other: totalOf(rows.filter((r) => r.group === 'other')) },
-    navDate: rows.reduce((d, r) => (r.navDate > d ? r.navDate : d), ''),
+    byOwner: Object.fromEntries(ownersOf(rows).map((o) => [o, totalOf(rows.filter((r) => r.owner === o))])),
+    // The date of the newest NAV: stocks are priced at imports, so they do not decide how current the NAVs are.
+    navDate: (rows.some((r) => !isStock(r)) ? rows.filter((r) => !isStock(r)) : rows).reduce((d, r) => (r.navDate > d ? r.navDate : d), ''),
+    byKind: { funds: totalOf(rows.filter((r) => !isStock(r))), stocks: totalOf(rows.filter((r) => isStock(r))) },
     estimatedCount: rows.filter((r) => r.estimated).length,
   };
 }
@@ -362,15 +438,21 @@ export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, si
 // Portfolio value and day-over-day P&L for the last `days` trading days. Units at each date come from the nearest
 // earlier snapshot plus SIP-estimated units; before the first snapshot they are held at the first snapshot's units
 // (there is nothing earlier to go on), which `constantBefore` reports so the chart can say so.
-export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, sipSchedule = null, trades = [], days = 90 }) {
+// `calendarFunds` are the funds whose prices decide which dates count as trading days (everyone's, so one person's line and the
+// combined line sit on the same dates); it defaults to `funds`.
+export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, sipSchedule = null, trades = [], days = 90, calendarFunds = null }) {
   const ordered = [...(snapshots || [])].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  const live = (funds || []).filter((f) => navByCode?.[String(f.schemeCode)]?.length && ordered.some((s) => s.positions?.[f.key]));
+  const isLive = (f) => navByCode?.[String(f.schemeCode)]?.length && ordered.some((s) => s.positions?.[f.key]);
+  const live = (funds || []).filter(isLive);
   if (live.length === 0) return { dates: [], value: [], invested: [], day: [], constantBefore: null };
 
   // A trading day is one most of the funds priced (liquid funds also publish on weekends).
+  // Stocks are priced only at imports, so they never decide which days are trading days (unless there is nothing else).
+  const calendar = (calendarFunds || []).filter((f) => isLive(f) && !isStock(f));
+  const dated = calendar.length ? calendar : live.some((f) => !isStock(f)) ? live.filter((f) => !isStock(f)) : live;
   const counts = new Map();
-  for (const f of live) for (const [d] of navByCode[String(f.schemeCode)]) counts.set(d, (counts.get(d) || 0) + 1);
-  const need = Math.ceil(live.length / 2);
+  for (const f of dated) for (const [d] of navByCode[String(f.schemeCode)]) counts.set(d, (counts.get(d) || 0) + 1);
+  const need = Math.ceil(dated.length / 2);
   const all = [...counts.entries()].filter(([, c]) => c >= need).map(([d]) => d).sort();
   const dates = all.slice(-(days + 1));
   if (dates.length < 2) return { dates, value: [], invested: [], day: [], constantBefore: null };
@@ -433,8 +515,10 @@ export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, sipS
       unitsNow.push(units);
       navsNow.push(nav);
       if (nav != null) v += units * nav;
-      c += costAt(pf, date);
-      if (prevUnits && nav != null && prevNavs[i] != null) d += prevUnits[i] * (nav - prevNavs[i]);
+      // A stock has no price before its first import, so before then it is left out of the put-in as well as the value.
+      if (nav != null || !isStock(pf.f)) c += costAt(pf, date);
+      // A stock's price only changes at an import, so its jump would show as one day's profit: it has no daily P&L.
+      if (!isStock(pf.f) && prevUnits && nav != null && prevNavs[i] != null) d += prevUnits[i] * (nav - prevNavs[i]);
     });
     value.push(v);
     invested.push(c);
@@ -447,20 +531,28 @@ export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, sipS
 
 // ---------- importing a snapshot ----------
 
-function positionsToMap(positions, funds, source) {
-  // Accepts { key: {units, avgCost} } or [ { key | isin, units, avgCost } ]. A bare isin means the Zerodha fund.
-  const byKey = new Set((funds || []).map((f) => f.key));
+function positionsToMap(positions, funds, source, owner = DEFAULT_OWNER, extraPrices = {}) {
+  // Accepts { key: {units, avgCost, price?} } or [ { key | isin | symbol, units, avgCost, price? } ]. A bare isin (or, for a stock,
+  // symbol) means that person's fund or stock at the place the source is about. A stock position needs a price.
+  const byKey = new Map((funds || []).map((f) => [f.key, f]));
+  const placeOk = (f) => (source === 'kite' ? f.group === 'zerodha' && !isStock(f) : source === 'kite_stocks' ? f.group === 'zerodha' && isStock(f) : true);
   const out = {};
+  const prices = {};
   const problems = [];
   const list = Array.isArray(positions) ? positions : Object.entries(positions || {}).map(([key, p]) => ({ key, ...p }));
   for (const p of list) {
     let key = p.key;
-    if (!key && p.isin) {
-      const hit = (funds || []).find((f) => f.isin === p.isin && (source === 'kite' ? f.group === 'zerodha' : true));
+    if (!key && (p.isin || p.symbol)) {
+      const hit = (funds || []).find((f) => ownerOf(f) === owner && placeOk(f) && (p.isin ? f.isin === p.isin : f.symbol === p.symbol));
       key = hit?.key;
     }
     if (!key || !byKey.has(key)) {
-      problems.push(`Unknown fund ${p.key || p.isin || '(no id)'}`);
+      problems.push(`Unknown ${source === 'kite_stocks' ? 'stock' : 'fund'} ${p.key || p.isin || p.symbol || '(no id)'}`);
+      continue;
+    }
+    const fund = byKey.get(key);
+    if (ownerOf(fund) !== owner) {
+      problems.push(`${key} belongs to ${ownerOf(fund)}, not ${owner}`);
       continue;
     }
     const units = Number(p.units);
@@ -469,17 +561,28 @@ function positionsToMap(positions, funds, source) {
       problems.push(`Bad units or cost for ${key}`);
       continue;
     }
+    if (isStock(fund) && units > 0) {
+      const price = Number(p.price ?? extraPrices?.[key]);
+      if (!Number.isFinite(price) || price <= 0) {
+        problems.push(`No price for ${key}`);
+        continue;
+      }
+      prices[key] = Math.round(price * 1e4) / 1e4;
+    }
     out[key] = { units: Math.round(units * 1e3) / 1e3, avgCost: Math.round(avgCost * 1e6) / 1e6 };
   }
-  return { positions: out, problems };
+  return { positions: out, prices, problems };
 }
 
 // Turns pasted text into something the import preview can show. Two shapes are accepted:
 //  - the array Kite's mutual-fund holdings call returns ([{ tradingsymbol (the ISIN), quantity, average_price }]),
-//    stamped with `asOfDefault` and mapped to your Zerodha funds;
-//  - an object { asOf, source, positions, catalog?, overlap?, sipPlan? }, used for the first setup and for funds
+//    stamped with `asOfDefault` and mapped to that person's Zerodha funds;
+//  - an object { asOf, source, owner?, positions, catalog?, overlap?, sipPlan? }, used for the first setup and for funds
 //    held outside Zerodha (positions from a CAS statement).
-export function parseImport(text, { catalog = null, asOfDefault, today }) {
+// `owner` is whose holdings the file is (the person chosen in the form); a file that names a different owner is refused, and
+// so is a name outside `people` when that list is given.
+// `catalog` is the catalog document as stored. An imported catalog replaces only that person's funds (see mergeCatalog).
+export function parseImport(text, { catalog = null, asOfDefault, today, owner = null, people = null, heldKeys = null }) {
   let json;
   try {
     json = JSON.parse(String(text || '').trim());
@@ -487,31 +590,215 @@ export function parseImport(text, { catalog = null, asOfDefault, today }) {
     return { ok: false, error: 'That is not valid JSON. Paste the whole file.' };
   }
   const isKite = Array.isArray(json);
-  const body = isKite ? { positions: json.map((h) => ({ isin: h.tradingsymbol, units: h.quantity, avgCost: h.average_price })), source: 'kite' } : json;
+  // Kite's equity holdings carry an exchange and a last price; its mutual-fund holdings carry the ISIN as the symbol.
+  const isEquity = isKite && json.some((h) => h && h.exchange);
+  const body = isKite
+    ? {
+        positions: isEquity
+          ? json.map((h) => ({ isin: h.isin, symbol: h.tradingsymbol, units: (Number(h.quantity) || 0) + (Number(h.t1_quantity) || 0), avgCost: h.average_price, price: h.last_price }))
+          : json.map((h) => ({ isin: h.tradingsymbol, units: h.quantity, avgCost: h.average_price })),
+        source: isEquity ? 'kite_stocks' : 'kite',
+      }
+    : json;
   if (!body || typeof body !== 'object') return { ok: false, error: 'Expected a snapshot object or a list of holdings.' };
 
   const asOf = body.asOf || asOfDefault;
   if (!isIsoDate(asOf)) return { ok: false, error: 'The snapshot needs an as-of date like 2026-11-21.' };
   if (today && asOf > today) return { ok: false, error: 'The as-of date is in the future.' };
+  // Names are matched exactly ("kruti" is not "Kruti"), so a file may only name someone the household actually has.
+  const fileOwner = body.owner == null ? null : String(body.owner).trim();
+  if (fileOwner && people && !people.includes(fileOwner)) return { ok: false, error: `${fileOwner} is not one of the people on this portfolio (${people.join(', ')}).` };
+  if (fileOwner && owner && fileOwner !== owner) return { ok: false, error: `This file is for ${fileOwner}, but you chose ${owner}. Pick ${fileOwner} to import it.` };
+  // A setup file replaces a person's whole fund list, so with more than one person it must say whose it is (or you must choose),
+  // never silently fall back to the first person.
+  if (body.catalog && !fileOwner && !owner && people && people.length > 1) return { ok: false, error: 'This setup file does not say whose it is. Choose a person above, then import it.' };
+  const who = fileOwner || owner || DEFAULT_OWNER;
+  if (people && !people.includes(who)) return { ok: false, error: `${who} is not one of the people on this portfolio (${people.join(', ')}).` };
 
-  const funds = body.catalog?.funds || catalog?.funds;
+  let funds = catalog?.funds;
+  let keptOthers = (catalog?.funds || []).filter((f) => ownerOf(f) !== who).length;
+  let replaced = (catalog?.funds || []).filter((f) => ownerOf(f) === who).length;
+  if (body.catalog) {
+    const merged = mergeCatalog(catalog, body.catalog, who);
+    if (!merged.ok) return { ok: false, error: merged.error };
+    funds = merged.catalog.funds;
+  }
   if (!Array.isArray(funds) || funds.length === 0) return { ok: false, error: 'No fund list yet. Import the setup file first.' };
 
   const source = body.source || 'manual';
-  const { positions, problems } = positionsToMap(body.positions, funds, source);
+  const { positions, prices, problems } = positionsToMap(body.positions, funds, source, who, body.prices);
   if (problems.length) return { ok: false, error: problems.slice(0, 4).join('. ') + (problems.length > 4 ? ` (+${problems.length - 4} more)` : '') };
   if (Object.keys(positions).length === 0) return { ok: false, error: 'No holdings found in that text.' };
 
+  // A Kite stock list is the whole list for that person's Zerodha stocks, so one that is missing from it has been sold: it is set
+  // to zero (the preview lists them). `heldKeys` limits that to stocks actually held now, so a long-sold one is not listed again.
+  const removed = [];
+  if (source === 'kite_stocks') {
+    for (const f of funds) {
+      if (ownerOf(f) !== who || !isStock(f) || f.group !== 'zerodha' || positions[f.key]) continue;
+      if (heldKeys && !new Set(heldKeys).has(f.key)) continue;
+      positions[f.key] = { units: 0, avgCost: 0 };
+      removed.push(f.short || f.name);
+    }
+  }
+
   const warnings = [];
   if (isKite) {
-    const missing = funds.filter((f) => f.group === 'zerodha' && !positions[f.key]).map((f) => f.short || f.name);
+    const missing = funds.filter((f) => ownerOf(f) === who && f.group === 'zerodha' && !positions[f.key]).map((f) => f.short || f.name);
     if (missing.length) warnings.push(`Not in this Kite list (left as before): ${missing.join(', ')}`);
+  }
+  if (!body.catalog) {
+    replaced = 0;
+    keptOthers = 0;
   }
   return {
     ok: true,
     warnings,
-    payload: { asOf, source, positions, catalog: body.catalog || null, overlap: body.overlap || null, sipPlan: body.sipPlan || null },
+    funds,
+    summary: { owner: who, replacedFunds: replaced, keptOtherFunds: keptOthers, removed },
+    payload: { asOf, source, owner: who, positions, prices, catalog: body.catalog || null, overlap: body.overlap || null, sipPlan: body.sipPlan || null },
   };
+}
+
+// An imported catalog replaces only the importing person's funds: everyone else's stay as they are, and so does the benchmark
+// unless the file names one. Each fund is stamped with its owner (the default person's stay unstamped, as before), and a key
+// already used by someone else's fund is refused, because positions, trades and the SIP plan are all keyed by fund.
+export function mergeCatalog(existing, incoming, owner = DEFAULT_OWNER) {
+  const mine = (incoming?.funds || []);
+  if (!Array.isArray(incoming?.funds) || mine.length === 0) return { ok: false, error: 'The catalog in that file has no funds.' };
+  const others = (existing?.funds || []).filter((f) => ownerOf(f) !== owner);
+  const taken = new Map(others.map((f) => [f.key, ownerOf(f)]));
+  const seen = new Set();
+  const stamped = [];
+  for (const f of mine) {
+    if (!f?.key) return { ok: false, error: 'A fund in that catalog has no key.' };
+    if (f.owner && f.owner !== owner) return { ok: false, error: `Fund ${f.key} in that file is ${f.owner}'s, but the import is for ${owner}.` };
+    if (taken.has(f.key)) return { ok: false, error: `Fund key ${f.key} is already ${taken.get(f.key)}'s. Give ${owner}'s fund its own key.` };
+    if (seen.has(f.key)) return { ok: false, error: `Fund key ${f.key} appears twice in that catalog.` };
+    seen.add(f.key);
+    let entry = f;
+    if (isStock(f)) {
+      const symbol = f.symbol || f.stockId;
+      if (!symbol) return { ok: false, error: `Stock ${f.key} needs a symbol.` };
+      // The price is stored under the symbol, so two people holding the same stock share one price history.
+      entry = { ...f, symbol, stockId: f.stockId || symbol, exchange: f.exchange || 'NSE', group: f.group || 'zerodha', schemeCode: String(f.schemeCode || `STK_${symbol}`), holdingsKey: f.holdingsKey || f.key };
+    }
+    const { owner: _drop, ...rest } = entry;
+    stamped.push(owner === DEFAULT_OWNER ? rest : { ...rest, owner });
+  }
+  const all = [...others, ...stamped];
+  const funds = ownersOf(all).flatMap((o) => all.filter((f) => ownerOf(f) === o));
+  const benchmark = incoming.benchmark || existing?.benchmark || null;
+  return { ok: true, catalog: { ...(existing || {}), funds, ...(benchmark ? { benchmark } : {}) } };
+}
+
+// Overlap data is by fund (holdingsKey), shared by whoever holds the fund, so an import adds to it. For the funds the file lists,
+// its holdings and names replace the stored ones, unless the stored disclosure is newer (an older file then only fills in funds
+// not stored yet). A fund the file lists also gets that file's futures, so a closed or changed future is not kept from before.
+// Groups only ever grow: a stock is added to a group by an import, never removed by one. The date and its label come from the newer file.
+export function mergeOverlap(existing, incoming) {
+  if (!incoming) return existing || null;
+  if (!existing) return incoming;
+  const incomingNewer = (incoming.asOfDate || '') >= (existing.asOfDate || '');
+  const pick = (stored, fresh) => {
+    const out = { ...(stored || {}), ...(fresh || {}) };
+    if (!incomingNewer) for (const k of Object.keys(fresh || {})) if (stored && k in stored) out[k] = stored[k];
+    return out;
+  };
+  const groups = {};
+  for (const k of new Set([...Object.keys(existing.groups || {}), ...Object.keys(incoming.groups || {})])) {
+    groups[k] = [...new Set([...(existing.groups?.[k] || []), ...(incoming.groups?.[k] || [])])];
+  }
+  const listed = new Set([...Object.keys(incoming.holdings || {}), ...(incoming.futures || []).map((f) => f.fund)]);
+  const futures = [];
+  for (const f of existing.futures || []) if (!incomingNewer || !listed.has(f.fund)) futures.push(f);
+  for (const f of incoming.futures || []) {
+    const clash = futures.some((x) => x.fund === f.fund && x.name === f.name);
+    const storedHasFund = (existing.futures || []).some((x) => x.fund === f.fund);
+    if (!clash && (incomingNewer || !storedHasFund)) futures.push(f);
+  }
+  const newer = incomingNewer ? incoming : existing;
+  const merged = { ...existing, ...incoming, holdings: pick(existing.holdings, incoming.holdings), names: pick(existing.names, incoming.names), groups, futures };
+  delete merged.asOf;
+  delete merged.asOfDate;
+  if (newer.asOf != null) merged.asOf = newer.asOf;
+  if (newer.asOfDate != null) merged.asOfDate = newer.asOfDate;
+  return merged;
+}
+
+// An imported SIP plan covers one person's funds. The first plan ever is stored plainly (it always applied); after that it is
+// a dated change from the import date that keeps the schedule and everyone else's amounts, so earlier days keep the plan
+// they ran under.
+export function mergeSipPlan({ existingDoc, incomingPlan, owner = DEFAULT_OWNER, funds, asOf }) {
+  if (!incomingPlan) return { ok: true, sip: null };
+  const mineKeys = new Set((funds || []).filter((f) => ownerOf(f) === owner).map((f) => f.key));
+  const unknown = Object.keys(incomingPlan).filter((k) => !mineKeys.has(k));
+  if (unknown.length) return { ok: false, error: `The SIP plan names funds that are not ${owner}'s: ${unknown.slice(0, 4).join(', ')}.` };
+  const schedule = normalizeSipSchedule(existingDoc);
+  const current = schedule.length ? sipPlanAt(schedule, asOf) : {};
+  // Everyone else's amounts stay; amounts for a fund that is in no one's catalog any more (a fund dropped by a re-import) go.
+  const known = new Set((funds || []).map((f) => f.key));
+  const others = Object.fromEntries(Object.entries(current).filter(([k]) => known.has(k) && !mineKeys.has(k)));
+  const plan = { ...others, ...incomingPlan };
+  if (schedule.length === 0) return { ok: true, sip: { plan } };
+  const next = applySipChange(schedule, asOf, plan).map((e) => {
+    // A statement dated before a later SIP edit must not leave this person out of the plan in force now: a later entry that has
+    // never mentioned any of their funds gets their amounts (an entry that has is a deliberate later edit, and stays).
+    if (e.from <= asOf || Object.keys(e.plan).some((k) => mineKeys.has(k))) return e;
+    return { from: e.from, plan: { ...e.plan, ...incomingPlan } };
+  });
+  return { ok: true, sip: { schedule: next, plan: sipPlanAt(next, '9999-12-31') } };
+}
+
+// Where a snapshot is stored: the default person's keep the plain name they always had, anyone else's carries their name so
+// two people's imports on the same day, from the same place, never overwrite each other.
+export function snapshotId(asOf, source, owner = DEFAULT_OWNER) {
+  const who = !owner || owner === DEFAULT_OWNER ? '' : `_${String(owner).replace(/[^A-Za-z0-9]+/g, '_')}`;
+  return `snap_${asOf}_${String(source).replace(/[^A-Za-z0-9_-]+/g, '_')}${who}`;
+}
+
+// Everything one confirmed import writes, worked out from the parsed payload and what is stored, as plain data: the
+// snapshot, which sync record it updates, and the catalog, overlap and SIP documents when the file carries them (already
+// merged, so nobody else's data is lost). firebase.js only has to write it.
+export function buildImportWrites({ payload, existing = /** @type {{ catalog?: any, overlap?: any, sip?: any }} */ ({}) }) {
+  const owner = payload.owner || DEFAULT_OWNER;
+  let funds = existing.catalog?.funds || [];
+  const writes = {
+    snapshot: {
+      id: snapshotId(payload.asOf, payload.source, owner),
+      data: { date: payload.asOf, source: payload.source, positions: payload.positions, ...(owner === DEFAULT_OWNER ? {} : { owner }) },
+    },
+    syncKey: lastSyncKey(payload.source, owner),
+    syncDate: payload.asOf,
+    catalog: null,
+    overlap: null,
+    sip: null,
+    prices: [],
+  };
+  if (payload.catalog) {
+    const merged = mergeCatalog(existing.catalog, payload.catalog, owner);
+    if (!merged.ok) return { ok: false, error: merged.error };
+    writes.catalog = merged.catalog;
+    funds = merged.catalog.funds;
+  }
+  // A stock's price at the import date is saved like a NAV, under its own key, year by year.
+  const byDoc = {};
+  for (const [key, price] of Object.entries(payload.prices || {})) {
+    const fund = funds.find((f) => f.key === key);
+    if (!fund) return { ok: false, error: `A price was given for ${key}, which is not in the fund list.` };
+    const code = String(fund.schemeCode);
+    const year = payload.asOf.slice(0, 4);
+    const doc = (byDoc[`${code}|${year}`] ||= { code, year, series: {} });
+    doc.series[payload.asOf] = price;
+  }
+  writes.prices = Object.values(byDoc);
+  if (payload.overlap) writes.overlap = mergeOverlap(existing.overlap, payload.overlap);
+  if (payload.sipPlan) {
+    const sip = mergeSipPlan({ existingDoc: existing.sip, incomingPlan: payload.sipPlan, owner, funds, asOf: payload.asOf });
+    if (!sip.ok) return { ok: false, error: sip.error };
+    writes.sip = sip.sip;
+  }
+  return { ok: true, writes };
 }
 
 // Preview rows: what changes per fund, and for a fund with an estimate, how far the estimate was from reality.
@@ -550,7 +837,18 @@ export function valuesByHoldingsKey(rows) {
 }
 
 export function computeOverlap(overlap, rows) {
-  const holdings = overlap?.holdings || {};
+  const fundHoldings = overlap?.holdings || {};
+  // A directly held stock is 100% of its own company (under the same id the funds' disclosures use), so it adds to that
+  // company's total exposure, to the Adani group, and to "stocks you own several ways", without being a fund in the pairs.
+  const stockRows = (rows || []).filter(isStock);
+  const holdings = { ...fundHoldings };
+  const stockNames = {};
+  for (const r of stockRows) {
+    const id = r.stockId || r.symbol || r.key;
+    holdings[r.holdingsKey || r.key] = { [id]: 100 };
+    stockNames[id] = r.name;
+  }
+  const stockKeys = new Set(stockRows.map((r) => r.holdingsKey || r.key));
   const values = valuesByHoldingsKey(rows);
   const total = Object.values(values).reduce((a, b) => a + b, 0);
   const exposure = {};
@@ -563,7 +861,7 @@ export function computeOverlap(overlap, rows) {
       (heldIn[stock] = heldIn[stock] || {})[fund] = x;
     }
   }
-  const nameOf = (s) => overlap?.names?.[s] || s;
+  const nameOf = (s) => overlap?.names?.[s] || stockNames[s] || s;
   const shortOf = (k) => (rows || []).find((r) => (r.holdingsKey || r.key) === k)?.short || k;
 
   const adaniStocks = overlap?.groups?.adani || [];
@@ -577,7 +875,7 @@ export function computeOverlap(overlap, rows) {
     .map(([s, v]) => ({ stock: s, name: nameOf(s), value: v, pct: total > 0 ? (v / total) * 100 : 0, funds: Object.keys(heldIn[s]).map(shortOf) }))
     .sort((a, b) => b.value - a.value);
 
-  const keys = Object.keys(holdings).filter((k) => values[k]);
+  const keys = Object.keys(holdings).filter((k) => values[k] && !stockKeys.has(k));
   const pairs = [];
   for (let i = 0; i < keys.length; i += 1) {
     for (let j = i + 1; j < keys.length; j += 1) {
@@ -622,10 +920,16 @@ export function sliceHistory(history, days) {
   return { ...history, dates: cut(history.dates), value: cut(history.value), invested: cut(history.invested), day: cut(history.day) };
 }
 
-// What the portfolio is made of, for a donut: slices by fund, fund house or category, largest first. Beyond `maxSlices`
+// What the portfolio is made of, for a donut: slices by fund, fund house, category, owner or type (mutual fund / stock), largest first. Beyond `maxSlices`
 // the small ones are folded into "Others" so the donut and its legend stay readable.
 export function computeAllocation(rows, by = 'category', maxSlices = 6) {
-  const labelOf = (r) => (by === 'fund' ? r.short || r.name : by === 'amc' ? r.amc : r.category) || 'Other';
+  const labelOf = (r) => {
+    if (by === 'fund') return r.short || r.name || 'Other';
+    if (by === 'owner') return ownerOf(r);
+    if (by === 'kind') return isStock(r) ? 'Stocks' : 'Mutual funds';
+    if (by === 'amc') return (isStock(r) ? 'Direct stocks' : r.amc) || 'Other';
+    return (isStock(r) ? r.sector || 'Stocks' : r.category) || 'Other';
+  };
   const total = (rows || []).reduce((a, r) => a + (r.value > 0 ? r.value : 0), 0);
   const groups = new Map();
   for (const r of rows || []) {
@@ -660,6 +964,8 @@ export function buildTrade({ fundKey, kind, date, amount, units, funds, navByCod
   const hasAmount = Number.isFinite(amt) && amt > 0;
   const hasUnits = Number.isFinite(typedUnits) && typedUnits > 0;
   if (!hasAmount && !hasUnits) return { ok: false, error: 'Enter the amount or the units.' };
+  // A stock's price is only known at each import, so there is no price to work one figure out from the other.
+  if (isStock(fund) && !(hasAmount && hasUnits)) return { ok: false, error: 'For a stock, enter both the number of shares and the amount paid.' };
 
   const nav = navOnOrBefore(navByCode?.[String(fund.schemeCode)], date);
   let tradeUnits = hasUnits ? typedUnits : null;
@@ -691,13 +997,25 @@ const OVERLAP_DUE_DAYS = 45;
 export function syncNudges({ sync, hasSetup, overlapDate = null, today = null }) {
   if (!hasSetup || !sync) return [];
   const out = [];
-  if (sync.kite.level === 'never') {
-    out.push({ key: 'kite', level: 'old', text: 'Zerodha holdings have not been synced yet.' });
-  } else if (sync.kite.level === 'old') {
-    out.push({ key: 'kite', level: 'old', text: `Zerodha holdings were last synced ${sync.kite.days} days ago. Units since then are SIP estimates.` });
+  // A place nobody in the view holds anything at needs no reminder (`kiteUsed` is absent on older callers: treated as used).
+  // With more than one person in the view, the reminder says whose holdings are the stale ones.
+  const whose = (list) => (list?.length > 1 ? ` (${list[0].owner})` : '');
+  if (sync.kiteUsed !== false) {
+    if (sync.kite.level === 'never') {
+      out.push({ key: 'kite', level: 'old', text: `Zerodha holdings${whose(sync.kiteByOwner)} have not been synced yet.` });
+    } else if (sync.kite.level === 'old') {
+      out.push({ key: 'kite', level: 'old', text: `Zerodha holdings${whose(sync.kiteByOwner)} were last synced ${sync.kite.days} days ago. Units since then are SIP estimates.` });
+    }
   }
-  if (sync.cas.level !== 'never' && sync.cas.days > CAS_DUE_DAYS) {
-    out.push({ key: 'cas', level: 'stale', text: `Funds outside Zerodha were last updated from a CAS ${sync.cas.days} days ago.` });
+  if (sync.stocks && sync.stocksUsed !== false) {
+    if (sync.stocks.level === 'never') {
+      out.push({ key: 'stocks', level: 'old', text: `Stocks${whose(sync.stocksByOwner)} have not been synced yet.` });
+    } else if (sync.stocks.level === 'old') {
+      out.push({ key: 'stocks', level: 'old', text: `Stocks${whose(sync.stocksByOwner)} were last synced ${sync.stocks.days} days ago. Their prices are as of then.` });
+    }
+  }
+  if (sync.casUsed !== false && sync.cas.level !== 'never' && sync.cas.days > CAS_DUE_DAYS) {
+    out.push({ key: 'cas', level: 'stale', text: `Funds outside Zerodha${whose(sync.casByOwner)} were last updated from a CAS ${sync.cas.days} days ago.` });
   }
   // The overlap numbers come from monthly portfolio disclosures, so they go stale on their own.
   if (overlapDate && today && isIsoDate(overlapDate) && daysBetween(overlapDate, today) > OVERLAP_DUE_DAYS) {
@@ -709,7 +1027,7 @@ export function syncNudges({ sync, hasSetup, overlapDate = null, today = null })
 // Which Settings tab fixes a reminder: holdings, CAS and overlap data are imported; limits are edited.
 export function nudgeTarget(key) {
   if (typeof key === 'string' && key.startsWith('limit')) return 'portfolioLimits';
-  if (key === 'kite' || key === 'cas' || key === 'overlap') return 'portfolioData';
+  if (key === 'kite' || key === 'cas' || key === 'stocks' || key === 'overlap') return 'portfolioData';
   return null;
 }
 
@@ -721,12 +1039,14 @@ export function computeMetrics(rows, overlap) {
   const pct = (v) => (total > 0 ? (v / total) * 100 : 0);
   const byAmc = {};
   const byCategory = {};
-  for (const r of rows || []) {
+  // Fund house, category and "largest single fund" are about funds; a direct stock counts only in the stock numbers (via overlap).
+  const funds = (rows || []).filter((r) => !isStock(r));
+  for (const r of funds) {
     byAmc[r.amc || 'Other'] = (byAmc[r.amc || 'Other'] || 0) + pct(r.value);
     byCategory[r.category || 'Other'] = (byCategory[r.category || 'Other'] || 0) + pct(r.value);
   }
-  const byHoldings = valuesByHoldingsKey(rows);
-  const nameOfFund = (k) => (rows || []).find((r) => (r.holdingsKey || r.key) === k)?.short || k;
+  const byHoldings = valuesByHoldingsKey(funds);
+  const nameOfFund = (k) => funds.find((r) => (r.holdingsKey || r.key) === k)?.short || k;
   const topFund = Object.entries(byHoldings).sort((a, b) => b[1] - a[1])[0];
   const topStock = overlap?.stocks?.[0] || null;
   return {
@@ -856,7 +1176,7 @@ export function computeBenchmarkTable({ rows, navByCode, benchmarkCode }) {
   for (const [label, days] of BENCHMARK_PERIODS) benchReturns[label] = bench ? periodReturnPct(bench, days) : null;
   const seen = new Set();
   const table = [];
-  for (const r of rows || []) {
+  for (const r of (rows || []).filter((x) => !isStock(x))) {
     const code = String(r.schemeCode);
     if (seen.has(code)) continue;
     seen.add(code);
@@ -893,7 +1213,7 @@ export function computeRelativeLines({ rows, navByCode, benchmarkCode, days }) {
   };
   const seen = new Set();
   const funds = [];
-  for (const r of rows || []) {
+  for (const r of (rows || []).filter((x) => !isStock(x))) {
     const code = String(r.schemeCode);
     if (seen.has(code)) continue;
     seen.add(code);
@@ -954,12 +1274,13 @@ function csvCell(v) {
 
 // The holdings table as CSV (rupees and units unrounded enough to re-add), for a spreadsheet.
 export function holdingsToCsv(rows) {
-  const head = ['Fund', 'Held at', 'Fund house', 'Category', 'Units', 'Average cost', 'Invested', 'NAV', 'NAV date', 'Value', 'P&L', 'P&L %', 'Day change'];
+  const head = ['Fund', 'Owner', 'Held at', 'Fund house', 'Category', 'Units', 'Average cost', 'Invested', 'NAV', 'NAV date', 'Value', 'P&L', 'P&L %', 'Day change'];
   const lines = [head.join(',')];
   for (const r of rows || []) {
     lines.push(
       [
         r.name,
+        ownerOf(r),
         r.group === 'zerodha' ? 'Zerodha' : 'Other',
         r.amc,
         r.category,

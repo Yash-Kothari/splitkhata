@@ -40,6 +40,19 @@ import {
   sliceHistory,
   computeAllocation,
   computeRelativeLines,
+  DEFAULT_OWNER,
+  ownerOf,
+  ownersOf,
+  fundsForView,
+  planForFunds,
+  lastSyncKey,
+  computeSyncStatus,
+  mergeCatalog,
+  mergeOverlap,
+  mergeSipPlan,
+  snapshotId,
+  buildImportWrites,
+  isStock,
   projectCorpus,
   summariseProjection,
   inTodaysMoney,
@@ -645,14 +658,580 @@ test('computeRelativeLines: percent change since the window start for the index 
   assert.equal(out.funds.length, 0);
 });
 
-test('holdingsToCsv: a header, one line per fund, and commas and quotes escaped', () => {
+// ---------- whose holdings ----------
+
+// A made-up second person who holds Alpha too (same scheme and holdings key, her own entry) and nothing of Beta.
+const KRUTI_A = { key: 'K_A', isin: 'INF000A', schemeCode: '1', name: 'Alpha Fund', short: 'Alpha', amc: 'Alp', group: 'other', category: 'Diversified', holdingsKey: 'A', owner: 'Kruti' };
+const KRUTI_SNAP = { date: '2026-11-19', source: 'cas', owner: 'Kruti', positions: { K_A: { units: 50, avgCost: 9 } } };
+const TWO = { funds: [...FUNDS, KRUTI_A], snapshots: [...SNAP, KRUTI_SNAP], navByCode: NAV };
+
+test('owners: a fund with no owner is the default person\'s, and a view picks one person or everyone', () => {
+  assert.equal(ownerOf(FUNDS[0]), DEFAULT_OWNER);
+  assert.equal(ownerOf(KRUTI_A), 'Kruti');
+  assert.deepEqual(ownersOf(TWO.funds), [DEFAULT_OWNER, 'Kruti']);
+  assert.deepEqual(ownersOf([KRUTI_A, ...FUNDS]), [DEFAULT_OWNER, 'Kruti'], 'the default person comes first whatever the order');
+  assert.deepEqual(ownersOf(FUNDS), [DEFAULT_OWNER]);
+  assert.deepEqual(ownersOf([]), []);
+  assert.equal(fundsForView(TWO.funds, null).length, 3);
+  assert.deepEqual(fundsForView(TWO.funds, 'Kruti').map((f) => f.key), ['K_A']);
+  assert.deepEqual(fundsForView(TWO.funds, DEFAULT_OWNER).map((f) => f.key), ['A', 'B']);
+  assert.deepEqual(fundsForView(TWO.funds, 'Nobody'), []);
+  // a plan cut down to a view's funds, so a sum over it is that view's SIP
+  const plan = { A: 100, B: 50, K_A: 20 };
+  assert.deepEqual(planForFunds(plan, fundsForView(TWO.funds, 'Kruti')), { K_A: 20 });
+  assert.equal(Object.values(planForFunds(plan, TWO.funds)).reduce((a, b) => a + b, 0), 170);
+  assert.deepEqual(planForFunds(null, TWO.funds), {});
+});
+
+test('computePortfolio: rows carry their owner, totals are kept per person, and a person\'s view adds up to the whole', () => {
+  const all = computePortfolio(TWO);
+  assert.deepEqual(all.rows.map((r) => [r.key, r.owner]).sort(), [['A', DEFAULT_OWNER], ['B', DEFAULT_OWNER], ['K_A', 'Kruti']]);
+  assert.equal(all.total.value, 100 * 13 + 10 * 120 + 50 * 13); // 3150
+  assert.equal(all.byOwner[DEFAULT_OWNER].value, 2500);
+  assert.equal(all.byOwner.Kruti.value, 650);
+  assert.equal(all.byOwner.Kruti.cost, 450); // 50 units at 9
+  const mine = computePortfolio({ ...TWO, funds: fundsForView(TWO.funds, DEFAULT_OWNER) });
+  const hers = computePortfolio({ ...TWO, funds: fundsForView(TWO.funds, 'Kruti') });
+  assert.equal(mine.total.value, all.byOwner[DEFAULT_OWNER].value);
+  assert.equal(hers.total.value, all.byOwner.Kruti.value);
+  assert.equal(mine.total.value + hers.total.value, all.total.value);
+  assert.equal(mine.total.cost + hers.total.cost, all.total.cost);
+  assert.equal(mine.total.day + hers.total.day, all.total.day);
+  assert.deepEqual(hers.rows.map((r) => r.key), ['K_A']);
+  // shares are of the view in front of you
+  assert.equal(hers.rows[0].share, 100);
+  // a person with no funds yet has an empty view, not an error
+  assert.equal(computePortfolio({ ...TWO, funds: [] }).rows.length, 0);
+});
+
+test('computeHistory: each person\'s value and put-in add up to the combined line on every date', () => {
+  const run = (funds) => computeHistory({ ...TWO, funds, sipPlan: { A: 120 }, days: 10 });
+  const all = run(TWO.funds);
+  const mine = run(fundsForView(TWO.funds, DEFAULT_OWNER));
+  const hers = run(fundsForView(TWO.funds, 'Kruti'));
+  assert.deepEqual(all.dates, mine.dates);
+  assert.deepEqual(all.dates, hers.dates);
+  all.dates.forEach((_, i) => {
+    assert.ok(Math.abs(mine.value[i] + hers.value[i] - all.value[i]) < 1e-9);
+    assert.ok(Math.abs(mine.invested[i] + hers.invested[i] - all.invested[i]) < 1e-9);
+    assert.ok(Math.abs(mine.day[i] + hers.day[i] - all.day[i]) < 1e-9);
+  });
+  // before her snapshot (19 Nov) her units are held flat at the snapshot's, like anyone's
+  assert.equal(hers.value[0], 50 * 10);
+});
+
+test('the same fund held by both people is one fund in the overlap, and allocation can be split by person', () => {
+  const rows = computePortfolio(TWO).rows;
+  const overlap = { holdings: { A: { X: 10 }, B: { Y: 5 } }, names: {}, groups: { adani: ['X'] }, futures: [] };
+  const combined = computeOverlap(overlap, rows);
+  // Alpha: 1300 + 650 = 1950 at 10% in X
+  assert.equal(combined.adani.total, 195);
+  const hers = computeOverlap(overlap, rows.filter((r) => r.owner === 'Kruti'));
+  assert.equal(hers.adani.total, 65);
+  assert.equal(hers.adani.pct, 10);
+  const split = computeAllocation(rows, 'owner');
+  assert.deepEqual(split.map((x) => [x.label, x.value]), [[DEFAULT_OWNER, 2500], ['Kruti', 650]]);
+  assert.ok(Math.abs(split.reduce((a, x) => a + x.pct, 0) - 100) < 1e-9);
+});
+
+test('computeSyncStatus: each person has their own freshness, and a combined view is only as fresh as its stalest part', () => {
+  assert.equal(lastSyncKey('kite', DEFAULT_OWNER), 'kite');
+  assert.equal(lastSyncKey('kite', undefined), 'kite');
+  assert.equal(lastSyncKey('cas', 'Kruti'), 'cas:Kruti');
+  const funds = [FUNDS[0] /* Yash, zerodha */, FUNDS[1] /* Yash, other */, KRUTI_A /* Kruti, other */];
+  const snapshots = [
+    { date: '2026-11-20', source: 'kite', positions: {} }, // no owner: Yash's
+    { date: '2026-11-18', source: 'cas', positions: {} }, // Yash's CAS
+    { date: '2026-11-01', source: 'cas', owner: 'Kruti', positions: {} },
+  ];
+  const today = '2026-11-22';
+  const state = { lastSync: { kite: { date: '2026-11-21' } } }; // a recorded date wins over the snapshots'
+  const mine = computeSyncStatus({ funds, snapshots, state, view: DEFAULT_OWNER, today });
+  assert.equal(mine.kiteDate, '2026-11-21');
+  assert.equal(mine.casDate, '2026-11-18');
+  const hers = computeSyncStatus({ funds, snapshots, state, view: 'Kruti', today });
+  assert.equal(hers.casDate, '2026-11-01');
+  assert.equal(hers.cas.level, 'old');
+  // she holds nothing at Zerodha: that place is marked unused, so her view is not nagged about it
+  assert.equal(hers.kiteUsed, false);
+  assert.equal(hers.casUsed, true);
+  assert.deepEqual(syncNudges({ sync: hers, hasSetup: true, today }), [], 'her CAS is 21 days old, under the 35-day reminder, and Zerodha is unused');
+  const later = computeSyncStatus({ funds, snapshots, state, view: 'Kruti', today: '2026-12-20' });
+  assert.deepEqual(syncNudges({ sync: later, hasSetup: true, today: '2026-12-20' }).map((n) => n.key), ['cas'], 'a stale CAS is reminded, a Zerodha she does not use is not');
+  assert.equal(computeSyncStatus({ funds, snapshots, state, view: DEFAULT_OWNER, today }).kiteUsed, true);
+  const both = computeSyncStatus({ funds, snapshots, state, view: null, today });
+  assert.equal(both.casDate, '2026-11-01', 'the stalest CAS decides the combined freshness');
+  assert.equal(both.cas.level, 'old');
+  assert.equal(both.kiteDate, '2026-11-21', 'only Yash holds anything at Zerodha');
+  assert.deepEqual(both.casByOwner.map((p) => p.owner), ['Kruti', DEFAULT_OWNER], 'the stalest first');
+  // her own recorded date, under her own key
+  const recorded = computeSyncStatus({ funds, snapshots, state: { lastSync: { 'cas:Kruti': { date: '2026-11-21' } } }, view: 'Kruti', today });
+  assert.equal(recorded.casDate, '2026-11-21');
+  assert.equal(recorded.cas.level, 'fresh');
+  // nothing imported yet
+  assert.equal(computeSyncStatus({ funds: [], snapshots: [], state: {}, today }).kite.level, 'never');
+});
+
+test('computeHistory: one person\'s line sits on the same dates as the combined line even when their funds price on different days', () => {
+  // Yash holds a liquid fund that also prices on weekends; Kruti holds two equity funds that do not.
+  const LIQUID = { key: 'L', schemeCode: '7', name: 'Liquid', short: 'Liquid', group: 'zerodha' };
+  const E1 = { key: 'K1', schemeCode: '1', name: 'E1', short: 'E1', group: 'other', owner: 'Kruti' };
+  const E2 = { key: 'K2', schemeCode: '2', name: 'E2', short: 'E2', group: 'other', owner: 'Kruti' };
+  const weekdays = ['2026-11-18', '2026-11-19', '2026-11-20'];
+  const navs = {
+    1: weekdays.map((d, i) => [d, 10 + i]),
+    2: weekdays.map((d, i) => [d, 20 + i]),
+    7: [...weekdays, '2026-11-21', '2026-11-22'].map((d) => [d, 100]), // priced on Saturday and Sunday too
+  };
+  const snaps = [{ date: '2026-11-18', source: 'kite', positions: { L: { units: 1, avgCost: 100 } } }, { date: '2026-11-18', source: 'cas', owner: 'Kruti', positions: { K1: { units: 1, avgCost: 10 }, K2: { units: 1, avgCost: 20 } } }];
+  const funds = [LIQUID, E1, E2];
+  const combined = computeHistory({ funds, snapshots: snaps, navByCode: navs, days: 10 });
+  const hisOnly = computeHistory({ funds: [LIQUID], snapshots: snaps, navByCode: navs, days: 10 });
+  const hisOnAll = computeHistory({ funds: [LIQUID], calendarFunds: funds, snapshots: snaps, navByCode: navs, days: 10 });
+  assert.deepEqual(combined.dates, weekdays, 'the weekend is not a trading day for the household');
+  assert.equal(hisOnly.dates.length, 5, 'on its own the liquid fund draws the weekend too (why a shared calendar is needed)');
+  assert.deepEqual(hisOnAll.dates, combined.dates, 'with the household\'s calendar it matches');
+  const hers = computeHistory({ funds: [E1, E2], calendarFunds: funds, snapshots: snaps, navByCode: navs, days: 10 });
+  combined.dates.forEach((_, i) => assert.ok(Math.abs(hisOnAll.value[i] + hers.value[i] - combined.value[i]) < 1e-9));
+});
+
+test('syncNudges: a single person with nothing at Zerodha is no longer reminded to sync it', () => {
+  const only = [{ key: 'a', group: 'other', schemeCode: '1' }];
+  const sync = computeSyncStatus({ funds: only, snapshots: [], state: {}, today: '2026-11-22' });
+  assert.equal(sync.kiteUsed, false);
+  assert.deepEqual(syncNudges({ sync, hasSetup: true, today: '2026-11-22' }).map((n) => n.key), []);
+});
+
+test('syncNudges: a reminder names whose holdings are stale once more than one person is in view, and reads as before for one', () => {
+  const funds = [FUNDS[0], FUNDS[1], KRUTI_A];
+  const snaps = [
+    { date: '2026-11-20', source: 'kite', positions: {} },
+    { date: '2026-11-15', source: 'cas', positions: {} },
+    { date: '2026-09-01', source: 'cas', owner: 'Kruti', positions: {} },
+  ];
+  const today = '2026-11-22';
+  const both = computeSyncStatus({ funds, snapshots: snaps, state: {}, view: null, today });
+  const texts = syncNudges({ sync: both, hasSetup: true, today }).map((n) => n.text);
+  assert.deepEqual(texts, ['Funds outside Zerodha (Kruti) were last updated from a CAS 82 days ago.']);
+  // her own view has one person, so no name is added
+  const hers = computeSyncStatus({ funds, snapshots: snaps, state: {}, view: 'Kruti', today });
+  assert.equal(syncNudges({ sync: hers, hasSetup: true, today })[0].text, 'Funds outside Zerodha were last updated from a CAS 82 days ago.');
+  // a Kite that has never synced, with two people holding Zerodha funds, says whose
+  const twoKite = [FUNDS[0], { ...FUNDS[0], key: 'K_Z', owner: 'Kruti' }];
+  const never = computeSyncStatus({ funds: twoKite, snapshots: [], state: {}, view: null, today });
+  assert.match(syncNudges({ sync: never, hasSetup: true, today })[0].text, /^Zerodha holdings \((Kruti|Yash)\) have not been synced yet\.$/);
+});
+
+// ---------- importing for a person ----------
+
+const BENCH = { schemeCode: '999', name: 'Index' };
+const STORED_CATALOG = { funds: FUNDS, benchmark: BENCH };
+// Kruti's setup file: her own entries (same Alpha fund under her own key) and nothing of Yash's.
+const KRUTI_SETUP = {
+  asOf: '2026-11-21',
+  source: 'cas',
+  owner: 'Kruti',
+  catalog: { funds: [{ key: 'K_A', isin: 'INF000A', schemeCode: '1', name: 'Alpha Fund', short: 'Alpha', amc: 'Alp', group: 'other', category: 'Diversified', holdingsKey: 'A' }] },
+  positions: { K_A: { units: 50, avgCost: 9 } },
+};
+
+test('mergeCatalog: an import replaces only that person\'s funds, keeps everyone else\'s and the benchmark, and stamps the owner', () => {
+  const r = mergeCatalog(STORED_CATALOG, KRUTI_SETUP.catalog, 'Kruti');
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.catalog.funds.map((f) => f.key), ['A', 'B', 'K_A'], 'Yash\'s two funds come first and are untouched');
+  assert.equal(r.catalog.funds[2].owner, 'Kruti');
+  assert.equal(r.catalog.funds[0].owner, undefined, 'the default person\'s funds stay unstamped');
+  assert.deepEqual(r.catalog.benchmark, BENCH, 'the stored benchmark survives a file that names none');
+  // importing again replaces her funds rather than adding to them
+  const again = mergeCatalog(r.catalog, { funds: [{ key: 'K_B', schemeCode: '2', name: 'Beta Fund', short: 'Beta', group: 'other' }] }, 'Kruti');
+  assert.deepEqual(again.catalog.funds.map((f) => f.key), ['A', 'B', 'K_B']);
+  // a file that names a benchmark replaces it
+  assert.equal(mergeCatalog(STORED_CATALOG, { ...KRUTI_SETUP.catalog, benchmark: { schemeCode: '1', name: 'New' } }, 'Kruti').catalog.benchmark.name, 'New');
+  // the default person re-importing keeps Kruti's funds and puts his own first
+  const yash = mergeCatalog(r.catalog, { funds: [{ key: 'A', schemeCode: '1', name: 'Alpha Fund', short: 'Alpha', group: 'zerodha' }] }, DEFAULT_OWNER);
+  assert.deepEqual(yash.catalog.funds.map((f) => f.key), ['A', 'K_A']);
+  // with nobody else stored it is a plain replacement, as it always was
+  assert.deepEqual(mergeCatalog(null, { funds: FUNDS }, DEFAULT_OWNER).catalog.funds, FUNDS);
+});
+
+test('mergeCatalog refuses what would mix two people\'s funds up', () => {
+  const clash = mergeCatalog(STORED_CATALOG, { funds: [{ key: 'A', schemeCode: '1', name: 'x' }] }, 'Kruti'); // A is Yash's
+  assert.equal(clash.ok, false);
+  assert.match(clash.error, /already Yash's/);
+  const wrongOwner = mergeCatalog(STORED_CATALOG, { funds: [{ key: 'K_X', owner: 'Someone', schemeCode: '1', name: 'x' }] }, 'Kruti');
+  assert.match(wrongOwner.error, /Someone's/);
+  assert.match(mergeCatalog(STORED_CATALOG, { funds: [{ key: 'K_X', schemeCode: '1', name: 'x' }, { key: 'K_X', schemeCode: '1', name: 'y' }] }, 'Kruti').error, /twice/);
+  assert.equal(mergeCatalog(STORED_CATALOG, { funds: [] }, 'Kruti').ok, false);
+  assert.equal(mergeCatalog(STORED_CATALOG, { funds: [{ name: 'no key' }] }, 'Kruti').ok, false);
+  assert.equal(mergeCatalog(STORED_CATALOG, null, 'Kruti').ok, false);
+});
+
+test('mergeOverlap: adds to the stored data by fund and keeps both sides\' stocks, groups and futures', () => {
+  const stored = { asOf: 'Oct 2026', asOfDate: '2026-10-31', holdings: { A: { X: 10 } }, names: { X: 'X Corp' }, groups: { adani: ['X'] }, futures: [{ fund: 'A', name: 'X fut', weight: 1 }] };
+  const incoming = { asOf: 'Nov 2026', asOfDate: '2026-11-30', holdings: { B: { Y: 5 } }, names: { Y: 'Y Ltd' }, groups: { adani: ['Y'], other: ['Z'] }, futures: [{ fund: 'A', name: 'X fut', weight: 1 }, { fund: 'B', name: 'Y fut', weight: 2 }] };
+  const m = mergeOverlap(stored, incoming);
+  assert.deepEqual(Object.keys(m.holdings).sort(), ['A', 'B']);
+  assert.deepEqual(m.names, { X: 'X Corp', Y: 'Y Ltd' });
+  assert.deepEqual(m.groups, { adani: ['X', 'Y'], other: ['Z'] });
+  assert.equal(m.futures.length, 2, 'the same future is listed once');
+  assert.equal(m.asOfDate, '2026-11-30');
+  // an older disclosure does not move the date back
+  assert.equal(mergeOverlap(stored, { holdings: { B: {} }, asOfDate: '2026-01-01', asOf: 'Jan' }).asOfDate, '2026-10-31');
+  assert.equal(mergeOverlap(stored, null), stored);
+  assert.equal(mergeOverlap(null, incoming), incoming);
+  assert.equal(mergeOverlap(null, null), null);
+});
+
+test('mergeSipPlan: the first plan is stored plainly; later ones are dated and keep the schedule and the other person\'s amounts', () => {
+  const funds = [...FUNDS, { key: 'K_A', owner: 'Kruti' }, { key: 'K_B', owner: 'Kruti' }];
+  const first = mergeSipPlan({ existingDoc: null, incomingPlan: { A: 100 }, owner: DEFAULT_OWNER, funds, asOf: '2026-11-01' });
+  assert.deepEqual(first.sip, { plan: { A: 100 } });
+  // Kruti's plan arrives after Yash's schedule has two entries
+  const existing = { schedule: [{ from: '2026-01-01', plan: { A: 100, B: 50 } }, { from: '2026-06-01', plan: { A: 120, B: 50 } }], plan: { A: 120, B: 50 } };
+  const r = mergeSipPlan({ existingDoc: existing, incomingPlan: { K_A: 30 }, owner: 'Kruti', funds, asOf: '2026-11-21' });
+  assert.equal(r.ok, true);
+  assert.equal(r.sip.schedule.length, 3, 'earlier entries are kept');
+  assert.deepEqual(r.sip.schedule[2], { from: '2026-11-21', plan: { A: 120, B: 50, K_A: 30 } });
+  assert.deepEqual(r.sip.plan, { A: 120, B: 50, K_A: 30 });
+  assert.deepEqual(r.sip.schedule[1].plan, { A: 120, B: 50 }, 'days before the import keep the plan they ran under');
+  // re-importing her plan replaces her amounts, not Yash's
+  const next = mergeSipPlan({ existingDoc: r.sip, incomingPlan: { K_B: 10 }, owner: 'Kruti', funds, asOf: '2026-11-22' });
+  assert.deepEqual(next.sip.plan, { A: 120, B: 50, K_B: 10 });
+  // a plan that names someone else's fund is refused
+  assert.match(mergeSipPlan({ existingDoc: existing, incomingPlan: { A: 5 }, owner: 'Kruti', funds, asOf: '2026-11-21' }).error, /not Kruti's/);
+  assert.deepEqual(mergeSipPlan({ existingDoc: existing, incomingPlan: null, owner: 'Kruti', funds, asOf: '2026-11-21' }), { ok: true, sip: null });
+});
+
+test('snapshotId: the default person keeps the plain id, anyone else\'s carries their name', () => {
+  assert.equal(snapshotId('2026-11-21', 'kite'), 'snap_2026-11-21_kite');
+  assert.equal(snapshotId('2026-11-21', 'cas', DEFAULT_OWNER), 'snap_2026-11-21_cas');
+  assert.equal(snapshotId('2026-11-21', 'cas', 'Kruti'), 'snap_2026-11-21_cas_Kruti');
+  assert.equal(snapshotId('2026-11-21', 'cas', 'Mary Ann/2'), 'snap_2026-11-21_cas_Mary_Ann_2', 'nothing that is not allowed in a document id');
+});
+
+test('parseImport for a person: a setup file merges into the stored catalog and says what it replaces and keeps', () => {
+  const base = { catalog: STORED_CATALOG, asOfDefault: '2026-11-21', today: '2026-11-22' };
+  const r = parseImport(JSON.stringify(KRUTI_SETUP), { ...base, owner: 'Kruti' });
+  assert.equal(r.ok, true);
+  assert.equal(r.payload.owner, 'Kruti');
+  assert.deepEqual(r.payload.positions, { K_A: { units: 50, avgCost: 9 } });
+  assert.deepEqual(r.funds.map((f) => f.key), ['A', 'B', 'K_A']);
+  assert.deepEqual(r.summary, { owner: 'Kruti', replacedFunds: 0, keptOtherFunds: 2, removed: [] });
+  // the file's own owner is used when no one is chosen, and a different choice is refused
+  assert.equal(parseImport(JSON.stringify(KRUTI_SETUP), base).payload.owner, 'Kruti');
+  const mismatch = parseImport(JSON.stringify(KRUTI_SETUP), { ...base, owner: DEFAULT_OWNER });
+  assert.equal(mismatch.ok, false);
+  assert.match(mismatch.error, /file is for Kruti, but you chose Yash/);
+  // a colliding key is reported, not written
+  const bad = { ...KRUTI_SETUP, catalog: { funds: [{ key: 'A', schemeCode: '1', name: 'x', group: 'other' }] }, positions: { A: { units: 1, avgCost: 1 } } };
+  assert.match(parseImport(JSON.stringify(bad), base).error, /already Yash's/);
+});
+
+test('parseImport: a person who is not on the portfolio is refused, and names are matched exactly', () => {
+  const base = { catalog: STORED_CATALOG, asOfDefault: '2026-11-21', today: '2026-11-22', people: [DEFAULT_OWNER, 'Kruti'] };
+  assert.equal(parseImport(JSON.stringify(KRUTI_SETUP), base).ok, true);
+  const lower = parseImport(JSON.stringify({ ...KRUTI_SETUP, owner: 'kruti' }), base);
+  assert.equal(lower.ok, false);
+  assert.match(lower.error, /kruti is not one of the people/);
+  assert.equal(parseImport(JSON.stringify({ ...KRUTI_SETUP, owner: '  Kruti  ' }), base).payload.owner, 'Kruti', 'stray spaces are trimmed, not a new person');
+  // without a list nothing is checked (the default person alone)
+  assert.equal(parseImport(JSON.stringify({ ...KRUTI_SETUP, owner: 'Someone' }), { ...base, people: null }).ok, true);
+});
+
+test('parseImport: positions can only be for the chosen person\'s funds, and a Kite ISIN means that person\'s Zerodha fund', () => {
+  const funds = [
+    { key: 'A', isin: 'INF000A', schemeCode: '1', name: 'Alpha Fund', short: 'Alpha', group: 'zerodha' },
+    { key: 'K_A', isin: 'INF000A', schemeCode: '1', name: 'Alpha Fund', short: 'Alpha', group: 'zerodha', owner: 'Kruti' },
+    { key: 'K_B', isin: 'INF000B', schemeCode: '2', name: 'Beta Fund', short: 'Beta', group: 'zerodha', owner: 'Kruti' },
+  ];
+  const kite = JSON.stringify([{ tradingsymbol: 'INF000A', quantity: 7, average_price: 3 }]);
+  const base = { catalog: { funds }, asOfDefault: '2026-11-21', today: '2026-11-22' };
+  const hers = parseImport(kite, { ...base, owner: 'Kruti' });
+  assert.deepEqual(Object.keys(hers.payload.positions), ['K_A'], 'the same ISIN goes to the chosen person\'s fund');
+  assert.match(hers.warnings[0], /Not in this Kite list \(left as before\): Beta/, 'and the missing-fund warning is hers alone');
+  const his = parseImport(kite, { ...base, owner: DEFAULT_OWNER });
+  assert.deepEqual(Object.keys(his.payload.positions), ['A']);
+  assert.deepEqual(his.warnings, [], 'Kruti\'s Beta is not Yash\'s to miss');
+  // naming another person's fund by key is refused
+  const stray = JSON.stringify({ asOf: '2026-11-21', source: 'cas', positions: { A: { units: 1, avgCost: 1 } } });
+  assert.match(parseImport(stray, { ...base, owner: 'Kruti' }).error, /A belongs to Yash, not Kruti/);
+});
+
+test('buildImportWrites: the snapshot, sync key and merged documents for one person, without touching anyone else\'s', () => {
+  const existing = {
+    catalog: STORED_CATALOG,
+    overlap: { asOfDate: '2026-10-31', holdings: { A: { X: 10 } }, names: {}, groups: {}, futures: [] },
+    sip: { schedule: [{ from: '2026-01-01', plan: { A: 100 } }], plan: { A: 100 } },
+  };
+  const file = { ...KRUTI_SETUP, overlap: { asOfDate: '2026-11-15', holdings: { C: { Y: 1 } }, names: {}, groups: {}, futures: [] }, sipPlan: { K_A: 25 } };
+  const payload = parseImport(JSON.stringify(file), { catalog: STORED_CATALOG, asOfDefault: '2026-11-21', today: '2026-11-22' }).payload;
+  const w = buildImportWrites({ payload, existing });
+  assert.equal(w.ok, true);
+  assert.equal(w.writes.snapshot.id, 'snap_2026-11-21_cas_Kruti');
+  assert.deepEqual(w.writes.snapshot.data, { date: '2026-11-21', source: 'cas', positions: { K_A: { units: 50, avgCost: 9 } }, owner: 'Kruti' });
+  assert.equal(w.writes.syncKey, 'cas:Kruti');
+  assert.deepEqual(w.writes.catalog.funds.map((f) => f.key), ['A', 'B', 'K_A']);
+  assert.deepEqual(w.writes.catalog.benchmark, BENCH);
+  assert.deepEqual(Object.keys(w.writes.overlap.holdings).sort(), ['A', 'C']);
+  assert.equal(w.writes.sip.schedule.length, 2);
+  assert.deepEqual(w.writes.sip.plan, { A: 100, K_A: 25 });
+  // the default person's import is written exactly as before: plain id, plain key, no owner field
+  const yash = buildImportWrites({ payload: { asOf: '2026-11-22', source: 'kite', owner: DEFAULT_OWNER, positions: { A: { units: 1, avgCost: 1 } } }, existing });
+  assert.equal(yash.writes.snapshot.id, 'snap_2026-11-22_kite');
+  assert.equal(yash.writes.syncKey, 'kite');
+  assert.equal('owner' in yash.writes.snapshot.data, false);
+  assert.equal(yash.writes.catalog, null);
+  assert.equal(yash.writes.sip, null);
+  // a bad merge is reported instead of written
+  assert.equal(buildImportWrites({ payload: { ...payload, sipPlan: { A: 1 } }, existing }).ok, false);
+});
+
+// ---------- stocks ----------
+
+// Made-up stocks: Kruti holds two at Zerodha and one elsewhere; Yash holds the same company ("XCO") that a fund also holds.
+const STOCK_X = { key: 'K_X', kind: 'stock', symbol: 'XCO', name: 'X Company', short: 'XCo', sector: 'Energy', group: 'zerodha', owner: 'Kruti', isin: 'INE000X', schemeCode: 'STK_XCO' };
+const STOCK_Y = { key: 'K_Y', kind: 'stock', symbol: 'YCO', name: 'Y Company', short: 'YCo', sector: 'Banks', group: 'zerodha', owner: 'Kruti', isin: 'INE000Y', schemeCode: 'STK_YCO' };
+const STOCK_Z = { key: 'K_Z', kind: 'stock', symbol: 'ZCO', name: 'Z Company', short: 'ZCo', sector: 'Banks', group: 'other', owner: 'Kruti', isin: 'INE000Z', schemeCode: 'STK_ZCO' };
+const STOCK_NAV = { STK_XCO: [['2026-11-20', 200]], STK_YCO: [['2026-11-20', 50]], STK_ZCO: [['2026-11-20', 10]] };
+const STOCK_SNAP = { date: '2026-11-20', source: 'kite_stocks', owner: 'Kruti', positions: { K_X: { units: 10, avgCost: 150 }, K_Y: { units: 100, avgCost: 60 }, K_Z: { units: 5, avgCost: 12 } } };
+
+test('computePortfolio: a stock is valued at its saved price, has no day change, is counted apart from funds and is left out once sold', () => {
+  const funds = [...FUNDS, STOCK_X, STOCK_Y, STOCK_Z];
+  const nav = { ...NAV, ...STOCK_NAV };
+  const all = computePortfolio({ funds, snapshots: [...SNAP, STOCK_SNAP], navByCode: nav });
+  const x = all.rows.find((r) => r.key === 'K_X');
+  assert.equal(x.value, 2000);
+  assert.equal(x.pnl, 500);
+  assert.equal(x.day, 0);
+  assert.equal(x.dayPct, 0);
+  assert.equal(x.owner, 'Kruti');
+  assert.equal(all.byKind.stocks.value, 2000 + 5000 + 50);
+  assert.equal(all.byKind.funds.value, 100 * 13 + 10 * 120);
+  assert.equal(all.total.value, all.byKind.funds.value + all.byKind.stocks.value);
+  // the date of the NAVs is the funds' own, never a stock's price date
+  const withLaterPrice = computePortfolio({ funds, snapshots: [...SNAP, STOCK_SNAP], navByCode: { ...nav, STK_XCO: [['2026-11-22', 210]] } });
+  assert.equal(withLaterPrice.navDate, '2026-11-20');
+  // sold (units to zero) disappears
+  const sold = { ...STOCK_SNAP, date: '2026-11-21', positions: { ...STOCK_SNAP.positions, K_Y: { units: 0, avgCost: 0 } } };
+  const after = computePortfolio({ funds, snapshots: [...SNAP, STOCK_SNAP, sold], navByCode: nav });
+  assert.equal(after.rows.some((r) => r.key === 'K_Y'), false);
+  // a portfolio of only stocks still has a NAV date
+  assert.equal(computePortfolio({ funds: [STOCK_X], snapshots: [STOCK_SNAP], navByCode: nav }).navDate, '2026-11-20');
+});
+
+test('computeHistory: stocks are valued at their last saved price, never set the trading days, and have no daily P&L', () => {
+  const funds = [FUNDS[0], STOCK_X];
+  const nav = { ...NAV, STK_XCO: [['2026-11-18', 100], ['2026-11-20', 200]] }; // priced only at two imports
+  const snaps = [...SNAP, { date: '2026-11-18', source: 'kite_stocks', owner: 'Kruti', positions: { K_X: { units: 10, avgCost: 90 } } }];
+  const h = computeHistory({ funds, calendarFunds: funds, snapshots: snaps, navByCode: nav, days: 10 });
+  assert.deepEqual(h.dates, ['2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20'], 'the funds\' days, not the stock\'s two');
+  // before its first saved price (the 18th) a stock is not valued; then it is carried forward: 10 shares x 100 until the 20th, then x 200
+  assert.deepEqual(h.value, [1000, 1100 + 1000, 1200 + 1000, 1300 + 2000]);
+  assert.deepEqual(h.day, [0, 100, 100, 100], 'the stock\'s price jump on the 20th is not a day\'s profit');
+  assert.deepEqual(h.invested, [800, 800 + 900, 800 + 900, 800 + 900], 'and its cost is left out of the put-in until then too');
+  // a portfolio of only stocks has dates of its own
+  const only = computeHistory({ funds: [STOCK_X], calendarFunds: [STOCK_X], snapshots: snaps, navByCode: nav, days: 10 });
+  assert.deepEqual(only.dates, ['2026-11-18', '2026-11-20']);
+});
+
+test('overlap and limits: a directly held stock adds to the same company held through funds, and is not a fund', () => {
+  const fundRow = { key: 'A', holdingsKey: 'A', short: 'Alpha', value: 1000, category: 'Diversified', amc: 'Alp' };
+  const direct = { key: 'K_X', kind: 'stock', symbol: 'XCO', stockId: 'XCO', holdingsKey: 'K_X', name: 'X Company', short: 'XCo', sector: 'Energy', value: 500, owner: 'Kruti' };
+  const overlap = { holdings: { A: { XCO: 10, OTHER: 5 } }, names: { XCO: 'X Corp' }, groups: { adani: ['XCO'] }, futures: [] };
+  const o = computeOverlap(overlap, [fundRow, direct]);
+  assert.equal(o.total, 1500);
+  // 10% of 1000 through the fund + 100% of 500 held directly
+  assert.equal(o.adani.total, 600);
+  assert.equal(o.stocks.find((x) => x.stock === 'XCO').value, 600);
+  assert.equal(o.shared.find((x) => x.stock === 'XCO').funds.length, 2, 'owned two ways');
+  assert.deepEqual(o.pairs, [], 'a stock is not a fund, so it makes no fund pair');
+  // a stock with no entry in the disclosures is its own company, named from the catalog
+  const lone = computeOverlap({ holdings: {}, names: {}, groups: {}, futures: [] }, [direct]);
+  assert.deepEqual(lone.stocks.map((x) => [x.stock, x.name, x.value]), [['XCO', 'X Company', 500]]);
+  // the fund-only numbers leave stocks out, the stock numbers include them
+  const m = computeMetrics([fundRow, direct], o);
+  assert.equal(m.byCategory.Diversified, (1000 / 1500) * 100);
+  assert.equal(m.byCategory.Energy, undefined);
+  assert.equal(m.maxFund.name, 'Alpha');
+  assert.equal(m.maxStock.name, 'X Corp');
+  assert.ok(Math.abs(m.maxStock.pct - 40) < 1e-9);
+  assert.ok(Math.abs(m.adaniPct - 40) < 1e-9);
+});
+
+test('computeAllocation by type and sector; benchmark and relative lines ignore stocks', () => {
+  const rows = [
+    { key: 'A', short: 'Alpha', amc: 'Alp', category: 'Diversified', value: 600 },
+    { key: 'K_X', kind: 'stock', short: 'XCo', sector: 'Energy', value: 300, owner: 'Kruti' },
+    { key: 'K_Y', kind: 'stock', short: 'YCo', sector: 'Banks', value: 100, owner: 'Kruti' },
+  ];
+  assert.deepEqual(computeAllocation(rows, 'kind').map((x) => [x.label, x.value]), [['Mutual funds', 600], ['Stocks', 400]]);
+  assert.deepEqual(computeAllocation(rows, 'category').map((x) => x.label), ['Diversified', 'Energy', 'Banks'], 'a stock\'s category is its sector');
+  assert.deepEqual(computeAllocation(rows, 'amc').map((x) => x.label), ['Alp', 'Direct stocks']);
+  const table = computeBenchmarkTable({ rows: [{ key: 'A', schemeCode: '1', short: 'Alpha' }, { key: 'K_X', kind: 'stock', schemeCode: 'STK_XCO', short: 'XCo' }], navByCode: { 1: NAV[1], STK_XCO: STOCK_NAV.STK_XCO, 999: NAV[2] }, benchmarkCode: '999' });
+  assert.deepEqual(table.table.map((r) => r.key), ['A']);
+  const lines = computeRelativeLines({ rows: [{ key: 'K_X', kind: 'stock', schemeCode: 'STK_XCO', short: 'XCo' }], navByCode: { STK_XCO: STOCK_NAV.STK_XCO, 1: NAV[1] }, benchmarkCode: '1', days: 3 });
+  assert.deepEqual(lines.funds, []);
+});
+
+test('buildTrade: a stock needs both the shares and the amount, because there is no price to work one from the other', () => {
+  const ctx = { funds: [STOCK_X], navByCode: STOCK_NAV, today: '2026-11-22' };
+  assert.match(buildTrade({ ...ctx, fundKey: 'K_X', kind: 'buy', date: '2026-11-20', amount: 1000 }).error, /both the number of shares and the amount/);
+  assert.match(buildTrade({ ...ctx, fundKey: 'K_X', kind: 'buy', date: '2026-11-20', units: 5 }).error, /both the number of shares and the amount/);
+  const ok = buildTrade({ ...ctx, fundKey: 'K_X', kind: 'buy', date: '2026-11-20', units: 5, amount: 1000 });
+  assert.deepEqual(ok.trade, { fundKey: 'K_X', kind: 'buy', date: '2026-11-20', units: 5, amount: 1000 });
+});
+
+test('stock sync: its own place, used only by people who hold Zerodha stocks, with a reminder after a week', () => {
+  const funds = [FUNDS[0], STOCK_X, STOCK_Z];
+  const today = '2026-11-22';
+  const none = computeSyncStatus({ funds, snapshots: [], state: {}, view: 'Kruti', today });
+  assert.equal(none.stocksUsed, true);
+  assert.equal(none.stocks.level, 'never');
+  assert.equal(none.kiteUsed, false, 'her Zerodha is stocks, not mutual funds');
+  assert.equal(none.casUsed, false, 'the one stock held elsewhere is manual and has no sync place');
+  assert.match(syncNudges({ sync: none, hasSetup: true, today })[0].text, /^Stocks have not been synced yet\./);
+  const fresh = computeSyncStatus({ funds, snapshots: [{ date: '2026-11-20', source: 'kite_stocks', owner: 'Kruti', positions: {} }], state: {}, view: 'Kruti', today });
+  assert.equal(fresh.stocks.level, 'stale');
+  assert.deepEqual(syncNudges({ sync: fresh, hasSetup: true, today }), []);
+  const old = computeSyncStatus({ funds, snapshots: [{ date: '2026-11-10', source: 'kite_stocks', owner: 'Kruti', positions: {} }], state: {}, view: 'Kruti', today });
+  assert.match(syncNudges({ sync: old, hasSetup: true, today })[0].text, /^Stocks were last synced 12 days ago\. Their prices are as of then\.$/);
+  assert.equal(nudgeTarget('stocks'), 'portfolioData');
+  // her recorded date is under her own key
+  assert.equal(computeSyncStatus({ funds, snapshots: [], state: { lastSync: { 'kite_stocks:Kruti': { date: '2026-11-21' } } }, view: 'Kruti', today }).stocksDate, '2026-11-21');
+});
+
+test('mergeCatalog: a stock entry is completed (symbol, price key, exchange) and needs a symbol', () => {
+  const r = mergeCatalog(STORED_CATALOG, { funds: [{ key: 'K_X', kind: 'stock', symbol: 'XCO', name: 'X Company', sector: 'Energy' }] }, 'Kruti');
+  assert.equal(r.ok, true);
+  const x = r.catalog.funds.find((f) => f.key === 'K_X');
+  assert.deepEqual([x.schemeCode, x.stockId, x.exchange, x.group, x.holdingsKey, x.owner], ['STK_XCO', 'XCO', 'NSE', 'zerodha', 'K_X', 'Kruti']);
+  assert.match(mergeCatalog(STORED_CATALOG, { funds: [{ key: 'K_X', kind: 'stock', name: 'No symbol' }] }, 'Kruti').error, /needs a symbol/);
+  assert.equal(isStock(x), true);
+  assert.equal(isStock(FUNDS[0]), false);
+});
+
+test('parseImport: a Kite equity list maps by ISIN to that person\'s Zerodha stocks, takes the last price, and treats a stock missing from it as sold', () => {
+  const funds = [...FUNDS, STOCK_X, STOCK_Y, STOCK_Z];
+  const base = { catalog: { funds }, asOfDefault: '2026-11-22', today: '2026-11-22', owner: 'Kruti', people: ['Yash', 'Kruti'] };
+  const kite = JSON.stringify([{ tradingsymbol: 'XCO', exchange: 'NSE', isin: 'INE000X', quantity: 12, t1_quantity: 1, average_price: 160, last_price: 210.5 }]);
+  const r = parseImport(kite, base);
+  assert.equal(r.ok, true, r.error);
+  assert.equal(r.payload.source, 'kite_stocks');
+  assert.deepEqual(r.payload.positions.K_X, { units: 13, avgCost: 160 });
+  assert.deepEqual(r.payload.prices, { K_X: 210.5 });
+  // YCo is a Zerodha stock of hers that is not in the list: sold. ZCo is held elsewhere, so it is not touched.
+  assert.deepEqual(r.payload.positions.K_Y, { units: 0, avgCost: 0 });
+  assert.equal('K_Z' in r.payload.positions, false);
+  assert.deepEqual(r.summary.removed, ['YCo']);
+  // only stocks held now are listed as removed
+  assert.deepEqual(parseImport(kite, { ...base, heldKeys: ['K_X'] }).summary.removed, []);
+  assert.deepEqual(parseImport(kite, { ...base, heldKeys: ['K_X', 'K_Y'] }).summary.removed, ['YCo']);
+  // a stock with no price is refused; a mutual-fund Kite list never touches stocks
+  const noPrice = JSON.stringify([{ tradingsymbol: 'XCO', exchange: 'NSE', isin: 'INE000X', quantity: 1, average_price: 1 }]);
+  assert.match(parseImport(noPrice, base).error, /No price for K_X/);
+  const mf = JSON.stringify([{ tradingsymbol: 'INE000X', quantity: 1, average_price: 1 }]);
+  assert.match(parseImport(mf, base).error, /Unknown fund/);
+  // Yash cannot import a stock that is Kruti's
+  assert.match(parseImport(kite, { ...base, owner: 'Yash' }).error, /Unknown stock/);
+  // a setup/manual file carries prices alongside the positions
+  const manual = JSON.stringify({ asOf: '2026-11-22', source: 'manual', owner: 'Kruti', positions: { K_Z: { units: 5, avgCost: 12 } }, prices: { K_Z: 11 } });
+  const m = parseImport(manual, base);
+  assert.equal(m.ok, true, m.error);
+  assert.deepEqual(m.payload.prices, { K_Z: 11 });
+  assert.deepEqual(m.summary.removed, [], 'a manual file is not a complete list');
+});
+
+test('buildImportWrites: a stock import saves each price under the stock\'s own key and year, merged with earlier ones', () => {
+  const existing = { catalog: { funds: [...FUNDS, STOCK_X, STOCK_Y] }, overlap: null, sip: null };
+  const payload = { asOf: '2026-12-31', source: 'kite_stocks', owner: 'Kruti', positions: { K_X: { units: 1, avgCost: 1 }, K_Y: { units: 0, avgCost: 0 } }, prices: { K_X: 220 } };
+  const w = buildImportWrites({ payload, existing });
+  assert.equal(w.ok, true);
+  assert.equal(w.writes.snapshot.id, 'snap_2026-12-31_kite_stocks_Kruti');
+  assert.equal(w.writes.syncKey, 'kite_stocks:Kruti');
+  assert.deepEqual(w.writes.prices, [{ code: 'STK_XCO', year: '2026', series: { '2026-12-31': 220 } }]);
+  assert.equal(buildImportWrites({ payload: { ...payload, prices: { NOPE: 1 } }, existing }).ok, false);
+  // two people holding the same stock share one price series
+  const both = { catalog: { funds: [STOCK_X, { ...STOCK_X, key: 'Y_X', owner: undefined }] }, overlap: null, sip: null };
+  const shared = buildImportWrites({ payload: { asOf: '2026-12-31', source: 'kite_stocks', owner: 'Kruti', positions: { K_X: { units: 1, avgCost: 1 } }, prices: { K_X: 5, Y_X: 5 } }, existing: both });
+  assert.equal(shared.writes.prices.length, 1);
+});
+
+test('mergeSipPlan: a plan dated before a later SIP edit still reaches the plan in force now, without overriding a deliberate later edit', () => {
+  const funds = [...FUNDS, { key: 'K_A', owner: 'Kruti' }, { key: 'K_OLD_OWNER_FUND', owner: 'Kruti' }];
+  const existing = { schedule: [{ from: '2026-01-01', plan: { A: 100 } }, { from: '2026-11-21', plan: { A: 120 } }], plan: { A: 120 } };
+  // Kruti's statement is dated 15 Nov, before Yash's 21 Nov edit, which never mentioned her
+  const r = mergeSipPlan({ existingDoc: existing, incomingPlan: { K_A: 30 }, owner: 'Kruti', funds, asOf: '2026-11-15' });
+  assert.deepEqual(r.sip.schedule.map((e) => e.from), ['2026-01-01', '2026-11-15', '2026-11-21']);
+  assert.deepEqual(r.sip.schedule[1].plan, { A: 100, K_A: 30 });
+  assert.deepEqual(r.sip.schedule[2].plan, { A: 120, K_A: 30 }, 'her plan carries into the later entry that left her out');
+  assert.deepEqual(r.sip.plan, { A: 120, K_A: 30 }, 'so the plan in force now has her SIP');
+  // a later entry that already has her funds is a later edit of hers: it stays
+  const edited = { schedule: [{ from: '2026-01-01', plan: { A: 100 } }, { from: '2026-11-21', plan: { A: 120, K_A: 99 } }], plan: { A: 120, K_A: 99 } };
+  const kept = mergeSipPlan({ existingDoc: edited, incomingPlan: { K_A: 30 }, owner: 'Kruti', funds, asOf: '2026-11-15' });
+  assert.deepEqual(kept.sip.plan, { A: 120, K_A: 99 });
+  // a backdated plan for someone who already has later entries does not undo them
+  const yash = mergeSipPlan({ existingDoc: existing, incomingPlan: { A: 777 }, owner: DEFAULT_OWNER, funds, asOf: '2026-11-15' });
+  assert.deepEqual(yash.sip.plan, { A: 120 });
+  assert.deepEqual(yash.sip.schedule[1].plan, { A: 777 });
+});
+
+test('mergeSipPlan: SIP amounts for a fund that is in nobody\'s catalog any more are dropped on the next import', () => {
+  const funds = [...FUNDS, { key: 'K_NEW', owner: 'Kruti' }]; // she dropped K_OLD in this re-import
+  const existing = { schedule: [{ from: '2026-01-01', plan: { A: 100, K_OLD: 40 } }], plan: { A: 100, K_OLD: 40 } };
+  const r = mergeSipPlan({ existingDoc: existing, incomingPlan: { K_NEW: 10 }, owner: 'Kruti', funds, asOf: '2026-11-21' });
+  assert.deepEqual(r.sip.plan, { A: 100, K_NEW: 10 });
+});
+
+test('mergeOverlap: a newer file replaces what it lists (a closed future goes, a changed weight changes); an older file only fills gaps; the date comes as a pair', () => {
+  const stored = { asOf: 'Nov 2026', asOfDate: '2026-11-10', holdings: { A: { X: 10 } }, names: { X: 'X Corp' }, groups: { adani: ['X'] }, futures: [{ fund: 'A', name: 'X fut', weight: 5 }, { fund: 'B', name: 'B fut', weight: 1 }] };
+  const newer = mergeOverlap(stored, { asOf: 'Dec 2026', asOfDate: '2026-12-10', holdings: { A: { X: 12 } }, futures: [{ fund: 'A', name: 'X fut', weight: 2 }] });
+  assert.deepEqual(newer.holdings.A, { X: 12 });
+  assert.deepEqual(newer.futures, [{ fund: 'B', name: 'B fut', weight: 1 }, { fund: 'A', name: 'X fut', weight: 2 }], 'A\'s future follows the new file; B\'s is untouched');
+  const closed = mergeOverlap(stored, { asOf: 'Dec 2026', asOfDate: '2026-12-10', holdings: { A: { X: 12 } }, futures: [] });
+  assert.deepEqual(closed.futures.map((f) => f.fund), ['B'], 'a future the new file no longer lists is closed');
+  const older = mergeOverlap(stored, { asOf: 'Oct 2026', asOfDate: '2026-10-01', holdings: { A: { X: 99 }, C: { Z: 1 } }, futures: [{ fund: 'A', name: 'X fut', weight: 9 }, { fund: 'C', name: 'C fut', weight: 3 }] });
+  assert.deepEqual(older.holdings.A, { X: 10 }, 'an older disclosure does not overwrite a stored fund');
+  assert.deepEqual(older.holdings.C, { Z: 1 }, 'but it fills in a fund that was not stored');
+  assert.equal(older.futures.find((f) => f.fund === 'A').weight, 5);
+  assert.ok(older.futures.some((f) => f.fund === 'C'));
+  assert.equal(older.asOfDate, '2026-11-10');
+  assert.equal(older.asOf, 'Nov 2026', 'the label stays with its date');
+  // nothing undefined is ever produced (Firestore refuses it)
+  const bare = mergeOverlap({ holdings: { A: {} } }, { holdings: { B: {} } });
+  assert.equal(Object.values(bare).some((v) => v === undefined), false);
+  assert.equal('asOf' in bare, false);
+});
+
+test('parseImport: a setup file must say whose it is when there is more than one person, and a bad name is called a bad name', () => {
+  const base = { catalog: STORED_CATALOG, asOfDefault: '2026-11-21', today: '2026-11-22', people: [DEFAULT_OWNER, 'Kruti'] };
+  const { owner: _o, ...ownerless } = KRUTI_SETUP;
+  const refused = parseImport(JSON.stringify(ownerless), base);
+  assert.equal(refused.ok, false);
+  assert.match(refused.error, /does not say whose it is/);
+  assert.equal(parseImport(JSON.stringify(ownerless), { ...base, owner: 'Kruti' }).ok, true, 'choosing the person is enough');
+  // a positions-only file (no catalog) still falls back to the first person, as a Kite list always did
+  assert.equal(parseImport(JSON.stringify({ asOf: '2026-11-21', source: 'manual', positions: { A: { units: 1, avgCost: 1 } } }), base).payload.owner, DEFAULT_OWNER);
+  // 'kruti' with the Yash pill chosen is a bad name, not advice to pick a pill that does not exist
+  const bad = parseImport(JSON.stringify({ ...KRUTI_SETUP, owner: 'kruti' }), { ...base, owner: DEFAULT_OWNER });
+  assert.match(bad.error, /kruti is not one of the people/);
+});
+
+test('snapshotId: nothing in the source can break the document id either', () => {
+  assert.equal(snapshotId('2026-11-21', 'a/b'), 'snap_2026-11-21_a_b');
+  assert.equal(snapshotId('2026-11-21', 'kite_stocks', 'Kruti'), 'snap_2026-11-21_kite_stocks_Kruti');
+});
+
+test('holdingsToCsv: a header, one line per fund, the owner of each, and commas and quotes escaped', () => {
   const csv = holdingsToCsv([
     { name: 'Fund, "X"', group: 'zerodha', amc: 'Q', category: 'Thematic', units: 10.5, avgCost: 8, cost: 84, nav: 12, navDate: '2026-11-20', value: 126, pnl: 42, pnlPct: 50, day: 3 },
   ]);
   const lines = csv.trim().split('\n');
   assert.equal(lines.length, 2);
-  assert.match(lines[0], /^Fund,Held at,Fund house,Category,Units/);
-  assert.equal(lines[1], '"Fund, ""X""",Zerodha,Q,Thematic,10.500,8.0000,84.00,12,2026-11-20,126.00,42.00,50.00,3.00');
+  assert.match(lines[0], /^Fund,Owner,Held at,Fund house,Category,Units/);
+  assert.equal(lines[1], '"Fund, ""X""",Yash,Zerodha,Q,Thematic,10.500,8.0000,84.00,12,2026-11-20,126.00,42.00,50.00,3.00');
+  // a row that carries an owner says whose it is
+  const hers = holdingsToCsv([{ name: 'Alpha', owner: 'Kruti', group: 'other', amc: 'Alp', category: 'D', units: 1, avgCost: 1, cost: 1, nav: 1, navDate: '2026-11-20', value: 1, pnl: 0, pnlPct: 0, day: 0 }]);
+  assert.match(hers.trim().split('\n')[1], /^Alpha,Kruti,Other,/);
 });
 
 test('syncNudges: the overlap data is flagged once it is more than 45 days old', () => {

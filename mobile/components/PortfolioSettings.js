@@ -1,8 +1,10 @@
+import { useMemo } from 'react';
 import { View, Text, Pressable, ActivityIndicator } from 'react-native';
 import usePortfolio from '../lib/usePortfolio';
 import { exportHoldingsCsv } from '../lib/portfolioExport';
 import { reportError } from '../lib/errorReporting';
-import { formatShortDate } from '../lib/portfolio';
+import { formatShortDate, DEFAULT_OWNER } from '../lib/portfolio';
+import { DEFAULT_PERSONS } from '../lib/utils';
 import PortfolioShell from './PortfolioShell';
 import PortfolioSipEditor from './PortfolioSipEditor';
 import PortfolioImport from './PortfolioImport';
@@ -32,6 +34,9 @@ function Needs({ loading, hasSetup, children }) {
   return children;
 }
 
+// Whose holdings an import can be for: the people who already hold something, then the household's members.
+const importPeople = (owners) => [...new Set([DEFAULT_OWNER, ...owners, ...DEFAULT_PERSONS])];
+
 export function PortfolioSettingsSip() {
   const p = usePortfolio({ autoBackfill: false });
   return (
@@ -52,6 +57,7 @@ export function PortfolioSettingsLimits() {
 
 export function PortfolioSettingsData() {
   const p = usePortfolio({ autoBackfill: false });
+  const people = useMemo(() => importPeople(p.owners), [p.owners]);
   if (p.loading) {
     return (
       <View className="py-10 items-center">
@@ -64,6 +70,9 @@ export function PortfolioSettingsData() {
     <View className="gap-4">
       <PortfolioImport
         funds={p.funds}
+        existing={{ catalog: p.catalogDoc, overlap: p.overlapData, sip: p.sipDoc }}
+        people={people}
+        heldKeys={p.portfolio.rows.map((r) => r.key)}
         snapshots={p.snapshots}
         navByCode={p.navByCode}
         sipPlan={p.sipPlan}

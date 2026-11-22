@@ -31,6 +31,16 @@ function Tile({ label, value, children }) {
   );
 }
 
+// Each person's own date under a tile, when more than one person's holdings are in view.
+function ByOwner({ list }) {
+  if (!list || list.length < 2) return null;
+  return (
+    <Text className="font-body text-2xs text-muted-text mt-1">
+      {[...list].sort((x, y) => x.owner.localeCompare(y.owner)).map((o) => `${o.owner} ${o.date ? formatShortDate(o.date) : 'never'}`).join(' · ')}
+    </Text>
+  );
+}
+
 function syncChip(s) {
   if (s.level === 'never') return <Chip level="old">Not synced yet</Chip>;
   return <Chip level={s.level}>Synced {s.label}</Chip>;
@@ -43,6 +53,7 @@ const NUDGE_STYLE = {
 const NUDGE_HINT = {
   kite: 'Ask Claude to “sync the portfolio”, then paste the result in Settings.',
   cas: 'Give Claude the latest CAS, then paste the file it makes in Settings.',
+  stocks: 'Give Claude her latest Kite stock holdings, then paste the file it makes in Settings.',
   overlap: 'Ask Claude to refresh the overlap data, then import the new setup file in Settings.',
   limit: 'Change the limit in Settings if it no longer suits you.',
 };
@@ -90,12 +101,24 @@ export default function PortfolioSyncCard({ sync, backfill, estimatedCount, hasS
       ))}
 
       <View className="flex-row flex-wrap gap-2">
-        <Tile label="Zerodha (Kite)" value={sync.kiteDate ? formatShortDate(sync.kiteDate) : 'Never'}>
-          {syncChip(sync.kite)}
-        </Tile>
-        <Tile label="Other Funds (CAS)" value={sync.casDate ? formatShortDate(sync.casDate) : 'Never'}>
-          {syncChip(sync.cas)}
-        </Tile>
+        {sync.kiteUsed !== false ? (
+          <Tile label="Zerodha (Kite)" value={sync.kiteDate ? formatShortDate(sync.kiteDate) : 'Never'}>
+            {syncChip(sync.kite)}
+            <ByOwner list={sync.kiteByOwner} />
+          </Tile>
+        ) : null}
+        {sync.stocksUsed ? (
+          <Tile label="Stocks (Kite)" value={sync.stocksDate ? formatShortDate(sync.stocksDate) : 'Never'}>
+            {syncChip(sync.stocks)}
+            <ByOwner list={sync.stocksByOwner} />
+          </Tile>
+        ) : null}
+        {sync.casUsed !== false ? (
+          <Tile label="Other Funds (CAS)" value={sync.casDate ? formatShortDate(sync.casDate) : 'Never'}>
+            {syncChip(sync.cas)}
+            <ByOwner list={sync.casByOwner} />
+          </Tile>
+        ) : null}
         <Tile label="NAVs Up To" value={sync.navDate ? formatShortDate(sync.navDate) : 'None yet'}>
           {backfill.running ? (
             <Chip level="stale">Updating {backfill.done}/{backfill.total}</Chip>

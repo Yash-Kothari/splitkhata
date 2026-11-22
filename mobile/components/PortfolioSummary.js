@@ -33,8 +33,10 @@ function Tile({ label, amount, pct, stacked }) {
 }
 
 // Headline numbers: what it is worth now, what you put in, and how it did overall and on the last trading day.
-export default function PortfolioSummary({ portfolio }) {
-  const { total, byGroup, navDate, rows } = portfolio;
+export default function PortfolioSummary({ portfolio, view = null }) {
+  const { total, byGroup, byKind, byOwner, navDate, rows } = portfolio;
+  const hasStocks = byKind?.stocks?.count > 0;
+  const people = Object.keys(byOwner || {});
   const { money, hidden, toggle } = usePortfolioPrivacy();
   const { width } = useWindowDimensions();
   const stacked = width < 560;
@@ -42,9 +44,9 @@ export default function PortfolioSummary({ portfolio }) {
     <Card className="p-4 mb-4">
       <View className="flex-row items-start justify-between gap-2">
         <View className="flex-1">
-          <Text className="font-display text-lg text-ink">Portfolio</Text>
+          <Text className="font-display text-lg text-ink">{view ? `${view}'s Portfolio` : 'Portfolio'}</Text>
           <Text className="font-body text-xs text-muted-text mb-3">
-            NAVs as of {formatShortDate(navDate)} · {rows.length} funds
+            NAVs as of {formatShortDate(navDate)} · {rows.length} {hasStocks ? 'holdings' : 'funds'}
           </Text>
         </View>
         <Pressable
@@ -71,10 +73,26 @@ export default function PortfolioSummary({ portfolio }) {
       </View>
 
       <View className="mt-3 pt-3 border-t border-ink/10">
-        {[
-          ['Zerodha', byGroup.zerodha],
-          ['Other Funds', byGroup.other],
-        ]
+        {people.length > 1
+          ? people.map((who) => (
+              <View key={who} className="flex-row items-center justify-between gap-3 py-1">
+                <Text className="font-body-semibold text-sm text-ink flex-1">{who}</Text>
+                <Text className="font-mono-bold text-sm text-ink">{money(byOwner[who].value)}</Text>
+                <Text className={`font-mono text-xs w-16 text-right ${gainClass(byOwner[who].pnlPct)}`}>{signedPct(byOwner[who].pnlPct)}</Text>
+              </View>
+            ))
+          : null}
+        {people.length > 1 ? <View className="border-t border-ink/10 my-1.5" /> : null}
+        {(hasStocks
+          ? [
+              ['Mutual Funds', byKind.funds],
+              ['Stocks', byKind.stocks],
+            ]
+          : [
+              ['Zerodha', byGroup.zerodha],
+              ['Other Funds', byGroup.other],
+            ]
+        )
           .filter(([, g]) => g.count > 0)
           .map(([label, g]) => (
             <View key={label} className="flex-row items-center justify-between gap-3 py-1">

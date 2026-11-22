@@ -862,15 +862,19 @@ export function subscribeToPortfolio(onData, onError) {
   );
 }
 
-// One commit: the snapshot, the bookkeeping, and (on the first setup) the catalog, overlap data and SIP plan.
-export async function importPortfolioSnapshot({ asOf, source, positions, catalog = null, overlap = null, sipPlan = null }) {
+// One commit for one confirmed import: the snapshot, which sync record it updates, and (when the file carried them) the catalog,
+// overlap data and SIP plan. `writes` comes from buildImportWrites, already merged with what is stored, so one person's import
+// never overwrites another's funds, overlap or SIP schedule.
+export async function importPortfolioSnapshot({ snapshot, syncKey, syncDate, catalog = null, overlap = null, sip = null, prices = [] }) {
   const batch = writeBatch(dbInstance);
-  // Same-day imports from different sources (Kite for Zerodha funds, a CAS for the rest) must not overwrite each other.
-  batch.set(docAt('portfolio', `snap_${asOf}_${source}`), { date: asOf, source, positions, createdAt: serverTimestamp() });
-  batch.set(docAt('portfolio', 'state'), { lastSync: { [source]: { date: asOf, at: serverTimestamp() } } }, { merge: true });
+  // Same-day imports from different places or people have different ids, so they do not overwrite each other.
+  batch.set(docAt('portfolio', snapshot.id), { ...snapshot.data, createdAt: serverTimestamp() });
+  batch.set(docAt('portfolio', 'state'), { lastSync: { [syncKey]: { date: syncDate, at: serverTimestamp() } } }, { merge: true });
   if (catalog) batch.set(docAt('portfolio', 'catalog'), catalog);
   if (overlap) batch.set(docAt('portfolio', 'overlap'), overlap);
-  if (sipPlan) batch.set(docAt('portfolio', 'sip'), { plan: sipPlan });
+  if (sip) batch.set(docAt('portfolio', 'sip'), { ...sip, updatedAt: serverTimestamp() });
+  // A stock's price at the import date, saved like a NAV (merged, so earlier prices stay).
+  for (const pr of prices) batch.set(docAt('portfolio', `nav_${pr.code}_${pr.year}`), { schemeCode: pr.code, year: Number(pr.year), series: pr.series }, { merge: true });
   await track(batch.commit(), 'Could not save the portfolio snapshot');
 }
 

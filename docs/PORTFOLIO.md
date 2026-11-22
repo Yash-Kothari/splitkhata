@@ -12,18 +12,61 @@ Folio numbers and PAN are never stored; only fund id, units and average cost.
 
 | Document | Holds |
 |---|---|
-| `catalog` | `{ funds: [{ key, isin, schemeCode, name, short, amc, group: 'zerodha'\|'other', category, holdingsKey }], benchmark: { schemeCode, name } }` |
+| `catalog` | `{ funds: [{ key, isin, schemeCode, name, short, amc, group: 'zerodha'\|'other', category, holdingsKey, owner?, kind?, symbol?, stockId?, sector? }], benchmark: { schemeCode, name } }`. `owner` is a household member's name (absent = Yash); `kind: 'stock'` marks a share held directly (see Stocks) |
 | `sip` | `{ schedule: [{ from, plan: { [fundKey]: rupees bought per trading day } }], plan }`, the plan over time (`plan` is the latest). A setup import with a plain `sipPlan` writes `{ plan }`, read as one entry that always applied |
 | `limits` | `{ items: [{ id, metric: 'adani'\|'amc'\|'category'\|'stock'\|'fund', name?, max }] }`, the concentration caps you saved |
 | `overlap` | `{ asOf, asOfDate: 'YYYY-MM-DD', holdings: { [holdingsKey]: { [stock]: weightPct } }, names, groups: { adani: [...] }, futures }` |
-| `snap_<date>_<source>` | one snapshot: `{ date, source: 'kite'\|'cas'\|'manual', positions: { [fundKey]: { units, avgCost } } }` |
+| `snap_<date>_<source>[_<Owner>]` | one snapshot: `{ date, source: 'kite'\|'cas'\|'kite_stocks'\|'manual', owner?, positions: { [fundKey]: { units, avgCost } } }`. Yash's keep the plain id; anyone else's carries their name so two people's imports on one day never overwrite each other |
 | `trade_<date>_<id>` | a purchase or sale you recorded by hand: `{ fundKey, kind: 'buy'\|'sell', date, units, amount }` |
-| `nav_<schemeCode>_<year>` | `{ schemeCode, year, series: { 'YYYY-MM-DD': nav } }` |
-| `state` | `{ lastSync: { kite\|cas: { date, at } }, lastNavFetchAt }` |
+| `nav_<schemeCode>_<year>` | `{ schemeCode, year, series: { 'YYYY-MM-DD': nav } }`. A stock's price points live here too, under its own key `STK_<symbol>` |
+| `state` | `{ lastSync: { kite\|cas\|kite_stocks: { date, at }, 'cas:Kruti': ... }, lastNavFetchAt }`; Yash keeps the plain key, anyone else's is `<place>:<Name>` |
 
 A later snapshot replaces earlier positions only for the funds it lists, so a Kite sync (Zerodha funds) leaves the
 funds held elsewhere (CAS) as they were. A fund held in two places (same ISIN, two folios) is two catalog entries
 with the same `schemeCode` and `holdingsKey`.
+
+## Whose holdings
+
+More than one person can hold something (Yash, and Kruti). Everything is still one portfolio: an `owner` on each catalog fund says
+whose it is, and a missing `owner` means Yash, so nothing imported before a second person existed needed migrating. Positions, trades
+and the SIP plan are keyed by fund, so they already know whose they are. Two people holding the same fund are two catalog entries
+under their own keys that share a `schemeCode` and `holdingsKey` (one NAV history, one overlap entry).
+
+- **The tab** has a **Combined | Yash | Kruti** switcher (only drawn when more than one person holds anything), remembered on the
+  device and falling back to Combined if the remembered person is gone. Every card computes from the funds in view
+  (`fundsForView`, `planForFunds`): summary, charts, allocation, limits, overlap, what-if, projection and the Nifty comparison. The
+  history's trading days come from everyone's funds (`calendarFunds`), so one person's line sits on the same dates as the combined one.
+- **Sync** is per person (`computeSyncStatus`): a combined view is only as fresh as its stalest part, a reminder names whose
+  holdings are stale, and a place nobody in the view uses gets no tile and no reminder.
+- **Import** has a **Whose Holdings** choice (a file that names an `owner` selects it; a different choice is refused, and so is a name
+  that is not one of the people). An import never overwrites someone else's data: a catalog replaces only that person's funds
+  (`mergeCatalog`, which also refuses a key already used by someone else), overlap is added by fund (`mergeOverlap`), a SIP plan
+  becomes a dated change that keeps the schedule and the other person's amounts (`mergeSipPlan`; the very first plan is stored plainly
+  as before), a Kite list maps an ISIN only to the chosen person's fund, and a position naming another person's fund is refused.
+  `buildImportWrites` works all of that out as plain data and `importPortfolioSnapshot` only writes it.
+
+## Stocks
+
+A catalog entry with `kind: 'stock'` is a share held directly (`symbol`, `exchange`, `isin`, `sector`, `group` for where it is held).
+Mutual funds behave exactly as before; a stock differs in these ways:
+
+- **Priced at each import.** There is no price feed to ask from a static site, so every import carries a price (Kite's `last_price`,
+  or a `prices` map in a file) and saves it as a price point under `STK_<symbol>` in the NAV store. Between imports the price is the
+  last one, labelled "price at import", and the stock has no day change and no daily P&L. Before its first price a stock is left out
+  of value and put-in alike. The NAV fetch never asks about stocks, and a stock never sets the NAV date or the trading days.
+- **No SIP.** The SIP editor and the what-if card list funds only; between imports a stock's shares are only changed by trades you
+  record (which need both the number of shares and the amount paid, since there is no price to work one from the other).
+- **Kite stocks import** (`source: 'kite_stocks'`): a Kite equity holdings list (rows with an `exchange`) maps by ISIN to that person's
+  Zerodha stocks. It is the **complete** list for that person's Zerodha stocks, so a stock missing from it has been sold and is set to
+  zero (the preview lists them first; a stock held elsewhere is never touched). A stock with no price is refused. New stocks must be in
+  the catalog (a setup-style file with a `catalog` adds them, each needing a `symbol`).
+- **Concentration** counts a direct stock as 100% of its own company under the id the funds' disclosures use (`stockId`, default the
+  symbol): Largest Single Stock, the Adani group and "stocks you own several ways" include it. Fund house, category and "largest single
+  fund" are about funds only, and the benchmark table and Nifty lines skip stocks.
+- **Allocation** gains a **Type** view (mutual funds / stocks); a stock's category is its sector and its fund house is "Direct stocks".
+- A stock held at another place (not Zerodha) is entered by hand through a `manual` file, which is not a complete list.
+- Limits: splits and bonus issues are not adjusted for in a stock's history (it is drawn from snapshot shares), and dividends are not
+  captured.
 
 ## How the numbers stay current
 
@@ -89,7 +132,7 @@ All of these use the same holdings, NAVs and overlap data, and fold on a phone l
   three cases and the money put in (always in future rupees). It is not a forecast.
 - **Hide amounts.** One switch (remembered on this device) that turns every rupee amount and unit count on the tab
   into dots; percentages stay.
-- **Export CSV (Settings).** The holdings table as a CSV (a download on the website, the share sheet on a phone).
+- **Export CSV (Settings).** The holdings table (with an Owner column) as a CSV (a download on the website, the share sheet on a phone).
 
 Daily P&L uses the units held at the previous close, so a day's own SIP purchase never counts as profit. The value
 chart before the first snapshot assumes that snapshot's units (it says so under the chart).
