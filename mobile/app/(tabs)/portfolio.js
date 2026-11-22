@@ -8,6 +8,7 @@ import Card from '../../components/Card';
 import PortfolioSummary from '../../components/PortfolioSummary';
 import PortfolioSyncCard from '../../components/PortfolioSyncCard';
 import PortfolioImport from '../../components/PortfolioImport';
+import PortfolioTradeForm from '../../components/PortfolioTradeForm';
 import PortfolioFundList from '../../components/PortfolioFundList';
 import PortfolioOverlap from '../../components/PortfolioOverlap';
 import { DailyPnlChart, ValueChart } from '../../components/PortfolioCharts';
@@ -18,6 +19,7 @@ function PortfolioScreen() {
   // Same rule as the other tabs: above 1024px there is a side rail and the charts stay open; on a phone they fold.
   const isWide = width >= 1024;
   const [importing, setImporting] = useState(false);
+  const [trading, setTrading] = useState(false);
 
   const sync = (
     <PortfolioSyncCard
@@ -25,13 +27,29 @@ function PortfolioScreen() {
       backfill={p.backfill}
       estimatedCount={p.portfolio.estimatedCount}
       hasSetup={p.hasSetup}
+      nudges={p.nudges}
       onImport={() => setImporting(true)}
+      onTrade={() => setTrading(true)}
       onRefreshNavs={p.refreshNavs}
     />
   );
-  const importCard = importing ? (
-    <PortfolioImport funds={p.funds} snapshots={p.snapshots} navByCode={p.navByCode} sipPlan={p.sipPlan} onClose={() => setImporting(false)} />
-  ) : null;
+  const importCard = (
+    <>
+      {importing ? (
+        <PortfolioImport
+          funds={p.funds}
+          snapshots={p.snapshots}
+          navByCode={p.navByCode}
+          sipPlan={p.sipPlan}
+          trades={p.trades}
+          onClose={() => setImporting(false)}
+        />
+      ) : null}
+      {trading ? (
+        <PortfolioTradeForm funds={p.funds} navByCode={p.navByCode} rows={p.portfolio.rows} trades={p.trades} onClose={() => setTrading(false)} />
+      ) : null}
+    </>
+  );
 
   let body;
   if (p.loading) {

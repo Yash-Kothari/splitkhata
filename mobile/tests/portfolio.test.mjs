@@ -23,6 +23,8 @@ import {
   computeOverlap,
   computeMix,
   formatRupeesCompact,
+  buildTrade,
+  syncNudges,
 } from '../lib/portfolio.js';
 
 // Two made-up funds, nothing here is real data.
@@ -288,4 +290,107 @@ test('formatRupeesCompact reads in lakh and crore', () => {
   assert.equal(formatRupeesCompact(950), '₹950');
   assert.equal(formatRupeesCompact(-164000), '-₹1.64L');
   assert.equal(formatRupeesCompact(-45000), '-₹45k');
+});
+
+// ---------- recorded trades ----------
+
+const POS = { units: 100, avgCost: 8, date: '2026-11-18' };
+
+test('estimateHolding: a recorded purchase adds units and cost after the snapshot date', () => {
+  const h = estimateHolding(POS, NAV[1], 0, '2026-11-20', [{ fundKey: 'A', kind: 'buy', date: '2026-11-19', units: 5, amount: 60 }]);
+  assert.equal(h.units, 105);
+  assert.equal(h.cost, 860);
+  assert.equal(h.tradeCount, 1);
+  assert.equal(h.estimated, true);
+});
+
+test('estimateHolding: a sale takes units out at the running average cost, leaving the average unchanged', () => {
+  const h = estimateHolding(POS, NAV[1], 0, '2026-11-20', [{ fundKey: 'A', kind: 'sell', date: '2026-11-19', units: 20, amount: 240 }]);
+  assert.equal(h.units, 80);
+  assert.equal(h.cost, 640); // 800 - 20 x 8
+  assert.equal(h.avgCost, 8);
+  const all = estimateHolding(POS, NAV[1], 0, '2026-11-20', [{ fundKey: 'A', kind: 'sell', date: '2026-11-19', units: 500, amount: 0 }]);
+  assert.deepEqual([all.units, all.cost], [0, 0], 'a sale larger than the holding stops at zero');
+});
+
+test('estimateHolding: trades dated on or before the snapshot are already in it', () => {
+  const trades = [
+    { fundKey: 'A', kind: 'buy', date: '2026-11-18', units: 5, amount: 60 },
+    { fundKey: 'A', kind: 'buy', date: '2026-11-17', units: 5, amount: 60 },
+  ];
+  assert.equal(estimateHolding(POS, NAV[1], 0, '2026-11-20', trades).units, 100);
+});
+
+test('computePortfolio: recorded trades change the holding, and the day P&L uses what was held the day before', () => {
+  const sell = [{ fundKey: 'A', kind: 'sell', date: '2026-11-20', units: 20, amount: 260 }];
+  const p = computePortfolio({ funds: [FUNDS[0]], snapshots: SNAP, navByCode: NAV, trades: sell });
+  const a = p.rows[0];
+  assert.equal(a.units, 80);
+  assert.equal(a.value, 1040);
+  assert.equal(a.pnl, 400); // 1040 - 640
+  assert.equal(a.day, 100, 'the 20th sale does not reduce the 19th -> 20th move');
+  assert.equal(a.tradeCount, 1);
+  // A trade dated after the newest NAV still counts today.
+  const later = computePortfolio({ funds: [FUNDS[0]], snapshots: SNAP, navByCode: NAV, trades: [{ fundKey: 'A', kind: 'buy', date: '2026-11-21', units: 5, amount: 65 }] });
+  assert.equal(later.rows[0].units, 105);
+  // A trade for another fund is ignored.
+  assert.equal(computePortfolio({ funds: [FUNDS[0]], snapshots: SNAP, navByCode: NAV, trades: [{ fundKey: 'B', kind: 'buy', date: '2026-11-20', units: 5, amount: 600 }] }).rows[0].units, 100);
+});
+
+test('computeHistory: a trade changes the units from its date', () => {
+  const h = computeHistory({ funds: [FUNDS[0]], snapshots: SNAP, navByCode: NAV, trades: [{ fundKey: 'A', kind: 'buy', date: '2026-11-19', units: 5, amount: 60 }], days: 10 });
+  assert.deepEqual(h.value, [1000, 1100, 105 * 12, 105 * 13]);
+  assert.deepEqual(h.day, [0, 100, 100, 105]);
+});
+
+test('diffForPreview counts recorded trades in the estimate it compares against', () => {
+  const rows = diffForPreview({
+    funds: FUNDS,
+    snapshots: SNAP,
+    navByCode: NAV,
+    trades: [{ fundKey: 'A', kind: 'sell', date: '2026-11-19', units: 20, amount: 240 }],
+    next: { A: { units: 80, avgCost: 8 } },
+    asOf: '2026-11-20',
+  });
+  assert.equal(rows[0].estimatedUnits, 80);
+  assert.equal(rows[0].drift, 0);
+});
+
+test('buildTrade: units come from the amount and the NAV on or before the date, and the reverse', () => {
+  const ctx = { funds: FUNDS, navByCode: NAV, today: '2026-11-22' };
+  const byAmount = buildTrade({ ...ctx, fundKey: 'A', kind: 'buy', date: '2026-11-20', amount: 1300 });
+  assert.deepEqual(byAmount.trade, { fundKey: 'A', kind: 'buy', date: '2026-11-20', units: 100, amount: 1300 });
+  assert.deepEqual(byAmount.nav, { date: '2026-11-20', value: 13 });
+  const weekend = buildTrade({ ...ctx, fundKey: 'A', kind: 'buy', date: '2026-11-21', amount: 130 });
+  assert.equal(weekend.trade.units, 10, 'a Saturday uses Friday NAV');
+  const byUnits = buildTrade({ ...ctx, fundKey: 'A', kind: 'sell', date: '2026-11-19', units: 10 });
+  assert.equal(byUnits.trade.amount, 120);
+  const both = buildTrade({ ...ctx, fundKey: 'A', kind: 'buy', date: '2026-11-19', units: 9.5, amount: 100 });
+  assert.deepEqual([both.trade.units, both.trade.amount], [9.5, 100], 'typed values win over the NAV');
+});
+
+test('buildTrade: clear errors', () => {
+  const ctx = { funds: FUNDS, navByCode: NAV, today: '2026-11-22' };
+  assert.match(buildTrade({ ...ctx, fundKey: 'Z', kind: 'buy', date: '2026-11-20', amount: 1 }).error, /Pick a fund/);
+  assert.match(buildTrade({ ...ctx, fundKey: 'A', kind: 'hold', date: '2026-11-20', amount: 1 }).error, /bought or sold/);
+  assert.match(buildTrade({ ...ctx, fundKey: 'A', kind: 'buy', date: 'x', amount: 1 }).error, /date/);
+  assert.match(buildTrade({ ...ctx, fundKey: 'A', kind: 'buy', date: '2026-11-23', amount: 1 }).error, /future/);
+  assert.match(buildTrade({ ...ctx, fundKey: 'A', kind: 'buy', date: '2026-11-20' }).error, /amount or the units/);
+  assert.match(buildTrade({ ...ctx, fundKey: 'A', kind: 'buy', date: '2026-01-01', amount: 100 }).error, /no NAV/);
+  assert.match(buildTrade({ ...ctx, fundKey: 'A', kind: 'buy', date: '2026-01-01', units: 1 }).error, /no NAV/);
+  assert.equal(buildTrade({ ...ctx, fundKey: 'A', kind: 'sell', date: '2026-01-01', units: 1 }).trade.amount, 0, 'a sale with no NAV keeps the typed units');
+  assert.match(buildTrade({ ...ctx, fundKey: 'A', kind: 'sell', date: '2026-11-20', units: 50, heldUnits: 40 }).error, /fewer than this sale/);
+  assert.equal(buildTrade({ ...ctx, fundKey: 'A', kind: 'sell', date: '2026-11-20', units: 40, heldUnits: 40 }).ok, true);
+});
+
+test('syncNudges: Kite after a week, CAS after about a month, nothing before setup', () => {
+  const sync = (kite, cas) => ({ kite: { level: kite[0], days: kite[1] }, cas: { level: cas[0], days: cas[1] } });
+  assert.deepEqual(syncNudges({ hasSetup: false, sync: sync(['never', null], ['never', null]) }), []);
+  assert.deepEqual(syncNudges({ hasSetup: true, sync: sync(['fresh', 0], ['stale', 20]) }), []);
+  assert.deepEqual(syncNudges({ hasSetup: true, sync: sync(['stale', 5], ['never', null]) }), [], 'up to a week is covered by SIP estimates');
+  const old = syncNudges({ hasSetup: true, sync: sync(['old', 9], ['old', 40]) });
+  assert.deepEqual(old.map((n) => n.key), ['kite', 'cas']);
+  assert.match(old[0].text, /9 days ago/);
+  assert.match(old[1].text, /40 days ago/);
+  assert.match(syncNudges({ hasSetup: true, sync: sync(['never', null], ['never', null]) })[0].text, /not been synced/);
 });

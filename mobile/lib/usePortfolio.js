@@ -12,6 +12,7 @@ import {
   computeOverlap,
   computeMix,
   classifySync,
+  syncNudges,
 } from './portfolio';
 
 // The public AMFI mirror. NAVs are free and keyless; only the fund's scheme code is ever sent.
@@ -80,9 +81,18 @@ export default function usePortfolio() {
   const navByCode = useMemo(() => buildNavByCode(docs), [docs]);
   const sipPlan = useMemo(() => docs?.sip?.plan || {}, [docs]);
   const overlapData = docs?.overlap || null;
+  // Newest first, for the list under the trade form.
+  const trades = useMemo(
+    () =>
+      Object.entries(docs || {})
+        .filter(([id]) => id.startsWith('trade_'))
+        .map(([id, d]) => ({ id, fundKey: d.fundKey, kind: d.kind, date: d.date, units: Number(d.units), amount: Number(d.amount) }))
+        .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)),
+    [docs],
+  );
 
-  const portfolio = useMemo(() => computePortfolio({ funds, snapshots, navByCode, sipPlan }), [funds, snapshots, navByCode, sipPlan]);
-  const history = useMemo(() => computeHistory({ funds, snapshots, navByCode, sipPlan, days: 90 }), [funds, snapshots, navByCode, sipPlan]);
+  const portfolio = useMemo(() => computePortfolio({ funds, snapshots, navByCode, sipPlan, trades }), [funds, snapshots, navByCode, sipPlan, trades]);
+  const history = useMemo(() => computeHistory({ funds, snapshots, navByCode, sipPlan, trades, days: 90 }), [funds, snapshots, navByCode, sipPlan, trades]);
   const overlap = useMemo(() => (overlapData ? computeOverlap(overlapData, portfolio.rows) : null), [overlapData, portfolio.rows]);
   const mix = useMemo(() => computeMix(portfolio.rows), [portfolio.rows]);
 
@@ -100,6 +110,9 @@ export default function usePortfolio() {
       nav: classifySync(portfolio.navDate || null, today),
     };
   }, [docs, snapshots, portfolio.navDate, today]);
+
+  const hasSetup = funds.length > 0;
+  const nudges = useMemo(() => syncNudges({ sync, hasSetup }), [sync, hasSetup]);
 
   const runBackfill = useCallback(
     async (force = false) => {
@@ -147,9 +160,11 @@ export default function usePortfolio() {
 
   return {
     loading: docs === null,
-    hasSetup: funds.length > 0,
+    hasSetup,
     funds,
     snapshots,
+    trades,
+    nudges,
     navByCode,
     sipPlan,
     portfolio,

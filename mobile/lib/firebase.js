@@ -841,6 +841,7 @@ export function subscribeToPaymentReminderConfig(callback) {
 //   catalog / overlap / sip      the fund list, top holdings for the overlap view, the daily SIP plan
 //   state                        { lastSync: { kite|cas|manual: { date, at } }, lastNavFetchAt }
 //   snap_<date>_<source>         one imported snapshot of units and average cost per fund
+//   trade_<date>_<id>            a purchase or sale you recorded by hand: { fundKey, kind, date, units, amount }
 //   nav_<schemeCode>_<year>      { series: { 'YYYY-MM-DD': nav } }, filled in by the app from the AMFI mirror
 // Holdings are only ever imported by the signed-in user from the Portfolio tab; nothing else writes here.
 const portfolioRef = () => col('portfolio');
@@ -878,6 +879,18 @@ export async function savePortfolioNavs(schemeCode, byYear) {
     batch.set(docAt('portfolio', `nav_${schemeCode}_${year}`), { schemeCode: String(schemeCode), year: Number(year), series }, { merge: true });
   });
   await track(batch.commit(), 'Could not save NAVs');
+}
+
+// A purchase or sale made outside the SIPs. It counts from the day after the latest snapshot, so the next sync
+// (which already contains it) never double-counts it.
+export async function addPortfolioTrade(trade) {
+  const id = `trade_${trade.date}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  await track(setDoc(docAt('portfolio', id), { ...trade, createdAt: serverTimestamp() }), 'Could not save the trade');
+  return id;
+}
+
+export async function deletePortfolioTrade(id) {
+  await track(deleteDoc(docAt('portfolio', id)), 'Could not delete the trade');
 }
 
 export async function markPortfolioNavFetched() {
