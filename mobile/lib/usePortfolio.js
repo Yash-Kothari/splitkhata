@@ -58,7 +58,7 @@ function latestDate(snapshots, source) {
 // date already stored and fetches only the days since, writing them back so the next open starts from there.
 export default function usePortfolio() {
   const [docs, setDocs] = useState(null);
-  const [backfill, setBackfill] = useState({ running: false, done: 0, total: 0, failed: 0, lastRunAt: null });
+  const [backfill, setBackfill] = useState({ running: false, done: 0, total: 0, failed: 0, updated: 0, manual: false, lastRunAt: null });
   const startedRef = useRef(false);
 
   useEffect(
@@ -119,34 +119,43 @@ export default function usePortfolio() {
       if (!docs || funds.length === 0) return;
       const lastFetch = docs.state?.lastNavFetchAt?.toMillis?.() ?? 0;
       if (!force && Date.now() - lastFetch < MIN_RECHECK_MS) return;
-      const plan = planNavFetch(funds, navByCode, todayISO());
+      const today = todayISO();
+      // A manual check asks for anything newer than what is stored; the automatic one only for what should be out by now.
+      const plan = planNavFetch(funds, navByCode, today, 400, force ? today : undefined);
       if (plan.length === 0) {
-        if (force) markPortfolioNavFetched().catch((err) => reportError(err, 'Could not save the NAV check time'));
+        if (force) {
+          markPortfolioNavFetched().catch((err) => reportError(err, 'Could not save the NAV check time'));
+          setBackfill({ running: false, done: 0, total: 0, failed: 0, updated: 0, manual: true, lastRunAt: Date.now() });
+        }
         return;
       }
-      setBackfill({ running: true, done: 0, total: plan.length, failed: 0, lastRunAt: null });
+      setBackfill({ running: true, done: 0, total: plan.length, failed: 0, updated: 0, manual: force, lastRunAt: null });
       const queue = [...plan];
       let done = 0;
       let failed = 0;
+      let updated = 0;
       const worker = async () => {
         for (let item = queue.shift(); item; item = queue.shift()) {
           try {
             const series = await fetchScheme(item.schemeCode, item.from, todayISO());
             const { byYear, count } = newNavPointsByYear(series, item.from, todayISO());
-            if (count > 0) await savePortfolioNavs(item.schemeCode, byYear);
+            if (count > 0) {
+              await savePortfolioNavs(item.schemeCode, byYear);
+              updated += 1;
+            }
           } catch (err) {
             failed += 1;
             if (failed === 1) reportError(err, 'Could not fetch the latest NAVs');
           }
           done += 1;
-          setBackfill((b) => ({ ...b, done, failed }));
+          setBackfill((b) => ({ ...b, done, failed, updated }));
           await sleep(250);
         }
       };
       await Promise.all(Array.from({ length: Math.min(CONCURRENCY, plan.length) }, worker));
       // A failed run is not marked as checked, so the next open tries again.
       if (failed === 0) await markPortfolioNavFetched().catch((err) => reportError(err, 'Could not save the NAV check time'));
-      setBackfill({ running: false, done, total: plan.length, failed, lastRunAt: Date.now() });
+      setBackfill({ running: false, done, total: plan.length, failed, updated, manual: force, lastRunAt: Date.now() });
     },
     [docs, funds, navByCode],
   );

@@ -95,6 +95,19 @@ test('planNavFetch asks only for what is missing and de-duplicates a scheme held
   assert.deepEqual(planNavFetch([{ key: 'x' }], {}, '2026-11-23'), [], 'a fund with no scheme code is skipped');
 });
 
+test('planNavFetch: a manual check asks for anything newer than stored, not just up to the previous weekday', () => {
+  // Sunday 22 Nov: the newest NAV that should exist is Friday 20 Nov, which scheme 1 already has.
+  const navByCode = { 1: NAV[1], 2: NAV[2] };
+  assert.deepEqual(planNavFetch(FUNDS, navByCode, '2026-11-22'), [], 'the automatic check has nothing to do');
+  assert.deepEqual(
+    planNavFetch(FUNDS, navByCode, '2026-11-22', 400, '2026-11-22').map((p) => [p.schemeCode, p.from]),
+    [['1', '2026-11-21'], ['2', '2026-11-21']],
+    'a manual check looks from the day after what is stored',
+  );
+  // A scheme already holding today's NAV is skipped even by a manual check.
+  assert.deepEqual(planNavFetch([FUNDS[0]], { 1: [...NAV[1], ['2026-11-22', 14]] }, '2026-11-22', 400, '2026-11-22'), []);
+});
+
 test('newNavPointsByYear keeps only new dates, grouped by year', () => {
   const series = [['2025-12-31', 1], ['2026-01-02', 2], ['2026-01-03', 3], ['2026-11-30', 4]];
   const { byYear, count } = newNavPointsByYear(series, '2026-01-01', '2026-06-01');

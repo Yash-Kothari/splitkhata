@@ -134,10 +134,11 @@ export function lastNavDate(series) {
   return series?.length ? series[series.length - 1][0] : null;
 }
 
-// Which schemes need NAVs fetched, and from when. A scheme is current when its newest NAV is at least the previous
-// weekday's. With nothing stored yet it asks for `historyDays` of history.
-export function planNavFetch(funds, navByCode, today, historyDays = 400) {
-  const expected = previousWeekday(today);
+// Which schemes need NAVs fetched, and from when. A scheme is current when its newest NAV is at least `expected`,
+// by default the previous weekday's (the newest one that should be published). A manual check passes today's date
+// as `expected` instead, so it asks for anything newer than what is stored. With nothing stored yet it asks for
+// `historyDays` of history.
+export function planNavFetch(funds, navByCode, today, historyDays = 400, expected = previousWeekday(today)) {
   const seen = new Set();
   const plan = [];
   for (const f of funds || []) {

@@ -85,6 +85,13 @@ export default function PortfolioSyncCard({ sync, backfill, estimatedCount, hasS
           Units bought since {formatShortDate(sync.kiteDate)} are estimated from your SIP plan until the next Kite sync.
         </Text>
       ) : null}
+      {backfill.manual && backfill.lastRunAt && !backfill.running && backfill.failed === 0 ? (
+        <Text className="font-body text-xs text-muted-text mt-2">
+          {backfill.updated > 0
+            ? `Checked just now: new NAVs found for ${backfill.updated} fund${backfill.updated === 1 ? '' : 's'}.`
+            : 'Checked just now: no newer NAVs have been published. Funds publish in the evening, and not on market holidays or weekends.'}
+        </Text>
+      ) : null}
       {backfill.failed > 0 && !backfill.running ? (
         <Text className="font-body text-xs text-stamp-red mt-2">
           {backfill.failed} fund{backfill.failed === 1 ? '' : 's'} could not be updated. Tap Check NAVs to try again.
