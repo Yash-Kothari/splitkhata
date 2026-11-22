@@ -6,7 +6,6 @@ import { formatShortDate } from '../lib/portfolio';
 import PortfolioShell from './PortfolioShell';
 import PortfolioSipEditor from './PortfolioSipEditor';
 import PortfolioImport from './PortfolioImport';
-import PortfolioBenchmarkTool from './PortfolioBenchmarkTool';
 import { PortfolioLimitsEditor } from './PortfolioLimits';
 import { NavCheckResult } from './PortfolioSyncCard';
 
@@ -71,8 +70,6 @@ export function PortfolioSettingsData() {
         sipSchedule={p.sipSchedule}
         trades={p.trades}
       />
-
-      <PortfolioBenchmarkTool benchmark={p.benchmark} hasSetup={p.hasSetup} />
 
       {p.hasSetup ? (
         <PortfolioShell

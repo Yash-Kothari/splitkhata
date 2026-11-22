@@ -903,25 +903,6 @@ export function computeRelativeLines({ rows, navByCode, benchmarkCode, days }) {
   return { dates, benchmark: line(bench), funds, hasBenchmark: true };
 }
 
-// ONE-OFF TOOL (remove with PortfolioBenchmarkTool once the benchmark is saved): turns pasted text into the benchmark the
-// catalog should name. It takes `{ schemeCode, name }`, or a setup file and reads only `catalog.benchmark` (or `benchmark`)
-// out of it, so no holding in a pasted file is ever looked at or saved.
-export function parseBenchmarkInput(text) {
-  let json;
-  try {
-    json = JSON.parse(String(text || '').trim());
-  } catch {
-    return { ok: false, error: 'That is not valid JSON. Paste the benchmark file, or the setup file.' };
-  }
-  const found = json && typeof json === 'object' ? (json.catalog?.benchmark ?? json.benchmark ?? (json.schemeCode != null ? json : null)) : null;
-  if (!found || typeof found !== 'object') return { ok: false, error: 'No benchmark found. Expected { "schemeCode": "...", "name": "..." }.' };
-  const schemeCode = String(found.schemeCode ?? '').trim();
-  const name = String(found.name ?? '').trim();
-  if (!/^\d{3,8}$/.test(schemeCode)) return { ok: false, error: 'The scheme code should be the fund\'s number on mfapi.in (digits only).' };
-  if (!name || name.length > 120) return { ok: false, error: 'The benchmark needs a name (up to 120 characters).' };
-  return { ok: true, benchmark: { schemeCode, name } };
-}
-
 // ---------- long-horizon illustration ----------
 
 // What a corpus could grow to if it earned `annualReturnPct` a year (compounded monthly) with `monthlySip` added at each
