@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { View, Text, TextInput, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, Pressable, ActivityIndicator, Platform } from 'react-native';
 import Card from './Card';
 import DateField from './DateField';
 import { importPortfolioSnapshot } from '../lib/firebase';
@@ -13,9 +13,36 @@ const input = 'font-mono text-xs text-ink border border-ink/15 rounded-xl px-3 p
 
 const units = (n) => (n == null ? '-' : Number(n).toLocaleString('en-IN', { maximumFractionDigits: 3 }));
 
+// Website only: a phone pastes with a long press in the box (and has no file picker without a new dependency).
+// Both resolve to the text, or null when the browser refuses or the user cancels.
+async function readClipboardText() {
+  try {
+    return await navigator.clipboard.readText();
+  } catch {
+    return null;
+  }
+}
+
+function pickTextFile() {
+  return new Promise((resolve) => {
+    const el = document.createElement('input');
+    el.type = 'file';
+    el.accept = '.json,.txt,application/json,text/plain';
+    el.onchange = () => {
+      const file = el.files?.[0];
+      if (!file) return resolve(null);
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => resolve(null);
+      reader.readAsText(file);
+    };
+    el.click();
+  });
+}
+
 // Paste what you were given, see exactly what will change, then confirm. This is the only way holdings reach the
 // database: the signed-in user presses Confirm here (see docs/PORTFOLIO.md).
-export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, onClose }) {
+export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, trades = [], onClose }) {
   const [text, setText] = useState('');
   const [asOf, setAsOf] = useState(todayISO());
   const [saving, setSaving] = useState(false);
@@ -33,10 +60,22 @@ export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, 
       snapshots,
       navByCode,
       sipPlan: p.sipPlan || sipPlan,
+      trades,
       next: p.positions,
       asOf: p.asOf,
     });
-  }, [parsed, funds, snapshots, navByCode, sipPlan]);
+  }, [parsed, funds, snapshots, navByCode, sipPlan, trades]);
+
+  async function handlePaste() {
+    const clip = await readClipboardText();
+    if (clip && clip.trim()) setText(clip);
+    else notify('Nothing pasted', 'The clipboard is empty, or the browser did not allow reading it. Paste into the box instead.');
+  }
+
+  async function handlePickFile() {
+    const content = await pickTextFile();
+    if (content) setText(content);
+  }
 
   async function handleConfirm() {
     if (!parsed?.ok) return;
@@ -63,6 +102,17 @@ export default function PortfolioImport({ funds, snapshots, navByCode, sipPlan, 
       <View className="mb-3" style={{ maxWidth: 200 }}>
         <DateField value={asOf} onChange={setAsOf} className={input} />
       </View>
+
+      {Platform.OS === 'web' ? (
+        <View className="flex-row flex-wrap gap-2 mb-2">
+          <Pressable onPress={handlePaste} className="min-h-9 px-3.5 rounded-lg border border-ink/15 bg-paper items-center justify-center">
+            <Text className="font-body-semibold text-xs text-ink">Paste from clipboard</Text>
+          </Pressable>
+          <Pressable onPress={handlePickFile} className="min-h-9 px-3.5 rounded-lg border border-ink/15 bg-paper items-center justify-center">
+            <Text className="font-body-semibold text-xs text-ink">Choose file</Text>
+          </Pressable>
+        </View>
+      ) : null}
 
       <TextInput
         value={text}

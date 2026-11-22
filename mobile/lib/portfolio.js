@@ -189,27 +189,52 @@ function cumulativeSipUnits(series, amount) {
   return cum;
 }
 
-// Units and cost a fund holds on `asOf`: the position at its snapshot, plus what the daily SIP would have bought
-// on each NAV date after it. `estimated` is true when any SIP day was added.
-export function estimateHolding(position, series, sipAmount, asOf) {
+// Units and cost a fund holds on `asOf`: the position at its snapshot, plus what the daily SIP would have bought on
+// each NAV date after it, plus the trades you recorded after it (a trade dated on or before the snapshot is already
+// in the snapshot). A sale takes units out at the running average cost, so it leaves the average cost unchanged.
+// `estimated` is true when anything after the snapshot was added.
+export function estimateHolding(position, series, sipAmount, asOf, trades = []) {
   if (!position) return null;
   let units = position.units;
   let cost = position.units * position.avgCost;
   let sipDays = 0;
+  let tradeCount = 0;
+  const events = [];
   if (sipAmount > 0 && series?.length) {
-    for (const [d, nav] of series) {
-      if (d > position.date && d <= asOf) {
-        units += sipAmount / nav;
-        cost += sipAmount;
-        sipDays += 1;
+    for (const [d, nav] of series) if (d > position.date && d <= asOf) events.push({ d, order: 1, sip: sipAmount / nav });
+  }
+  for (const t of trades || []) if (t.date > position.date && t.date <= asOf) events.push({ d: t.date, order: 0, trade: t });
+  events.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : a.order - b.order));
+  for (const e of events) {
+    if (e.trade) {
+      const t = e.trade;
+      if (t.kind === 'sell') {
+        const sold = Math.min(t.units, units);
+        cost -= units > 0 ? (cost / units) * sold : 0;
+        units -= sold;
+      } else {
+        units += t.units;
+        cost += t.amount;
       }
+      tradeCount += 1;
+    } else {
+      units += e.sip;
+      cost += sipAmount;
+      sipDays += 1;
     }
   }
-  return { units, cost, avgCost: units > 0 ? cost / units : position.avgCost, estimated: sipDays > 0, sipDays };
+  return {
+    units,
+    cost,
+    avgCost: units > 0 ? cost / units : position.avgCost,
+    estimated: sipDays > 0 || tradeCount > 0,
+    sipDays,
+    tradeCount,
+  };
 }
 
 // Per-fund rows and totals as of the newest NAV on hand.
-export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {} }) {
+export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, trades = [] }) {
   const positions = latestPositions(snapshots);
   const rows = [];
   for (const f of funds || []) {
@@ -218,8 +243,10 @@ export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {} }) 
     if (!pos || series.length === 0) continue;
     const [navDate, nav] = series[series.length - 1];
     const prev = series.length > 1 ? series[series.length - 2] : series[series.length - 1];
-    const h = estimateHolding(pos, series, sipPlan[f.key] || 0, navDate);
-    const before = estimateHolding(pos, series, sipPlan[f.key] || 0, prev[0]);
+    const mine = (trades || []).filter((t) => t.fundKey === f.key);
+    // Today's holding includes a trade made after the newest NAV; the day's P&L is on what was held at the prior close.
+    const h = estimateHolding(pos, series, sipPlan[f.key] || 0, '9999-12-31', mine);
+    const before = estimateHolding(pos, series, sipPlan[f.key] || 0, prev[0], mine);
     const value = h.units * nav;
     const day = before.units * (nav - prev[1]);
     rows.push({
@@ -237,6 +264,7 @@ export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {} }) 
       dayPct: prev[1] > 0 ? (nav / prev[1] - 1) * 100 : 0,
       estimated: h.estimated,
       sipDays: h.sipDays,
+      tradeCount: h.tradeCount,
       snapshotDate: pos.date,
     });
   }
@@ -272,7 +300,7 @@ export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {} }) 
 // Portfolio value and day-over-day P&L for the last `days` trading days. Units at each date come from the nearest
 // earlier snapshot plus SIP-estimated units; before the first snapshot they are held at the first snapshot's units
 // (there is nothing earlier to go on), which `constantBefore` reports so the chart can say so.
-export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, days = 90 }) {
+export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, trades = [], days = 90 }) {
   const ordered = [...(snapshots || [])].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const live = (funds || []).filter((f) => navByCode?.[String(f.schemeCode)]?.length && ordered.some((s) => s.positions?.[f.key]));
   if (live.length === 0) return { dates: [], value: [], day: [], constantBefore: null };
@@ -288,17 +316,27 @@ export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, days
   const perFund = live.map((f) => {
     const series = navByCode[String(f.schemeCode)];
     const snaps = ordered.filter((s) => s.positions?.[f.key]);
-    return { f, series, snaps, cum: sipPlan[f.key] > 0 ? cumulativeSipUnits(series, sipPlan[f.key]) : null };
+    return {
+      f,
+      series,
+      snaps,
+      cum: sipPlan[f.key] > 0 ? cumulativeSipUnits(series, sipPlan[f.key]) : null,
+      trades: (trades || []).filter((t) => t.fundKey === f.key),
+    };
   });
 
   const unitsAt = (pf, date) => {
     let base = pf.snaps[0];
     for (const s of pf.snaps) if (s.date <= date) base = s;
-    const units = Number(base.positions[pf.f.key].units) || 0;
-    if (!pf.cum || date <= base.date) return units;
-    const to = indexOnOrBefore(pf.series, date);
-    const from = indexOnOrBefore(pf.series, base.date);
-    return units + (to > from ? pf.cum[to] - (from >= 0 ? pf.cum[from] : 0) : 0);
+    let units = Number(base.positions[pf.f.key].units) || 0;
+    if (date <= base.date) return units;
+    if (pf.cum) {
+      const to = indexOnOrBefore(pf.series, date);
+      const from = indexOnOrBefore(pf.series, base.date);
+      units += to > from ? pf.cum[to] - (from >= 0 ? pf.cum[from] : 0) : 0;
+    }
+    for (const t of pf.trades) if (t.date > base.date && t.date <= date) units += t.kind === 'sell' ? -t.units : t.units;
+    return Math.max(units, 0);
   };
 
   const value = [];
@@ -396,7 +434,7 @@ export function parseImport(text, { catalog = null, asOfDefault, today }) {
 }
 
 // Preview rows: what changes per fund, and for a fund with an estimate, how far the estimate was from reality.
-export function diffForPreview({ funds, snapshots, navByCode, sipPlan = {}, next, asOf }) {
+export function diffForPreview({ funds, snapshots, navByCode, sipPlan = {}, trades = [], next, asOf }) {
   const before = latestPositions(snapshots);
   const rows = [];
   for (const f of funds || []) {
@@ -404,7 +442,8 @@ export function diffForPreview({ funds, snapshots, navByCode, sipPlan = {}, next
     if (!incoming) continue;
     const prev = before[f.key];
     const series = navByCode?.[String(f.schemeCode)] || [];
-    const est = prev ? estimateHolding(prev, series, sipPlan[f.key] || 0, asOf) : null;
+    const mine = (trades || []).filter((t) => t.fundKey === f.key);
+    const est = prev ? estimateHolding(prev, series, sipPlan[f.key] || 0, asOf, mine) : null;
     rows.push({
       key: f.key,
       name: f.short || f.name,
@@ -494,6 +533,63 @@ export function computeMix(rows) {
   return Object.entries(by)
     .map(([label, value]) => ({ label, value, pct: total > 0 ? (value / total) * 100 : 0 }))
     .sort((a, b) => b.value - a.value);
+}
+
+// ---------- recorded trades ----------
+
+// Validates the "record a trade" form and works out what is not typed. Give the amount and the units come from the NAV
+// on or before the date; give the units and the amount does. A purchase is allotted at a business day's NAV, so for
+// an exact figure type the units from your statement. `heldUnits` stops a sale larger than what is held.
+export function buildTrade({ fundKey, kind, date, amount, units, funds, navByCode, heldUnits = null, today = null }) {
+  const fund = (funds || []).find((f) => f.key === fundKey);
+  if (!fund) return { ok: false, error: 'Pick a fund.' };
+  if (kind !== 'buy' && kind !== 'sell') return { ok: false, error: 'Choose bought or sold.' };
+  if (!isIsoDate(date)) return { ok: false, error: 'Use a date like 2026-11-21.' };
+  if (today && date > today) return { ok: false, error: 'That date is in the future.' };
+  const amt = Number(amount);
+  const typedUnits = Number(units);
+  const hasAmount = Number.isFinite(amt) && amt > 0;
+  const hasUnits = Number.isFinite(typedUnits) && typedUnits > 0;
+  if (!hasAmount && !hasUnits) return { ok: false, error: 'Enter the amount or the units.' };
+
+  const nav = navOnOrBefore(navByCode?.[String(fund.schemeCode)], date);
+  let tradeUnits = hasUnits ? typedUnits : null;
+  let tradeAmount = hasAmount ? amt : null;
+  if (tradeUnits == null) {
+    if (!nav) return { ok: false, error: 'There is no NAV on or before that date yet, so enter the units.' };
+    tradeUnits = amt / nav[1];
+  }
+  if (tradeAmount == null) {
+    if (nav) tradeAmount = typedUnits * nav[1];
+    else if (kind === 'buy') return { ok: false, error: 'There is no NAV on or before that date yet, so enter the amount.' };
+    else tradeAmount = 0;
+  }
+  tradeUnits = Math.round(tradeUnits * 1e3) / 1e3;
+  tradeAmount = Math.round(tradeAmount * 100) / 100;
+  if (kind === 'sell' && heldUnits != null && tradeUnits > heldUnits + 0.0005) {
+    return { ok: false, error: `You hold about ${Number(heldUnits).toLocaleString('en-IN', { maximumFractionDigits: 3 })} units, fewer than this sale.` };
+  }
+  return { ok: true, trade: { fundKey, kind, date, units: tradeUnits, amount: tradeAmount }, nav: nav ? { date: nav[0], value: nav[1] } : null };
+}
+
+// ---------- sync reminders ----------
+
+const CAS_DUE_DAYS = 35;
+
+// Reminders shown above the numbers. Kite holdings are due after a week (SIP estimates cover the days between); a
+// CAS is due after about a month. Nothing is said before the first setup.
+export function syncNudges({ sync, hasSetup }) {
+  if (!hasSetup || !sync) return [];
+  const out = [];
+  if (sync.kite.level === 'never') {
+    out.push({ key: 'kite', level: 'old', text: 'Zerodha holdings have not been synced yet.' });
+  } else if (sync.kite.level === 'old') {
+    out.push({ key: 'kite', level: 'old', text: `Zerodha holdings were last synced ${sync.kite.days} days ago. Units since then are SIP estimates.` });
+  }
+  if (sync.cas.level !== 'never' && sync.cas.days > CAS_DUE_DAYS) {
+    out.push({ key: 'cas', level: 'stale', text: `Funds outside Zerodha were last updated from a CAS ${sync.cas.days} days ago.` });
+  }
+  return out;
 }
 
 // ---------- display ----------
