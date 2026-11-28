@@ -2,7 +2,7 @@ import { FEATURES, IS_SHARED_EDITION } from '../lib/edition';
 import { useGroup } from '../lib/GroupContext';
 import { usePathname } from 'expo-router';
 import GroupPeople from './GroupPeople';
-import { PortfolioSettingsSip, PortfolioSettingsLimits, PortfolioSettingsData } from './PortfolioSettings';
+import { PortfolioSettingsSip, PortfolioSettingsLimits, PortfolioSettingsTargets, PortfolioSettingsData } from './PortfolioSettings';
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, Modal, ScrollView, Switch, useWindowDimensions, Platform, KeyboardAvoidingView } from 'react-native';
 import { notify, confirmAsync } from '../lib/dialogs';
@@ -189,6 +189,7 @@ const TABS = [
   { key: 'security', label: '🔒 Security PIN' },
   { key: 'portfolioSip', label: 'SIP Plan' },
   { key: 'portfolioLimits', label: 'Limits' },
+  { key: 'portfolioTargets', label: 'Targets & Tax' },
   { key: 'portfolioData', label: 'Import & Export' },
 ];
 
@@ -201,7 +202,7 @@ const ALL_TAB_GROUPS = [
   { key: 'payments', label: 'Payments & Cards', icon: '💳', description: 'Currencies, Payment Methods, Credit Cards', tabs: ['currencies', 'paymentMethods'] },
   { key: 'people', label: 'People', icon: '👥', description: 'Household Members', tabs: ['members'] },
   { key: 'data', label: 'Data & Backup', icon: '☁️', description: 'Sync Status & Export', tabs: ['database', 'export'] },
-  { key: 'portfolio', label: 'Portfolio', icon: '📈', description: 'SIP Plan, Limits, Import & Export', tabs: ['portfolioSip', 'portfolioLimits', 'portfolioData'] },
+  { key: 'portfolio', label: 'Portfolio', icon: '📈', description: 'SIP Plan, Limits, Targets & Tax, Import & Export', tabs: ['portfolioSip', 'portfolioLimits', 'portfolioTargets', 'portfolioData'] },
   { key: 'general', label: 'General', icon: '⚙️', description: 'Appearance & Security PIN', tabs: ['appearance', 'security'] },
 ];
 // The shared edition is Household only: no currencies / payment methods / credit cards (all travel & card features).
@@ -215,6 +216,7 @@ const TAB_ENABLED = {
   security: FEATURES.pin,
   portfolioSip: FEATURES.portfolio,
   portfolioLimits: FEATURES.portfolio,
+  portfolioTargets: FEATURES.portfolio,
   portfolioData: FEATURES.portfolio,
 };
 const GROUP_DATA_TABS = new Set(['categories', 'budgets', 'recurring', 'reminders', 'currencies', 'paymentMethods', 'members', 'database', 'export']);
@@ -2268,6 +2270,7 @@ export default function SettingsModal({ visible, onClose, initialTab = null }) {
 
           {activeTab === 'portfolioSip' && <PortfolioSettingsSip />}
           {activeTab === 'portfolioLimits' && <PortfolioSettingsLimits />}
+          {activeTab === 'portfolioTargets' && <PortfolioSettingsTargets />}
           {activeTab === 'portfolioData' && <PortfolioSettingsData />}
           {activeTab === 'export' && (
             <View className="gap-3">
