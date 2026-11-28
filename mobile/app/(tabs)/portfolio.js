@@ -55,10 +55,13 @@ const VIEW_KEY = 'portfolio_view';
 function PortfolioScreen() {
   // Whose holdings are shown (a person's name, or null for everyone together), remembered on this device.
   const [view, setView] = useState(null);
+  const [viewLoaded, setViewLoaded] = useState(false);
   useEffect(() => {
     let cancelled = false;
     getJSON(VIEW_KEY, null).then((stored) => {
-      if (!cancelled) setView(stored || null);
+      if (cancelled) return;
+      setView(stored || null);
+      setViewLoaded(true);
     });
     return () => {
       cancelled = true;
@@ -90,21 +93,31 @@ function PortfolioScreen() {
   );
 
   let body;
-  if (p.loading) {
+  // Until the remembered person has been read, show nothing but the spinner, so the tab never flashes the wrong view first.
+  if (p.loading || !viewLoaded) {
     body = (
       <View className="py-16 items-center">
         <ActivityIndicator />
       </View>
     );
   } else if (!p.hasSetup || p.portfolio.rows.length === 0) {
+    // Someone's view can be empty while the others are not (a person whose funds have no prices yet): the switcher stays, so
+    // there is always a way back to everyone.
+    const emptyView = p.hasSetup && p.owners.length > 1;
     body = (
       <View>
+        {p.owners.length > 1 ? (
+          <View className="mb-3">
+            <PortfolioPeopleSwitch owners={p.owners} view={p.view} onChange={changeView} />
+          </View>
+        ) : null}
         {sync}
         <Card className="p-4 mb-4">
           <Text className="font-display text-lg text-ink mb-1">Nothing here yet</Text>
           <Text className="font-body text-sm text-muted-text">
-            Open Settings → Portfolio → Import & export and paste the setup file to add your funds, units and SIP plan. After that, NAVs fill in by
-            themselves each time you open this tab, and a fresh Kite snapshot keeps the units exact.
+            {emptyView
+              ? `${p.view ? `${p.view} has` : 'There are'} no holdings with prices yet. NAVs fill in by themselves each time you open this tab; if this stays empty, check that the latest import for ${p.view || 'everyone'} has been confirmed in Settings.`
+              : 'Open Settings → Portfolio → Import & export and paste the setup file to add your funds, units and SIP plan. After that, NAVs fill in by themselves each time you open this tab, and a fresh Kite snapshot keeps the units exact.'}
           </Text>
         </Card>
       </View>
@@ -140,7 +153,7 @@ function PortfolioScreen() {
           wide={isWide}
           left={
             <>
-              <PortfolioAllocation rows={p.portfolio.rows} byPerson={p.owners.length > 1 && !p.view} hasStocks={p.portfolio.byKind.stocks.count > 0} collapsible={fold} defaultOpen />
+              <PortfolioAllocation key={p.view || 'all'} rows={p.portfolio.rows} byPerson={p.owners.length > 1 && !p.view} hasStocks={p.portfolio.byKind.stocks.count > 0} collapsible={fold} defaultOpen />
               <PortfolioLimits evaluated={p.evaluatedLimits} saved={p.limitsSaved} collapsible={fold} defaultOpen onEdit={() => openSettings('portfolioLimits')} />
             </>
           }
@@ -152,7 +165,7 @@ function PortfolioScreen() {
           wide={isWide}
           left={
             <PortfolioWhatIf
-              key={JSON.stringify(p.viewSipPlan)}
+              key={`whatif:${JSON.stringify(p.viewSipPlan)}`}
               portfolio={p.portfolio}
               funds={p.viewFunds}
               overlapData={p.overlapData}
@@ -162,7 +175,7 @@ function PortfolioScreen() {
               defaultOpen
             />
           }
-          right={<PortfolioProjection portfolio={p.portfolio} sipPlan={p.viewSipPlan} collapsible={fold} />}
+          right={<PortfolioProjection key={`projection:${JSON.stringify(p.viewSipPlan)}`} portfolio={p.portfolio} sipPlan={p.viewSipPlan} collapsible={fold} />}
         />
       ),
     };
@@ -186,7 +199,7 @@ function PortfolioScreen() {
         {body}
       </ScrollView>
       <PortfolioSheet visible={trading} onClose={() => setTrading(false)}>
-        <PortfolioTradeForm funds={p.viewFunds} navByCode={p.navByCode} rows={p.portfolio.rows} trades={p.viewTrades} onClose={() => setTrading(false)} />
+        <PortfolioTradeForm funds={p.viewFunds} navByCode={p.navByCode} rows={p.portfolio.rows} soldKeys={p.portfolio.soldKeys} trades={p.viewTrades} onClose={() => setTrading(false)} />
       </PortfolioSheet>
     </View>
   );

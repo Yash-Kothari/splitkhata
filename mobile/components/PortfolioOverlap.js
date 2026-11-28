@@ -67,7 +67,7 @@ export default function PortfolioOverlap({ overlap, asOfDate, collapsible = fals
             ))}
           </View>
 
-          <Label>Stocks You Own Through Several Funds</Label>
+          <Label>Stocks You Own More Than One Way</Label>
           <View className="mb-3">
             {topShared.map((s) => (
               <View key={s.stock} className="py-1.5 border-b border-ink/10">
@@ -76,12 +76,12 @@ export default function PortfolioOverlap({ overlap, asOfDate, collapsible = fals
                   <Text className="font-mono text-xs text-ink">{money(s.value)}</Text>
                   <Text className="font-mono text-2xs text-muted-text w-10 text-right">{s.pct.toFixed(1)}%</Text>
                 </View>
-                <Text className="font-body text-2xs text-muted-text">{s.funds.length} funds: {s.funds.join(', ')}</Text>
+                <Text className="font-body text-2xs text-muted-text">{s.funds.length} holdings: {s.funds.join(', ')}</Text>
               </View>
             ))}
           </View>
 
-          <Label>Funds That Overlap Most</Label>
+          {topPairs.length ? <Label>Funds That Overlap Most</Label> : null}
           {topPairs.map((p) => (
             <BarRow key={`${p.a}|${p.b}`} label={`${p.a} + ${p.b}`} right={`${p.pct.toFixed(0)}%`} pct={(p.pct / (topPairs[0].pct || 1)) * 100} />
           ))}

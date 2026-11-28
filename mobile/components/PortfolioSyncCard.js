@@ -1,6 +1,6 @@
 import { View, Text, Pressable } from 'react-native';
 import Card from './Card';
-import { formatShortDate, previousWeekday, nudgeTarget } from '../lib/portfolio';
+import { formatShortDate, previousWeekday, nudgeTarget, DEFAULT_OWNER } from '../lib/portfolio';
 import { todayISO } from '../lib/utils';
 
 // How old the data behind the numbers is, in the three places it comes from, and any reminder that something is due.
@@ -36,7 +36,7 @@ function ByOwner({ list }) {
   if (!list || list.length < 2) return null;
   return (
     <Text className="font-body text-2xs text-muted-text mt-1">
-      {[...list].sort((x, y) => x.owner.localeCompare(y.owner)).map((o) => `${o.owner} ${o.date ? formatShortDate(o.date) : 'never'}`).join(' · ')}
+      {[...list].sort((x, y) => (y.owner === DEFAULT_OWNER) - (x.owner === DEFAULT_OWNER) || x.owner.localeCompare(y.owner)).map((o) => `${o.owner} ${o.date ? formatShortDate(o.date) : 'never'}`).join(' · ')}
     </Text>
   );
 }

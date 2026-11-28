@@ -12,6 +12,8 @@ import { parseImport, diffForPreview, buildImportWrites, DEFAULT_OWNER } from '.
 
 const input = 'font-mono text-xs text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper';
 
+const plural = (n, word) => `${n} ${n === 1 ? word : `${word}s`}`;
+
 const units = (n) => (n == null ? '-' : Number(n).toLocaleString('en-IN', { maximumFractionDigits: 3 }));
 
 // Website only: a phone pastes with a long press in the box (and has no file picker without a new dependency).
@@ -153,17 +155,20 @@ export default function PortfolioImport({ funds, existing = {}, people = [DEFAUL
       {p ? (
         <View className="mt-3 rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5">
           <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text mb-1">
-            Will save {Object.keys(p.positions).length} holdings for {p.owner} from {p.source}, as of {p.asOf}
+            Will save {plural(Object.keys(p.positions).length, 'holding')} for {p.owner} from {p.source}, as of {p.asOf}
           </Text>
           {p.catalog ? (
             <Text className="font-body text-xs text-ink">
-              Fund list: {p.catalog.funds.length} funds for {p.owner}
+              Fund list: {plural(p.catalog.funds.length, 'fund')} for {p.owner}
               {parsed.summary.replacedFunds > 0 ? `, replacing ${parsed.summary.replacedFunds} they have now` : ''}
-              {parsed.summary.keptOtherFunds > 0 ? `. The other ${parsed.summary.keptOtherFunds} funds are kept as they are` : ''}
+              {parsed.summary.keptOtherFunds > 0 ? `. The other ${plural(parsed.summary.keptOtherFunds, 'fund')} ${parsed.summary.keptOtherFunds === 1 ? 'is' : 'are'} kept as ${parsed.summary.keptOtherFunds === 1 ? 'it is' : 'they are'}` : ''}
             </Text>
           ) : null}
+          {parsed.summary.dropped?.length ? (
+            <Text className="font-body text-xs text-mustard">Will leave the fund list (not in this file): {parsed.summary.dropped.join(', ')}</Text>
+          ) : null}
           {Object.keys(p.prices || {}).length ? (
-            <Text className="font-body text-xs text-ink">Prices: {Object.keys(p.prices).length} stocks, as of {p.asOf} (a stock is priced at each import)</Text>
+            <Text className="font-body text-xs text-ink">Prices: {plural(Object.keys(p.prices).length, 'stock')}, as of {p.asOf} (a stock is priced at each import)</Text>
           ) : null}
           {parsed.summary.removed?.length ? (
             <Text className="font-body text-xs text-mustard">Will be set to zero (not in this list, so sold): {parsed.summary.removed.join(', ')}</Text>

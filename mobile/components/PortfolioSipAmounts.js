@@ -26,7 +26,7 @@ export function draftToPlan(draft) {
 export default function PortfolioSipAmounts({ funds: allFunds, draft, onChange }) {
   // A stock has no SIP.
   const funds = allFunds.filter((f) => !isStock(f));
-  const { money } = usePortfolioPrivacy();
+  const { money, hidden } = usePortfolioPrivacy();
   const keys = Object.keys(draft);
   const nameOf = (k) => funds.find((f) => f.key === k)?.short || k;
   // With more than one person's funds, the amounts are listed under each person's name and the picker says whose a fund is.
@@ -54,6 +54,7 @@ export default function PortfolioSipAmounts({ funds: allFunds, draft, onChange }
                 value={draft[k]}
                 onChangeText={(t) => onChange({ ...draft, [k]: t })}
                 keyboardType="decimal-pad"
+                secureTextEntry={hidden}
                 placeholder="₹ a day"
                 aria-label={`Rupees a day for ${nameOf(k)}${who ? `, ${who}` : ''}`}
                 className={input}
