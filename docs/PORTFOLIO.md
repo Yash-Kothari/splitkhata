@@ -79,7 +79,9 @@ Mutual funds behave exactly as before; a stock differs in these ways:
    `SIP amount / NAV` units and the SIP amount to cost. Rows with such units show a "units est." chip. The next
    snapshot reconciles it, and the import preview shows the drift per fund.
 3. **The sync status card** shows the last Kite sync, the last CAS import and the newest NAV date, each with a
-   fresh (up to 1 day) / stale (up to 7) / old state, so a stale figure is never mistaken for a live one.
+   fresh (up to 1 day) / stale (up to 7) / old state, so a stale figure is never mistaken for a live one. The CAS
+   is monthly instead: fresh for the whole month it was dated or imported in, due from the 1st of the next. Values
+   and P&L of those funds still follow the latest NAVs every day.
 
 4. **Your own trades, recorded in the app.** A lump sum or a redemption outside the SIPs is the main thing that
    makes the estimate wrong. **Record a trade** takes the fund, bought or sold, the date and the amount (the units are
@@ -88,7 +90,7 @@ Mutual funds behave exactly as before; a stock differs in these ways:
    next Kite sync or CAS, which already contains it, never double-counts it. Recorded trades can be removed from the
    list under the form, and the import preview counts them in the estimate it compares against.
 5. **Reminders.** The Sync status card says so when the Kite holdings are more than 7 days old (SIP estimates cover
-   the days before that), a CAS is more than 35 days old, the overlap data (`overlap.asOfDate`) is more than 45 days
+   the days before that), no CAS has been imported or dated this month (from the 1st), the overlap data (`overlap.asOfDate`) is more than 45 days
    old, or a limit you saved is breached, with what to ask Claude for.
 
 ## Where things live
