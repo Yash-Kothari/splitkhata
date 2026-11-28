@@ -168,7 +168,9 @@ Funds held outside Zerodha come from a CAS statement (MFCentral / CAMS / KFintec
 with `pdftotext -layout`; the password is the PAN, which Claude does not need if you export it unlocked) and it writes a
 snapshot object with `source: 'cas'` and `asOf` set to the statement date, the same shape as `cas-*.json` in
 `portfolio-private/`. Import it the same way. A CAS also lists the Zerodha demat funds, which makes a handy
-cross-check of the Kite units. Claude never writes to the live database.
+cross-check of the Kite units. A fully redeemed fund drops off a CAS, so give it 0 units in the file: a held fund
+the file leaves out keeps its old units, and the import preview warns about it. Claude never writes to the live
+database.
 
 ## Gotchas
 

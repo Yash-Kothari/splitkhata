@@ -17,6 +17,9 @@ import {
   resolveInstrument,
   DEFAULT_PERSONS as PERSONS,
   computeBalance,
+  splitEntryPoints,
+  netEntryPoints,
+  parsePointsField,
   isSavableCardTxnAmount,
   describeRewardCalculation,
   classifyEntryForBalance,
@@ -49,6 +52,8 @@ import {
   setHouseholdBudgets,
   groupByCategory,
   groupByPaymentMethod,
+  getPaymentMethodEntries,
+  entryMatchesSearch,
   parseSignedAmountInput,
   getRecurringRules,
   setRecurringRules,
@@ -4496,4 +4501,92 @@ test('a ₹0 card line is savable with points redeemed (a redemption), but never
   assert.equal(isSavableCardTxnAmount(0, null, false, null), false);
   assert.equal(isSavableCardTxnAmount(0, null, true, 5000), false);
   assert.equal(isSavableCardTxnAmount(1000, null, false, 2000), true, 'money plus points is just a purchase');
+});
+
+// ---------- points on a trip entry ----------
+
+test('splitEntryPoints and netEntryPoints: the saved signed number opens as earned and redeemed, and saves back unchanged', () => {
+  // a number alone: its sign says which box (positive = spent)
+  assert.deepEqual(splitEntryPoints(500), { earned: null, redeemed: 500 });
+  assert.deepEqual(splitEntryPoints(-250), { earned: 250, redeemed: null });
+  assert.deepEqual(splitEntryPoints(null), { earned: null, redeemed: null });
+  assert.deepEqual(splitEntryPoints(''), { earned: null, redeemed: null });
+  // on a points card the card line says what was redeemed, so both figures come back
+  assert.deepEqual(splitEntryPoints(1880, 2000), { earned: 120, redeemed: 2000 });
+  assert.deepEqual(splitEntryPoints(0, 120), { earned: 120, redeemed: 120 });
+  assert.deepEqual(splitEntryPoints(2000, 2000), { earned: null, redeemed: 2000 });
+  // an old entry with points only on the card line opens from the card
+  assert.deepEqual(splitEntryPoints(null, 2000), { earned: null, redeemed: 2000 });
+  // an earned-only entry has nothing on the card
+  assert.deepEqual(splitEntryPoints(-120, null), { earned: 120, redeemed: null });
+  // a card line that disagrees (more spent than the card says) falls back to the saved number
+  assert.deepEqual(splitEntryPoints(3000, 2000), { earned: null, redeemed: 3000 });
+  assert.equal(netEntryPoints(null, null), null);
+  assert.equal(netEntryPoints(120, null), -120);
+  assert.equal(netEntryPoints(null, 2000), 2000);
+  assert.equal(netEntryPoints(120, 2000), 1880);
+  assert.equal(netEntryPoints(120, 120), 0);
+  // round trip
+  for (const [net, card] of [[500, null], [-250, null], [1880, 2000], [0, 120], [-12.5, null]]) {
+    const parts = splitEntryPoints(net, card);
+    assert.equal(netEntryPoints(parts.earned, parts.redeemed), net);
+  }
+});
+
+test('parsePointsField: empty is nothing, a plain number above zero is points, and signs, zero or text are rejected', () => {
+  assert.equal(parsePointsField(''), null);
+  assert.equal(parsePointsField('  '), null);
+  assert.equal(parsePointsField('120'), 120);
+  assert.equal(parsePointsField('1,200'), 1200);
+  assert.equal(parsePointsField('12.5'), 12.5);
+  for (const bad of ['-5', '0', 'abc', '5 pts']) assert.ok(Number.isNaN(parsePointsField(bad)), bad);
+});
+
+test('a stay paid entirely with points owes points but no money; saving what it was worth as the amount charges both', () => {
+  const stay = { ledger: 'travel', date: '2026-11-20', payer: 'Yash', split: true, splitType: 'shared', rewardPoints: 8000, paidWithPoints: true };
+  const right = [{ ...stay, amount: 0 }];
+  assert.equal(computeBalance(right, 'travel', ['Yash', 'Kruti'], 'amount').status, 'settled');
+  assert.equal(computeBalance(right, 'travel', ['Yash', 'Kruti'], 'rewardPoints').amount, 4000);
+  // the mistake the old Redeem points mode invited
+  assert.equal(computeBalance([{ ...stay, amount: 12000 }], 'travel', ['Yash', 'Kruti'], 'amount').amount, 6000);
+});
+
+test('points earned on a purchase count against what the other person owes', () => {
+  const earned = { ledger: 'travel', date: '2026-11-20', payer: 'Yash', split: true, splitType: 'shared', amount: 1000, rewardPoints: netEntryPoints(120, null) };
+  const balance = computeBalance([earned], 'travel', ['Yash', 'Kruti'], 'rewardPoints');
+  assert.equal(balance.amount, 60);
+  assert.equal(balance.creditor, 'Kruti', 'the one who earned them owes the other half');
+});
+
+// ---------- searching and drilling into spending ----------
+
+test('entryMatchesSearch: finds an entry by payment method as well as note, category, payer, amount and tags; every word must be there', () => {
+  const entry = { note: 'Beach shack lunch', category: 'Food', payer: 'Yash', paymentMethod: 'HSBC Premier', amount: 2500, localAmount: 960000, tags: ['holiday'] };
+  for (const term of ['premier', 'HSBC', 'hsbc premier', 'lunch', 'food', 'yash', '2500', '960000', 'holiday', 'food hsbc', '  ', '']) assert.equal(entryMatchesSearch(entry, term), true, term);
+  for (const term of ['diners', 'cash', 'hsbc diners', 'lunch kruti']) assert.equal(entryMatchesSearch(entry, term), false, term);
+  assert.equal(entryMatchesSearch({ amount: 1 }, 'cash'), false);
+  assert.equal(entryMatchesSearch({ paymentMethod: 'Cash · VND', amount: 5 }, 'vnd'), true);
+  // the search across all entries uses the same matcher
+  const found = searchAllEntries([{ ...entry, id: '1', date: '2026-01-01' }, { id: '2', date: '2026-01-02', paymentMethod: 'Cash', amount: 10 }], 'premier');
+  assert.deepEqual(found.map((e) => e.id), ['1']);
+});
+
+test('getPaymentMethodEntries returns exactly the entries behind a method\'s total and count, biggest first', () => {
+  const entries = [
+    { id: '1', ledger: 'travel', date: '2026-05-01', amount: 500, paymentMethod: 'Axis' },
+    { id: '2', ledger: 'travel', date: '2026-05-02', amount: 900, paymentMethod: ' Axis ' },
+    { id: '3', ledger: 'travel', date: '2026-05-03', amount: -100, paymentMethod: 'Axis' }, // a refund counts
+    { id: '4', ledger: 'travel', date: '2026-05-04', amount: 0, paymentMethod: 'Axis' }, // paid fully with points: no money
+    { id: '5', ledger: 'travel', date: '2026-05-05', amount: 40 },
+    { id: '6', ledger: 'travel', date: '2026-05-06', amount: 70, paymentMethod: 'Axis', splitType: 'settlement' },
+    { id: '7', ledger: 'household', date: '2026-05-07', amount: 60, paymentMethod: 'Axis' },
+  ];
+  for (const group of groupByPaymentMethod(entries, null, 'travel')) {
+    const list = getPaymentMethodEntries(entries, null, 'travel', group.method);
+    assert.equal(list.length, group.count, group.method);
+    assert.equal(list.reduce((a, e) => a + e.amount, 0), group.amount, group.method);
+  }
+  assert.deepEqual(getPaymentMethodEntries(entries, null, 'travel', 'Axis').map((e) => e.id), ['2', '1', '3']);
+  assert.deepEqual(getPaymentMethodEntries(entries, null, 'travel', 'Not specified').map((e) => e.id), ['5']);
+  assert.deepEqual(getPaymentMethodEntries(entries, null, 'travel', 'Nobody'), []);
 });

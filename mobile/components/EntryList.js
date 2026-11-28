@@ -9,7 +9,7 @@ import { cardShadow } from './Card';
 import { notify, confirmAsync } from '../lib/dialogs';
 import { deleteInstallmentGroup, updateExpense } from '../lib/firebase';
 import { reportError } from '../lib/errorReporting';
-import { formatCurrency, formatMonthLabel, PERSON_COLORS, isCashPaid } from '../lib/utils';
+import { formatCurrency, formatMonthLabel, PERSON_COLORS, isCashPaid, entryMatchesSearch } from '../lib/utils';
 import { themeRgba, themeColor } from '../lib/theme';
 
 // Rows drawn at once. "All Months" and long trips can hold hundreds of entries; drawing every
@@ -311,19 +311,12 @@ export default function EntryList({
 
   const filtered = useMemo(() => {
     const list = entries || [];
-    const term = searchTerm.trim().toLowerCase();
     return list
       .filter((e) => {
         if (pendingDeletes[e.id]) return false;
         if (excludePaymentEntries && (e.splitType === 'settlement' || e.isTripRollup)) return false;
         if (!isTravel && selectedMonth !== 'all' && e.date?.slice(0, 7) !== selectedMonth) return false;
-        if (!term) return true;
-        const matchNote = e.note?.toLowerCase().includes(term);
-        const matchCat = e.category?.toLowerCase().includes(term);
-        const matchPayer = e.payer?.toLowerCase().includes(term);
-        const matchAmount = String(e.amount).includes(term) || String(e.localAmount ?? '').includes(term);
-        const matchTags = (e.tags || []).some((t) => t.toLowerCase().includes(term));
-        return matchNote || matchCat || matchPayer || matchAmount || matchTags;
+        return entryMatchesSearch(e, searchTerm);
       })
       .sort((a, b) => {
         if (activeHighlightId) {

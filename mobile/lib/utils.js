@@ -234,6 +234,18 @@ const GLOBAL_SEARCH_RESULT_LIMIT = 50;
 // by filters alone (no text typed) is a valid search too, so the early
 // "nothing to search" bail-out only fires when there's neither a term nor
 // a filter, not just an empty term.
+// True when every word of `term` appears somewhere in the entry: note, category, who paid, trip, payment method, either amount
+// or a tag. The passbook search and the search across all entries both use it, so they always find the same things.
+export function entryMatchesSearch(entry, term) {
+  const tokens = (term || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return true;
+  const haystack = [entry.note, entry.category, entry.payer, entry.tripName, entry.paymentMethod, entry.amount, entry.localAmount, ...(entry.tags || [])]
+    .filter((v) => v != null && v !== '')
+    .join(' ')
+    .toLowerCase();
+  return tokens.every((t) => haystack.includes(t));
+}
+
 export function searchAllEntries(entries, term, filters = {}) {
   const { payer, category, paymentMethod, dateFrom, dateTo } = filters;
   const tokens = (term || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -246,14 +258,7 @@ export function searchAllEntries(entries, term, filters = {}) {
     .filter((e) => !paymentMethod || e.paymentMethod === paymentMethod)
     .filter((e) => !dateFrom || e.date >= dateFrom)
     .filter((e) => !dateTo || e.date <= dateTo)
-    .filter((e) => {
-      if (!tokens.length) return true;
-      const haystack = [e.note, e.category, e.payer, e.tripName, e.paymentMethod, e.amount, e.localAmount, ...(e.tags || [])]
-        .filter((v) => v != null && v !== '')
-        .join(' ')
-        .toLowerCase();
-      return tokens.every((t) => haystack.includes(t));
-    })
+    .filter((e) => entryMatchesSearch(e, term))
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, GLOBAL_SEARCH_RESULT_LIMIT);
 }
@@ -1387,6 +1392,34 @@ export function buildPointsRedemptionTxn(card, { points, date, description, cate
   };
 }
 
+// A trip entry keeps one signed number for its points: redeemed minus earned (positive = spent). The form shows the two apart;
+// these split the saved number into them and put them back together. On a points card the card line holds what was redeemed, so
+// both figures come back; without one only the difference is known.
+export function splitEntryPoints(net, cardRedeemed = null) {
+  const saved = net == null || net === '' ? null : Number(net);
+  const onCard = Number(cardRedeemed) > 0 ? Number(cardRedeemed) : 0;
+  const round = (n) => Math.round(n * 100) / 100;
+  if (onCard > 0) {
+    const earned = saved == null ? 0 : round(onCard - saved);
+    if (earned >= 0) return { earned: earned || null, redeemed: onCard };
+  }
+  if (saved == null || saved === 0) return { earned: null, redeemed: null };
+  return saved > 0 ? { earned: null, redeemed: saved } : { earned: -saved, redeemed: null };
+}
+
+export function netEntryPoints(earned, redeemed) {
+  if (earned == null && redeemed == null) return null;
+  return Math.round(((redeemed || 0) - (earned || 0)) * 100) / 100;
+}
+
+// A Points Earned / Points Redeemed box: empty is null, a plain number above zero is that number, anything else (a minus, text,
+// zero) is NaN so the form can say so.
+export function parsePointsField(text) {
+  if (String(text ?? '').trim() === '') return null;
+  const n = parseAmountInput(String(text));
+  return n != null && n > 0 ? n : NaN;
+}
+
 // Whole points, more than zero ("5,000" is fine); anything else is not a redemption.
 export function parseRedeemedPoints(text) {
   const n = parseAmountInput(text);
@@ -1622,6 +1655,17 @@ export function groupByCategory(entries = [], monthKey, ledger, customCategories
     .map((category) => ({ category, amount: groups[category] }));
 }
 
+// How an entry was paid, as the payment-method chart names it (entries with none are grouped together).
+const paymentMethodLabel = (entry) => String(entry.paymentMethod || '').trim() || 'Not specified';
+
+// The entries behind one payment method's slice, biggest first: the same ones its total and count are made of.
+export function getPaymentMethodEntries(entries = [], monthKey, ledger, method) {
+  const targetLedger = ledger ? normalizeLedger(ledger) : null;
+  return entries
+    .filter((e) => paymentMethodLabel(e) === method && Number(e.amount || 0) !== 0 && isCountableSpend(e, monthKey, targetLedger))
+    .sort((a, b) => Number(b.amount || 0) - Number(a.amount || 0));
+}
+
 // Spend split by how it was paid ("Axis Supermoney", "Cash", "UPI · Yash"...), biggest first. Same
 // countable-spend basis as the Category Breakdown, so the two totals always agree; an entry with no
 // method recorded is grouped as "Not specified".
@@ -1632,7 +1676,7 @@ export function groupByPaymentMethod(entries = [], monthKey, ledger) {
     if (!isCountableSpend(entry, monthKey, targetLedger)) continue;
     const amount = Number(entry.amount || 0);
     if (!amount) continue;
-    const method = String(entry.paymentMethod || '').trim() || 'Not specified';
+    const method = paymentMethodLabel(entry);
     const group = groups.get(method) || { method, amount: 0, count: 0 };
     group.amount += amount;
     group.count += 1;

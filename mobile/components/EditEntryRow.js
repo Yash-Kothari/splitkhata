@@ -78,12 +78,12 @@ export default function EditEntryRow({
       : parsedAmount === 0 || f.cardSkipped ? null : trackedCardId(selectedInstrument?.cardId || null);
     try {
       if (redeeming && oldTxnId && newCardId && oldCardId === newCardId && wasRedemption) {
-        return { kind: 'update', id: oldTxnId, updates: { pointsRedeemed: f.redeemedPoints, date, description: note.trim() || category } };
+        return { kind: 'update', id: oldTxnId, updates: { pointsRedeemed: f.cardRedeemed, date, description: note.trim() || category } };
       }
       if (!redeeming && !wasRedemption && oldTxnId && newCardId && oldCardId === newCardId) {
         const updates = { amount: parsedAmount, date, description: note.trim() || category };
         // Points spent alongside the money move with the entry (cleared when the field is emptied).
-        if (f.cardPointsMode) updates.pointsRedeemed = f.pointsValue > 0 ? f.pointsValue : null;
+        if (f.canRedeem) updates.pointsRedeemed = f.cardRedeemed;
         // Re-infer the card transaction's reward fields only when this edit
         // actually changes what they should be: the multiplier box was changed
         // (including cleared), or the category changed on a transaction that
@@ -105,7 +105,7 @@ export default function EditEntryRow({
       if (newCardId) {
         const newCard = creditCards.find((c) => c.id === newCardId);
         newData = redeeming
-          ? { ...buildPointsRedemptionTxn(newCard, { points: f.redeemedPoints, date, description: note.trim() || category, category }), linkedEntryId: entry.id }
+          ? { ...buildPointsRedemptionTxn(newCard, { points: f.cardRedeemed, date, description: note.trim() || category, category }), linkedEntryId: entry.id }
           : {
               cardId: newCardId,
               amount: parsedAmount,
@@ -113,7 +113,7 @@ export default function EditEntryRow({
               description: note.trim() || category,
               linkedEntryId: entry.id,
               ...inferCardRewardFields(newCard, category, resolveStrategyParamsForDate(newCard?.strategyParamsHistory, date), f.effectiveTravelMultiplier, { bookings: !isTravel }),
-              ...(f.cardPointsMode && f.pointsValue > 0 ? { pointsRedeemed: f.pointsValue } : {}),
+              ...(f.cardRedeemed ? { pointsRedeemed: f.cardRedeemed } : {}),
             };
       }
       return { kind: 'replace', oldId: oldTxnId, newData };
@@ -146,8 +146,8 @@ export default function EditEntryRow({
       return;
     }
     const parsedPoints = f.pointsValue;
-    if (f.hasPoints && f.rewardPoints && parsedPoints == null) {
-      notify('Check the reward points', 'Enter points like 1500 or -250, or leave it empty.');
+    if (f.pointsInvalid) {
+      notify('Check the points', f.pointsFields ? 'Type points as plain numbers (whole numbers for points redeemed on a card), or leave the boxes empty.' : 'Enter points like 1500 or -250, or leave it empty.');
       return;
     }
     setSaving(true);

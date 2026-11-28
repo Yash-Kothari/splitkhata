@@ -241,6 +241,25 @@ test('parseImport: Kite holdings map ISIN to the Zerodha fund and are stamped wi
   assert.match(r.warnings[0], /Not in this Kite list/);
 });
 
+test('parseImport: a CAS warns about held funds it leaves out, without zeroing them', () => {
+  const funds = [
+    { key: 'Z', schemeCode: '1', name: 'Zed', short: 'Zed', group: 'zerodha' },
+    { key: 'O1', schemeCode: '2', name: 'One', short: 'One', group: 'other' },
+    { key: 'O2', schemeCode: '3', name: 'Two', short: 'Two', group: 'other' },
+    { key: 'OLD', schemeCode: '4', name: 'Old', short: 'Old', group: 'other' },
+    { key: 'HERS', schemeCode: '5', name: 'Hers', short: 'Hers', group: 'other', owner: 'Kruti' },
+  ];
+  const base = { catalog: { funds }, asOfDefault: '2026-11-21', today: '2026-11-22' };
+  const cas = (positions) => JSON.stringify({ asOf: '2026-11-21', source: 'cas', positions });
+  const one = { O1: { units: 1, avgCost: 1 } };
+  const r = parseImport(cas(one), { ...base, heldKeys: ['Z', 'O1', 'O2', 'HERS'] });
+  assert.deepEqual(r.warnings, ['Not in this CAS (left as before): Two. If any were sold, they need 0 units in the file.'], 'not Zerodha, long-sold or someone else\'s');
+  assert.deepEqual(Object.keys(r.payload.positions), ['O1']);
+  // listing it with zero units says it was sold, so there is nothing to warn about
+  assert.deepEqual(parseImport(cas({ ...one, O2: { units: 0, avgCost: 0 } }), { ...base, heldKeys: ['O1', 'O2'] }).warnings, []);
+  assert.deepEqual(parseImport(cas(one), { ...base, heldKeys: [] }).warnings, [], 'a first import holds nothing yet');
+});
+
 test('parseImport: an ISIN held in two places goes to the Zerodha one for a Kite list', () => {
   const funds = [...FUNDS, { key: 'A_other', isin: 'INF000A', schemeCode: '1', name: 'Alpha (elsewhere)', group: 'other' }];
   const kite = JSON.stringify([{ tradingsymbol: 'INF000A', quantity: 5, average_price: 1 }]);

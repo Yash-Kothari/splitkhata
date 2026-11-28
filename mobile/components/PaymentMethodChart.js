@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { View, Text, Pressable, Platform } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import Card from './Card';
+import SpendDrilldownModal from './SpendDrilldownModal';
 import { MAX_DONUT_SIZE, MIN_DONUT_SIZE, OUTER_R_RATIO, INNER_R_RATIO, PAD_DEG, donutSlicePath } from './donut';
-import { groupByPaymentMethod, formatCurrency, CATEGORY_COLORS } from '../lib/utils';
+import { groupByPaymentMethod, getPaymentMethodEntries, formatCurrency, CATEGORY_COLORS } from '../lib/utils';
 
-// How the money was paid - cash, each card, UPI - as a donut with a legend. It counts exactly what
-// the Category Breakdown counts, so the two totals match. `collapsible` folds it to a one-line
+// How the money was paid - cash, each card, UPI - as a donut with a legend; tapping a method opens its entries, like the
+// Category Breakdown. It counts exactly what the Category Breakdown counts, so the two totals match. `collapsible` folds it to a one-line
 // summary on a phone, like the Category Breakdown.
 export default function PaymentMethodChart({ entries, ledger, collapsible = false }) {
   const data = useMemo(() => groupByPaymentMethod(entries, null, ledger), [entries, ledger]);
@@ -24,6 +25,15 @@ export default function PaymentMethodChart({ entries, ledger, collapsible = fals
     .slice(0, 2)
     .map((d) => `${d.method} ${percent(d.amount)}%`)
     .join(', ');
+
+  const [selectedMethod, setSelectedMethod] = useState(null);
+  const drilldownEntries = useMemo(
+    () => (selectedMethod ? getPaymentMethodEntries(entries, null, ledger, selectedMethod) : []),
+    [entries, ledger, selectedMethod],
+  );
+  // A slice can be tapped on the phone; react-native-svg can't take a press on a shape on the website, so there the
+  // legend rows are the way in.
+  const sliceProps = (method) => (Platform.OS === 'web' ? {} : { onPress: () => setSelectedMethod(method) });
 
   const [cardWidth, setCardWidth] = useState(0);
   const donutSize = cardWidth > 0 ? Math.max(MIN_DONUT_SIZE, Math.min(cardWidth - 32, MAX_DONUT_SIZE)) : MIN_DONUT_SIZE;
@@ -72,6 +82,7 @@ export default function PaymentMethodChart({ entries, ledger, collapsible = fals
                   key={entry.method}
                   d={donutSlicePath(center, center, innerR, outerR, startAngle, endAngle)}
                   fill={CATEGORY_COLORS[index % CATEGORY_COLORS.length]}
+                  {...sliceProps(entry.method)}
                 />
               ))}
             </Svg>
@@ -91,7 +102,13 @@ export default function PaymentMethodChart({ entries, ledger, collapsible = fals
               <Text className="font-body-semibold text-2xs uppercase tracking-wider text-muted-text">Amount</Text>
             </View>
             {data.map((entry, index) => (
-              <View key={entry.method} className="flex-row items-center justify-between py-2 px-1.5">
+              <Pressable
+                key={entry.method}
+                onPress={() => setSelectedMethod(entry.method)}
+                accessibilityRole="button"
+                accessibilityLabel={`${entry.method}: show its ${entry.count === 1 ? 'entry' : 'entries'}`}
+                className="flex-row items-center justify-between py-2 px-1.5 rounded-lg"
+              >
                 <View className="flex-row items-center gap-2 flex-1 min-w-0 pr-2">
                   <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: CATEGORY_COLORS[index % CATEGORY_COLORS.length] }} />
                   <View className="flex-1 min-w-0">
@@ -102,10 +119,21 @@ export default function PaymentMethodChart({ entries, ledger, collapsible = fals
                   </View>
                 </View>
                 <Text className="font-mono-bold text-sm text-ink shrink-0">{formatCurrency(entry.amount, 'INR')}</Text>
-              </View>
+              </Pressable>
             ))}
           </View>
         </>
+      )}
+
+      {selectedMethod && (
+        <SpendDrilldownModal
+          title={selectedMethod}
+          period={ledger === 'travel' ? 'Whole trip' : 'All months'}
+          entries={drilldownEntries}
+          detail={(e) => `${e.date} · ${e.category} · Paid by ${e.payer}`}
+          emptyText="No expenses found for this payment method."
+          onClose={() => setSelectedMethod(null)}
+        />
       )}
     </Card>
   );

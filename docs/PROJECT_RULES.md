@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.25.0**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.26.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -107,7 +107,14 @@ and kill them if stuck. Never leave one running unattended.
   account, never to Cash. `isWithdrawalEntry()` ignores a stale `isWithdrawal` flag on a
   cash-paid entry. Cash purchases are priced oldest-withdrawal-first (FIFO).
 - **Reward points:** stored positive = spent, negative = earned. They are a separate
-  balance and never mixed into rupee totals.
+  balance and never mixed into rupee totals. A Travel purchase has two boxes, **Points
+  Earned** and **Points Redeemed**, saved as one number, redeemed minus earned
+  (`splitEntryPoints`, `netEntryPoints`). On a points card only the redeemed figure goes to
+  the card line (the card works out its own earnings). **The amount is always the money
+  paid:** paid fully with points is ₹0 plus the points, which leaves a redemption on the card.
+  There is no Redeem toggle on a trip entry; an older one saved with the booking's worth as the
+  amount keeps being a redemption until its amount is changed. A points settlement or a
+  rolled-up trip total keeps a single signed Reward Points box.
 - **Card flags on an entry:** `skipCardTracking: true` means "this entry is not on the
   card" (statement already closed). Edit Entry honours it.
 - **Statement-only cards** (`annual_milestone_only`): each typed-in statement is a bill.
@@ -251,10 +258,17 @@ local testing predicted.
   `ConnectionBanner`, keeps a short newest-first history, and forwards to Sentry.
   Never swallow a Firestore error with a bare `console.warn`.
 - **Offline (website):** `mobile/public/sw.js` caches the app so it opens with no
-  internet. Firestore itself keeps an IndexedDB copy and queues writes until you're
-  back online. The fonts are bundled, so they work offline. Sign-in (the first time)
-  and the AI features (Quick Add, receipt scan, digests, Ask) still need internet. The
-  cache name is `splitkhata-offline-v1`; changing caching behaviour means changing that name.
+  internet. Each tab's code is a separate file fetched only when the tab is opened,
+  and a missing one crashes the whole app, so the worker saves **every file of the
+  current build** (following the names the bundles mention) when it installs and on
+  each launch, and deletes an old build only once the new one is saved in full
+  (`tests/offline-sw.test.mjs`). Firestore keeps an IndexedDB copy of the data it has
+  been asked for (open a screen once online to have its data offline) and queues
+  writes until you're back online. The fonts are bundled, so they work offline.
+  Sign-in (the first time), the Portfolio NAV refresh and the AI features (Quick Add,
+  receipt scan, digests, Ask) still need internet. The **native phone app has no
+  offline copy** (memory cache only). The cache name is `splitkhata-offline-v2`;
+  changing caching behaviour means changing that name.
 - **After every deploy, reload the site twice.** The service worker serves the old
   version once while it updates in the background.
 
@@ -418,7 +432,10 @@ local testing predicted.
   never "received", and a refund does not use up an ATM withdrawal. A refund paid with a Cash-type method (Amazon Pay and Wallet are set up
   as Cash) is left out of Total trip expense like any cash purchase.
 - The Travel tab's "By Payment Method" donut (`PaymentMethodChart`, `groupByPaymentMethod`) counts exactly what the
-  Category Breakdown counts (`isCountableSpend`), so the two totals match; entries with no method are "Not specified".
+  Category Breakdown counts (`isCountableSpend`), so the two totals match; entries with no method are "Not specified". Tapping a
+  method (or a category) opens its entries in the shared `SpendDrilldownModal` (`getPaymentMethodEntries`,
+  `getCategoryEntries`). The passbook search and the search across all entries share `entryMatchesSearch` (every word
+  must match note, category, payer, trip, payment method, amount or tag).
 - `EntryList` draws 100 rows at a time (`PAGE_SIZE`) with a "Show N More" button; the count in its header
   still covers every match, and a jump-to-entry highlight floats to the top so it is always drawn.
 - **The Portfolio tab shows; Settings -> Portfolio changes.** The SIP plan, limits and imports are Settings pages (a group in

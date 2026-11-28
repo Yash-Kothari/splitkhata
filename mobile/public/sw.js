@@ -13,26 +13,92 @@
  *   shell is only used when the network fails or is too slow.
  * - Hashed build files (/_expo/static, /assets) never change for a given URL,
  *   so they are cache-first.
+ * - Every tab's code is a separate file that is only fetched when the tab is opened, so
+ *   the whole build is saved up front (see cacheBuild): offline, every tab must open,
+ *   including one never opened before. A missing file crashes the whole app.
  */
-const CACHE = 'splitkhata-offline-v1';
+const CACHE = 'splitkhata-offline-v2';
 const SCOPE = self.registration.scope; // e.g. https://host/splitkhata/
 const NAVIGATION_TIMEOUT_MS = 4000;
 
+// A build file named inside another one (the entry bundle lists the lazy tab files this way).
+const BUILD_REFERENCE = /["'`]([^"'`\s]*\/_expo\/static\/(?:js|css)\/[^"'`\s]+?\.(?:js|css))["'`]/g;
+// The script and style files the page itself pulls in.
+const PAGE_REFERENCE = /(?:src|href)=["']([^"']*\/_expo\/static\/(?:js|css)\/[^"']+?\.(?:js|css))["']/g;
+
+function inScope(path) {
+  const url = new URL(path, SCOPE).href;
+  return url.startsWith(SCOPE) ? url : null;
+}
+
+// Saves every file of a build that can be reached from `roots` (the page's own scripts and styles), following the names
+// the scripts mention. `complete` is false if any of them could not be read, and then nothing may be deleted.
+async function cacheBuild(cache, roots) {
+  const files = new Set();
+  const queue = [...roots];
+  let complete = true;
+  while (queue.length) {
+    const url = queue.shift();
+    if (files.has(url)) continue;
+    files.add(url);
+    try {
+      let res = await cache.match(url);
+      if (!res) {
+        res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        await cache.put(url, res.clone());
+      }
+      if (url.endsWith('.js')) {
+        const text = await res.clone().text();
+        for (const match of text.matchAll(BUILD_REFERENCE)) {
+          const next = inScope(match[1]);
+          if (next && !files.has(next)) queue.push(next);
+        }
+      }
+    } catch (_) {
+      complete = false;
+    }
+  }
+  return { files, complete };
+}
+
+async function installShellAndBuild() {
+  const cache = await caches.open(CACHE);
+  const shell = await fetch(new Request(SCOPE, { cache: 'reload' }));
+  if (!shell.ok) return;
+  await cache.put(SCOPE, shell.clone());
+  const html = await shell.text();
+  await cacheBuild(cache, [...html.matchAll(PAGE_REFERENCE)].map((m) => inScope(m[1])).filter(Boolean));
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches
-      .open(CACHE)
-      .then((cache) => cache.add(new Request(SCOPE, { cache: 'reload' })))
+    installShellAndBuild()
       .catch(() => {})
       .then(() => self.skipWaiting()),
   );
 });
 
+// The fonts and icons an earlier version saved are carried over before its cache is removed, so an update is never the
+// moment the app loses something it needs offline.
+async function retireOldCaches() {
+  const cache = await caches.open(CACHE);
+  const old = (await caches.keys()).filter((k) => k.startsWith('splitkhata-offline-') && k !== CACHE);
+  for (const name of old) {
+    const previous = await caches.open(name);
+    for (const request of await previous.keys()) {
+      if (!request.url.includes('/assets/') || (await cache.match(request))) continue;
+      const res = await previous.match(request);
+      if (res) await cache.put(request, res);
+    }
+    await caches.delete(name);
+  }
+}
+
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('splitkhata-offline-') && k !== CACHE).map((k) => caches.delete(k))))
+    retireOldCaches()
+      .catch(() => {})
       .then(() => self.clients.claim()),
   );
 });
@@ -127,10 +193,14 @@ async function cacheUrls(urls) {
       }
     }),
   );
-  // Drop bundles from earlier deploys - every deploy has new hashed names.
+  // The tabs not opened this time are part of this build too: save them, so they open offline.
+  const roots = wanted.filter((u) => u.includes('/_expo/static/') && /\.(js|css)$/.test(u));
+  const { files, complete } = await cacheBuild(cache, roots);
+  // Drop bundles from earlier deploys (every deploy has new hashed names) - only when the whole current build was read,
+  // so a launch with a poor connection can never delete a file that is still needed.
   const hasCurrentBundle = wanted.some((u) => u.includes('/_expo/static/js/'));
-  if (!hasCurrentBundle) return;
-  const keep = new Set(wanted);
+  if (!hasCurrentBundle || !complete) return;
+  const keep = new Set([...wanted, ...files]);
   for (const request of await cache.keys()) {
     const isOldBundle = request.url.includes('/_expo/static/js/') || request.url.includes('/_expo/static/css/');
     if (isOldBundle && !keep.has(request.url)) await cache.delete(request);

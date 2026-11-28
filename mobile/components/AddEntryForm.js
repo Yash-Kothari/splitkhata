@@ -257,7 +257,8 @@ export default function AddEntryForm({
       f.setRefund(false);
       f.setLocalAmount('');
       f.setRewardPoints('');
-      f.setRedeemChoice(false);
+      f.setPointsEarned('');
+      f.setPointsRedeemed('');
       f.setNote('');
       f.setTagsText('');
       f.setTravelMultiplier('');
@@ -392,15 +393,16 @@ export default function AddEntryForm({
         try {
           const params = resolveStrategyParamsForDate(matchedCard.strategyParamsHistory, date);
           cardTransaction = f.asRedemption
-            ? buildPointsRedemptionTxn(matchedCard, { points: parsedPoints, date, description: trimmedNote || category, category })
+            ? buildPointsRedemptionTxn(matchedCard, { points: f.cardRedeemed, date, description: trimmedNote || category, category })
             : {
                 cardId: matchedCard.id,
                 amount: parsed,
                 date,
                 description: trimmedNote || category,
                 ...inferCardRewardFields(matchedCard, category, params, effectiveTravelMultiplier, { bookings: !isTravel }),
-                // Part paid with points: the same card line also takes the points out.
-                ...(f.cardPointsMode && parsedPoints > 0 ? { pointsRedeemed: parsedPoints } : {}),
+                // Part paid with points: the same card line also takes the points out. Points earned stay on the entry only, because
+                // the card works out its own earnings.
+                ...(f.cardRedeemed ? { pointsRedeemed: f.cardRedeemed } : {}),
               };
         } catch (err) {
           // Working out the card side failed: still save the expense.

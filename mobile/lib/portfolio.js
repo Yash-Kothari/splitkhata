@@ -685,6 +685,15 @@ export function parseImport(text, { catalog = null, asOfDefault, today, owner = 
     const missing = funds.filter((f) => ownerOf(f) === who && !isStock(f) && f.group === 'zerodha' && !positions[f.key]).map((f) => f.short || f.name);
     if (missing.length) warnings.push(`Not in this Kite list (left as before): ${missing.join(', ')}`);
   }
+  // A fully redeemed fund drops off a CAS, and so does one a partial statement left out, so a held fund that is missing is
+  // only reported, never zeroed. `heldKeys` keeps long-sold funds from being listed again.
+  if (source === 'cas') {
+    const held = heldKeys ? new Set(heldKeys) : null;
+    const missing = funds
+      .filter((f) => ownerOf(f) === who && !isStock(f) && f.group === 'other' && !positions[f.key] && (!held || held.has(f.key)))
+      .map((f) => f.short || f.name);
+    if (missing.length) warnings.push(`Not in this CAS (left as before): ${missing.join(', ')}. If any were sold, they need 0 units in the file.`);
+  }
   // Funds and stocks this person has now that the new catalog does not list: they leave the fund list (their old positions stay in
   // the snapshots but are no longer shown), so the preview names them.
   const dropped = body.catalog ? (catalog?.funds || []).filter((f) => ownerOf(f) === who && !funds.some((x) => x.key === f.key)).map((f) => f.short || f.name || f.key) : [];

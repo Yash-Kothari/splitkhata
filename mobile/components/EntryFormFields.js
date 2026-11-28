@@ -1,5 +1,4 @@
 import { View, Text, TextInput, Pressable, Keyboard } from 'react-native';
-import ModeToggle from './ModeToggle';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import CustomSplitEditor from './CustomSplitEditor';
@@ -66,7 +65,7 @@ export default function EntryFormFields({
   moreExtra = null,
 }) {
   const { isTravel } = f;
-  const moreParts = ['tags', f.hasPoints ? 'reward points' : null, moreExtra ? 'split across months' : null].filter(Boolean);
+  const moreParts = ['tags', f.hasPoints && !f.pointsFields ? 'reward points' : null, moreExtra ? 'split across months' : null].filter(Boolean);
 
   return (
     <>
@@ -172,31 +171,6 @@ export default function EntryFormFields({
           />
         </View>
 
-        {f.canRedeem && (
-          <View className="w-full">
-            <ModeToggle mode={f.redeeming ? 'redeem' : 'purchase'} onChange={(m) => f.setRedeemChoice(m === 'redeem')} />
-          </View>
-        )}
-
-        {f.cardPointsMode && (
-          <View className={FIELD_HALF}>
-            <Text className={labelClass}>{f.redeeming ? 'Points redeemed' : 'Points redeemed (optional)'}</Text>
-            <TextInput
-              value={f.rewardPoints}
-              onChangeText={f.setRewardPoints}
-              keyboardType="number-pad"
-              placeholder={f.redeeming ? 'e.g. 5000' : '0'}
-              className={monoInputClass}
-            />
-            <Text className={`font-body text-2xs mt-1 ${f.rewardPoints !== '' && f.pointsInvalid ? 'text-stamp-red' : 'text-muted-text'}`}>
-              {f.rewardPoints !== '' && f.pointsInvalid
-                ? 'Whole points, like 5000'
-                : f.redeeming
-                  ? `Comes off ${f.selectedCard?.name || 'the card'}'s points. The amount above is what it was worth.`
-                  : `Part paid with points? Amount is the money part, e.g. ₹1,000 and 2,000 points.`}
-            </Text>
-          </View>
-        )}
 
         {f.showTravelMultiplier && (
           <View className={FIELD_HALF}>
@@ -218,6 +192,43 @@ export default function EntryFormFields({
             <Text className={labelClass}>Date</Text>
             <DateField value={f.date} onChange={f.setDate} className={inputClass} />
             {f.dateInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Use the format YYYY-MM-DD</Text> : null}
+          </View>
+        )}
+        {f.pointsFields && (
+          <>
+            <View className={FIELD_HALF}>
+              <Text className={labelClass}>Points Earned (optional)</Text>
+              <TextInput value={f.pointsEarned} onChangeText={f.setPointsEarned} keyboardType="decimal-pad" placeholder="0" className={monoInputClass} />
+              {f.earnedInvalid ? (
+                <Text className="font-body text-2xs text-stamp-red mt-1">Type points as a plain number, like 120</Text>
+              ) : f.suggestedEarned && !f.pointsEarned ? (
+                <Pressable onPress={() => f.setPointsEarned(String(f.suggestedEarned))} hitSlop={6} className="self-start mt-1.5 px-2.5 py-1 rounded-lg border border-ink/15 bg-paper">
+                  <Text className="font-body-semibold text-2xs text-ink">Card would earn about {f.suggestedEarned.toLocaleString('en-IN')} · Use</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            <View className={FIELD_HALF}>
+              <Text className={labelClass}>Points Redeemed (optional)</Text>
+              <TextInput value={f.pointsRedeemed} onChangeText={f.setPointsRedeemed} keyboardType="decimal-pad" placeholder="0" className={monoInputClass} />
+              <Text className={`font-body text-2xs mt-1 ${f.redeemedInvalid ? 'text-stamp-red' : 'text-muted-text'}`}>
+                {f.redeemedInvalid
+                  ? f.canRedeem ? 'Whole points, like 5000' : 'Type points as a plain number, like 5000'
+                  : f.asRedemption
+                    ? 'Paid with points: nothing goes on the card bill.'
+                    : f.canRedeem
+                      ? "Comes off the card's points. Paid fully with points? Enter ₹0 as the amount."
+                      : 'Paid fully with points? Enter ₹0 as the amount.'}
+              </Text>
+            </View>
+          </>
+        )}
+        {f.savedWorth != null && (
+          <View className="w-full rounded-xl border border-mustard/40 bg-mustard/10 px-3.5 py-2.5">
+            <Text className="font-body-semibold text-xs text-ink">This was saved as paid with points, with what it was worth as the amount.</Text>
+            <Text className="font-body text-2xs text-muted-text mt-0.5">That amount also counts in the rupee balance. If you paid no money, set the amount to ₹0.</Text>
+            <Pressable onPress={() => f.setAmount('0')} className="self-start mt-2 min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center">
+              <Text className="font-body-semibold text-xs text-white">Set Amount to ₹0</Text>
+            </Pressable>
           </View>
         )}
 
@@ -279,7 +290,7 @@ export default function EntryFormFields({
       {f.moreOpen && (
         <>
           <View className="flex-row flex-wrap mt-3" style={{ gap: 14 }}>
-            <View className={f.hasPoints && !f.cardPointsMode ? FIELD_HALF : FIELD_FULL}>
+            <View className={f.hasPoints && !f.pointsFields ? FIELD_HALF : FIELD_FULL}>
               <Text className={labelClass}>Tags (optional)</Text>
               <TextInput
                 value={f.tagsText}
@@ -290,7 +301,7 @@ export default function EntryFormFields({
                 className={inputClass}
               />
             </View>
-            {f.hasPoints && !f.cardPointsMode && (
+            {f.hasPoints && !f.pointsFields && (
               <View className={FIELD_HALF}>
                 <Text className={labelClass}>Reward Points</Text>
                 <TextInput
@@ -303,7 +314,7 @@ export default function EntryFormFields({
                 {f.pointsInvalid ? (
                   <Text className="font-body text-2xs text-stamp-red mt-1">Enter whole or decimal points, e.g. 1500 or -250</Text>
                 ) : (
-                  <Text className="font-body text-2xs text-muted-text mt-1">+ spent, − earned</Text>
+                  <Text className="font-body text-2xs text-muted-text mt-1">Points spent. A minus means points earned.</Text>
                 )}
               </View>
             )}

@@ -9,7 +9,12 @@ import {
   isPointsCard,
   isStatementOnlyCard,
   isValidISODate,
-  parseRedeemedPoints,
+  inferCardRewardFields,
+  netEntryPoints,
+  parsePointsField,
+  previewTransactionReward,
+  resolveStrategyParamsForDate,
+  splitEntryPoints,
   isWithdrawalEntry,
   localCurrencyOf,
   parseAmountInput,
@@ -63,11 +68,16 @@ export function useEntryForm({
   const isRefund = (refund || /^\s*-/.test(amount)) && entry?.splitType !== 'settlement';
   const amountValue = parseSignedAmountInput(amount, isRefund);
   const localValue = parseSignedAmountInput(localAmount, isRefund);
-  // Points spent on a trip entry paid with a points card live on the card line too (see cardPointsMode
-  // below), so an entry whose own field is empty still starts from what its card line says.
+  // Points redeemed on a trip entry paid with a points card live on the card line too, so the form starts from both: the entry's
+  // saved number and what its card line says (see splitEntryPoints).
   const linkedPointsTxn = entry?.cardTransactionId ? cardTransactions.find((t) => t.id === entry.cardTransactionId) : null;
-  const startPoints = entry?.rewardPoints ?? (isTravel && linkedPointsTxn?.pointsRedeemed > 0 ? linkedPointsTxn.pointsRedeemed : null);
-  const [rewardPoints, setRewardPoints] = useState(startPoints != null ? String(startPoints) : '');
+  // A Travel purchase has two boxes, Points Earned and Points Redeemed. A points settlement or a trip total moved to the main
+  // ledger is a single transfer of points, so it keeps one signed Reward Points box.
+  const pointsFields = isTravel && entry?.splitType !== 'settlement' && !entry?.isTripRollup;
+  const [startPoints] = useState(() => splitEntryPoints(entry?.rewardPoints ?? null, linkedPointsTxn?.pointsRedeemed));
+  const [pointsEarned, setPointsEarned] = useState(pointsFields && startPoints.earned != null ? String(startPoints.earned) : '');
+  const [pointsRedeemed, setPointsRedeemed] = useState(pointsFields && startPoints.redeemed != null ? String(startPoints.redeemed) : '');
+  const [rewardPoints, setRewardPoints] = useState(!pointsFields && entry?.rewardPoints != null ? String(entry.rewardPoints) : '');
 
   // Who paid and how. Editing: what the entry has. Adding: what the user picked,
   // else what the last entry on this ledger used (a stretch of entries on one
@@ -128,7 +138,7 @@ export function useEntryForm({
   // category is called. Blank = a normal purchase (a category literally named
   // "Travel with Points" / "SmartBuy" also counts as a booking, at base points
   // until a multiplier is entered). Travel-ledger entries never do this: their
-  // points are their own manual Reward Points field, separate from the card's,
+  // points are the form's own Points Earned / Points Redeemed boxes,
   // and a travel booking's accelerated points are entered on the Cards tab.
   const selectedCard = selectedInstrument?.cardId ? creditCards.find((c) => c.id === selectedInstrument.cardId) : null;
   const bookingKind =
@@ -139,17 +149,21 @@ export function useEntryForm({
   const effectiveTravelMultiplier = showTravelMultiplier ? travelMultiplier.trim() : '';
   const selectedCardId = selectedCard?.id;
 
-  // Paid with points instead of money: on a Travel entry whose payment method is a points card, the
-  // same Purchase | Redeem points choice the Cards tab has. A redemption writes a points-out record on
-  // the card (see buildPointsRedemptionTxn) and the entry's own Reward Points is that same number, so
-  // the trip, the Payments points balance and the card's points in account all agree.
-  const [redeemChoice, setRedeemChoice] = useState(entry?.paidWithPoints === true);
+  // Points on a Travel entry paid with a points card: what is redeemed comes off the card's points. Paid fully with points means
+  // no money (an amount of ₹0), which leaves a points-out record on the card and nothing on its bill (see
+  // buildPointsRedemptionTxn). What is earned is only recorded on the entry, because the card works out its own earnings.
   const canRedeem = isTravel && Boolean(selectedCard) && isPointsCard(selectedCard) && !isStatementOnlyCard(selectedCard);
-  const redeeming = canRedeem && redeemChoice;
-  // On a points card the Points field means "points redeemed on this" - on its own (Redeem points) or
-  // alongside the money part of a purchase (₹1,000 and 2,000 points). An old entry that holds a negative
-  // number (points earned, typed by hand) keeps the plain Reward Points field instead.
-  const cardPointsMode = canRedeem && !(parseAmountInput(rewardPoints, { allowNegative: true }) < 0);
+  const earnedValue = pointsFields ? parsePointsField(pointsEarned) : null;
+  const redeemedValue = pointsFields ? parsePointsField(pointsRedeemed) : null;
+  const earnedInvalid = Number.isNaN(earnedValue);
+  // A card only deals in whole points.
+  const redeemedInvalid = Number.isNaN(redeemedValue) || (canRedeem && redeemedValue != null && !Number.isInteger(redeemedValue));
+  const cardRedeemed = canRedeem && !redeemedInvalid ? redeemedValue : null;
+  // An entry saved by the old Redeem points mode holds what the booking was worth as its amount. It stays a redemption until
+  // that amount is changed, so editing a note never puts the worth on the card's bill.
+  const savedWorth = entry?.paidWithPoints === true && Number(entry.amount) > 0 ? Number(entry.amount) : null;
+  const worthUnchanged = savedWorth != null && amountValue === savedWorth;
+  const asRedemption = cardRedeemed != null && (amountValue === 0 || worthUnchanged);
 
   // A card whose statement is already closed (backdated entries): keep the
   // entry but don't add a transaction to that card, so its cycle totals and
@@ -157,7 +171,7 @@ export function useEntryForm({
   const [skipCardTracking, setSkipCardTracking] = useState(Boolean(entry?.skipCardTracking));
   const canSkipCard = Boolean(selectedCard) && !isStatementOnlyCard(selectedCard);
   // A redemption has no statement amount to leave out, so the skip never applies to it.
-  const cardSkipped = canSkipCard && skipCardTracking && !redeeming;
+  const cardSkipped = canSkipCard && skipCardTracking && !asRedemption;
 
   // Which of the trip's currencies the local amount is in. Editing: what the entry has. Adding: what
   // was picked, else what the last entry used, else the trip's main currency. Derived, like payer above.
@@ -209,16 +223,23 @@ export function useEntryForm({
   // with reward points still gets logged (with its points).
   const amountInvalid = amount !== '' && amountValue == null;
   const localAmountInvalid = isTravel && localAmount !== '' && !(Math.abs(localValue || 0) > 0);
-  // A redemption needs whole points above zero; otherwise points are optional and may be negative (earned).
-  const redeemedPoints = cardPointsMode ? parseRedeemedPoints(rewardPoints) : null;
-  const pointsInvalid = cardPointsMode
-    ? redeeming ? redeemedPoints == null : rewardPoints.trim() !== '' && redeemedPoints == null
+  const pointsInvalid = pointsFields
+    ? earnedInvalid || redeemedInvalid
     : hasPoints && rewardPoints !== '' && parseAmountInput(rewardPoints, { allowNegative: true }) == null;
-  // What gets saved as the entry's points: whole points redeemed on a points card, else the manual field.
-  const pointsValue = cardPointsMode ? redeemedPoints : hasPoints && rewardPoints.trim() ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
-  // Nothing charged to the card and points redeemed: that is a pure redemption, whether or not the
-  // Redeem points toggle was used - it still leaves a points-out line on the card.
-  const asRedemption = canRedeem && (redeeming || (redeemedPoints != null && amountValue === 0));
+  // What is saved as the entry's points: redeemed minus earned (positive = spent), or the single signed box.
+  const pointsValue = pointsFields
+    ? pointsInvalid ? null : netEntryPoints(earnedValue, redeemedValue)
+    : hasPoints && rewardPoints.trim() ? parseAmountInput(rewardPoints, { allowNegative: true }) : null;
+  // What this purchase would earn on the card, offered as a tap-to-use suggestion and never filled in by itself.
+  const suggestion =
+    canRedeem && amountValue > 0 && !asRedemption && isValidISODate(date)
+      ? previewTransactionReward(selectedCard, cardTransactions.filter((t) => t.id !== entry?.cardTransactionId), {
+          date,
+          amount: amountValue,
+          ...inferCardRewardFields(selectedCard, category, resolveStrategyParamsForDate(selectedCard.strategyParamsHistory, date), null, { bookings: false }),
+        })
+      : null;
+  const suggestedEarned = Math.round(suggestion?.earned ?? suggestion?.estimated ?? 0) || null;
   const dateInvalid = !isValidISODate(date);
   const inputInvalid = amountInvalid || localAmountInvalid || pointsInvalid || dateInvalid;
 
@@ -279,8 +300,9 @@ export function useEntryForm({
     tagsText, setTagsText,
     travelMultiplier, setTravelMultiplier, initialTravelMultiplier, wasBooking,
     selectedCard, selectedCardId, bookingKind, showTravelMultiplier, effectiveTravelMultiplier,
-    skipCardTracking, setSkipCardTracking, canSkipCard: canSkipCard && !redeeming, cardSkipped,
-    canRedeem, redeeming, asRedemption, cardPointsMode, setRedeemChoice, redeemedPoints, pointsValue,
+    skipCardTracking, setSkipCardTracking, canSkipCard: canSkipCard && !asRedemption, cardSkipped,
+    canRedeem, asRedemption, cardRedeemed, pointsValue, pointsFields, savedWorth: worthUnchanged ? savedWorth : null,
+    pointsEarned, setPointsEarned, pointsRedeemed, setPointsRedeemed, earnedInvalid, redeemedInvalid, suggestedEarned,
     fifoResult, fifoBreakdownText, amountLocked,
     moreOpen, setMoreToggle,
     amountInvalid, localAmountInvalid, pointsInvalid, dateInvalid, inputInvalid,
