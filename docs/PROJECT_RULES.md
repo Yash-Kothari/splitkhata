@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.26.1**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.27.4**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -418,6 +418,14 @@ local testing predicted.
   waits for `firebaseapp.com/__/auth/iframe` before it will say whether you are signed in (always for the redirect check,
   proactively on Safari/phones), and when Safari left that request pending the app stayed blank forever. If startup is
   still slow the blank screen turns into a "Still starting up..." message with a Reload button (`StartupWait`).
+- **The page covers the whole phone screen and pads itself** (`viewport-fit=cover` in `public/index.html`). Without it the
+  safe margins read as zero and the Home Screen app's tab bar sits under the rounded corners and home indicator. Anything
+  pinned to the bottom of the whole app adds `useSafeAreaInsets().bottom`; a tab bar with a set height must add it to that
+  height, because React Navigation uses a set height as it is. Desktop and ordinary Safari report zero. To try it on a
+  computer, give the safe-area probe element (the last fixed `div` in `body`) a bottom padding and resize the window.
+- **Nothing readable at the very top of the Home Screen app.** iOS 26 and later blur a strip there even with a solid status
+  bar, so the root layout leaves `TOP_BLUR_GAP` points empty above the connection banner (`lib/homeScreen.js`). The top safe
+  margin is applied once, by the root layout, not by `AppHeader`. A full-screen pop-up needs the same room at its top.
 - **An iPhone Home Screen app signs in without a pop-up.** There (`navigator.standalone`) Firebase's popup never reports
   back, so the window goes to Google and returns with the ID token after the `#` (`lib/googleRedirect.js`). A script in the
   head of `public/index.html` takes it out of the address before anything else runs, and only the answer matching this

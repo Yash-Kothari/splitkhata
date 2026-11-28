@@ -1,7 +1,7 @@
 import '../global.css';
 import { useEffect, useState } from 'react';
 import { View, Text, Pressable, Platform } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { Stack, ThemeProvider, DefaultTheme, DarkTheme } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import { StatusBar } from 'expo-status-bar';
@@ -27,6 +27,7 @@ import { IBMPlexMono_600SemiBold } from '@expo-google-fonts/ibm-plex-mono/600Sem
 import { IBMPlexMono_700Bold } from '@expo-google-fonts/ibm-plex-mono/700Bold';
 import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider } from '../lib/AuthContext';
+import { topBlurGap } from '../lib/homeScreen';
 import { GroupProvider } from '../lib/GroupContext';
 import { LockProvider } from '../lib/LockContext';
 import { JumpProvider } from '../lib/JumpContext';
@@ -145,14 +146,15 @@ export default function RootLayout() {
 
   if (!fontsLoaded) return null;
 
+  const topGap = Platform.OS === 'web' ? topBlurGap(window) : 0;
+
   return (
     // Without this, useSafeAreaInsets() (React Navigation's bottom tab bar
     // included) has no context to read from and silently falls back to
     // zero insets - the tab bar was rendering flush against the bottom
     // edge with no allowance for the home indicator on notched iPhones.
-    // AppHeader's own SafeAreaView happened to still get a top inset from
-    // the native module's initial-frame fallback, which is why only the
-    // bottom was visibly broken.
+    // The top inset still arrived from the native module's initial-frame
+    // fallback, which is why only the bottom was visibly broken.
     <SafeAreaProvider>
       <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
       <AuthProvider>
@@ -170,14 +172,16 @@ export default function RootLayout() {
                   now lay out in a responsive flex-wrap grid (see
                   AddEntryForm.js etc.) so this width actually gets used
                   instead of leaving an empty gutter. */}
-              <View className="flex-1 bg-paper md:items-center">
+              {/* The phone's top and side margins are applied once, here, so the connection banner is inside them too. */}
+              <SafeAreaView edges={['top', 'left', 'right']} className="flex-1 bg-paper md:items-center">
+                {topGap ? <View style={{ height: topGap }} /> : null}
                 <ConnectionBanner />
                 <View className="flex-1 w-full md:max-w-5xl">
                   <ThemeProvider value={navTheme}>
                     <Stack screenOptions={{ headerShown: false }} />
                   </ThemeProvider>
                 </View>
-              </View>
+              </SafeAreaView>
               {/* One instance for the whole app, not one per tab - see
                   SettingsModalContext for why this used to be up to 4. */}
               <RootSettingsModal />

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Tabs, Redirect } from 'expo-router';
 import { View, Text, Platform, AppState, useWindowDimensions } from 'react-native';
 import { useColorScheme } from 'nativewind';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { subscribeToPinConfig, subscribeToRecurringRules, runRecurringGeneration, getTenant } from '../../lib/firebase';
 import { getMonthKey, todayISO, decideInitialLock, shouldRelockAfterBackground } from '../../lib/utils';
 import { reportError } from '../../lib/errorReporting';
@@ -211,6 +212,7 @@ export default function TabsLayout() {
   // tokens for ledger-green/muted-text/paper/ink at 0.1 opacity.
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
+  const insets = useSafeAreaInsets();
 
   // index.js used to be the only sign-in check, so signing out (or
   // reloading a deep link like /cards while signed out) left you inside an
@@ -238,8 +240,9 @@ export default function TabsLayout() {
               display: isWide ? 'none' : 'flex',
               backgroundColor: themeColor('paper', isDark),
               borderTopColor: themeRgba('ink', isDark, 0.1),
-              // The default 49px can't fit the icon pill plus label on web.
-              ...(Platform.OS === 'web' ? { height: 60 } : {}),
+              // The default 49px can't fit the icon pill plus label on web. A set height is used as it is, so the
+              // bottom safe margin (a phone's home indicator) has to be added here.
+              ...(Platform.OS === 'web' ? { height: 60 + insets.bottom } : {}),
             },
             // An explicit lineHeight: the label box was exactly fontSize tall with
             // hidden overflow on web, chopping the descenders (the "y" in Payments).
