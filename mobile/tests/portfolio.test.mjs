@@ -8,6 +8,7 @@ import {
   previousWeekday,
   formatShortDate,
   classifySync,
+  classifyMonthlySync,
   isoFromApiDate,
   parseMfapiHistory,
   indexOnOrBefore,
@@ -418,12 +419,22 @@ test('buildTrade: clear errors', () => {
   assert.equal(buildTrade({ ...ctx, fundKey: 'A', kind: 'sell', date: '2026-11-20', units: 40, heldUnits: 40 }).ok, true);
 });
 
-test('syncNudges: Kite after a week, CAS after about a month, nothing before setup', () => {
-  const sync = (kite, cas) => ({ kite: { level: kite[0], days: kite[1] }, cas: { level: cas[0], days: cas[1] } });
+test('classifyMonthlySync: due from the 1st until a CAS is dated or imported that month', () => {
+  assert.deepEqual(classifyMonthlySync(null, null, '2026-12-01'), { level: 'never', days: null, label: 'Never synced', due: false });
+  const sameMonth = classifyMonthlySync('2026-11-01', null, '2026-11-30');
+  assert.deepEqual([sameMonth.level, sameMonth.due], ['fresh', false]);
+  const firstOfNext = classifyMonthlySync('2026-11-30', null, '2026-12-01');
+  assert.deepEqual([firstOfNext.level, firstOfNext.due], ['stale', true]);
+  assert.equal(classifyMonthlySync('2026-11-30', '2026-12-02', '2026-12-20').due, false, 'last month\'s statement imported this month counts');
+  assert.equal(classifyMonthlySync('2026-12-31', null, '2027-01-01').due, true, 'across a year end');
+});
+
+test('syncNudges: Kite after a week, CAS once a month, nothing before setup', () => {
+  const sync = (kite, cas) => ({ kite: { level: kite[0], days: kite[1] }, cas: { level: cas[0], days: cas[1], due: cas[2] === true } });
   assert.deepEqual(syncNudges({ hasSetup: false, sync: sync(['never', null], ['never', null]) }), []);
   assert.deepEqual(syncNudges({ hasSetup: true, sync: sync(['fresh', 0], ['stale', 20]) }), []);
   assert.deepEqual(syncNudges({ hasSetup: true, sync: sync(['stale', 5], ['never', null]) }), [], 'up to a week is covered by SIP estimates');
-  const old = syncNudges({ hasSetup: true, sync: sync(['old', 9], ['old', 40]) });
+  const old = syncNudges({ hasSetup: true, sync: sync(['old', 9], ['stale', 40, true]) });
   assert.deepEqual(old.map((n) => n.key), ['kite', 'cas']);
   assert.match(old[0].text, /9 days ago/);
   assert.match(old[1].text, /40 days ago/);
@@ -751,17 +762,17 @@ test('computeSyncStatus: each person has their own freshness, and a combined vie
   assert.equal(mine.casDate, '2026-11-18');
   const hers = computeSyncStatus({ funds, snapshots, state, view: 'Kruti', today });
   assert.equal(hers.casDate, '2026-11-01');
-  assert.equal(hers.cas.level, 'old');
+  assert.equal(hers.cas.level, 'fresh', 'dated this month');
   // she holds nothing at Zerodha: that place is marked unused, so her view is not nagged about it
   assert.equal(hers.kiteUsed, false);
   assert.equal(hers.casUsed, true);
-  assert.deepEqual(syncNudges({ sync: hers, hasSetup: true, today }), [], 'her CAS is 21 days old, under the 35-day reminder, and Zerodha is unused');
+  assert.deepEqual(syncNudges({ sync: hers, hasSetup: true, today }), [], 'her CAS is from this month, and Zerodha is unused');
   const later = computeSyncStatus({ funds, snapshots, state, view: 'Kruti', today: '2026-12-20' });
   assert.deepEqual(syncNudges({ sync: later, hasSetup: true, today: '2026-12-20' }).map((n) => n.key), ['cas'], 'a stale CAS is reminded, a Zerodha she does not use is not');
   assert.equal(computeSyncStatus({ funds, snapshots, state, view: DEFAULT_OWNER, today }).kiteUsed, true);
   const both = computeSyncStatus({ funds, snapshots, state, view: null, today });
   assert.equal(both.casDate, '2026-11-01', 'the stalest CAS decides the combined freshness');
-  assert.equal(both.cas.level, 'old');
+  assert.equal(both.cas.level, 'fresh');
   assert.equal(both.kiteDate, '2026-11-21', 'only Yash holds anything at Zerodha');
   assert.deepEqual(both.casByOwner.map((p) => p.owner), ['Kruti', DEFAULT_OWNER], 'the stalest first');
   // her own recorded date, under her own key
@@ -812,10 +823,10 @@ test('syncNudges: a reminder names whose holdings are stale once more than one p
   const today = '2026-11-22';
   const both = computeSyncStatus({ funds, snapshots: snaps, state: {}, view: null, today });
   const texts = syncNudges({ sync: both, hasSetup: true, today }).map((n) => n.text);
-  assert.deepEqual(texts, ['Funds outside Zerodha (Kruti) were last updated from a CAS 82 days ago.']);
+  assert.deepEqual(texts, ['Monthly CAS update due: funds outside Zerodha (Kruti) were last updated 82 days ago.']);
   // her own view has one person, so no name is added
   const hers = computeSyncStatus({ funds, snapshots: snaps, state: {}, view: 'Kruti', today });
-  assert.equal(syncNudges({ sync: hers, hasSetup: true, today })[0].text, 'Funds outside Zerodha were last updated from a CAS 82 days ago.');
+  assert.equal(syncNudges({ sync: hers, hasSetup: true, today })[0].text, 'Monthly CAS update due: funds outside Zerodha were last updated 82 days ago.');
   // a Kite that has never synced, with two people holding Zerodha funds, says whose
   const twoKite = [FUNDS[0], { ...FUNDS[0], key: 'K_Z', owner: 'Kruti' }];
   const never = computeSyncStatus({ funds: twoKite, snapshots: [], state: {}, view: null, today });

@@ -68,6 +68,18 @@ export function classifySync(lastSnapshotDate, today) {
   return { level, days, label };
 }
 
+// Funds outside Zerodha rarely change, so a CAS is a monthly job: from the 1st it is due until one is imported (or dated)
+// in that month, and fresh for the rest of the month however many days pass.
+export function classifyMonthlySync(lastSnapshotDate, importedOn, today) {
+  const base = classifySync(lastSnapshotDate, today);
+  if (base.level === 'never') return { ...base, due: false };
+  const updatedOn = importedOn && importedOn > lastSnapshotDate ? importedOn : lastSnapshotDate;
+  const due = updatedOn.slice(0, 7) < today.slice(0, 7);
+  return { ...base, level: due ? 'stale' : 'fresh', due };
+}
+
+const localISO = (d) => (d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : null);
+
 // ---------- whose holdings ----------
 
 // A catalog fund (and a snapshot) says whose it is with `owner`, a household member's name. Without one it is the default
@@ -127,7 +139,9 @@ export function computeSyncStatus({ funds, snapshots, state, view = null, today 
       const recorded = state?.lastSync?.[lastSyncKey(source, o)];
       const fromSnapshots = (snapshots || []).reduce((d, sn) => (sn.source === source && ownerOf(sn) === o && sn.date > d ? sn.date : d), '');
       const date = recorded?.date || fromSnapshots || null;
-      return { owner: o, date, at: recorded?.at?.toDate?.() ?? null, status: classifySync(date, today) };
+      const at = recorded?.at?.toDate?.() ?? null;
+      const status = name === 'cas' ? classifyMonthlySync(date, localISO(at), today) : classifySync(date, today);
+      return { owner: o, date, at, status };
     });
     per.sort((a, b) => SYNC_RANK[b.status.level] - SYNC_RANK[a.status.level] || (a.date || '').localeCompare(b.date || ''));
     out[name] = per[0].status;
@@ -1020,11 +1034,10 @@ export function buildTrade({ fundKey, kind, date, amount, units, funds, navByCod
 
 // ---------- sync reminders ----------
 
-const CAS_DUE_DAYS = 35;
 const OVERLAP_DUE_DAYS = 45;
 
 // Reminders shown above the numbers. Kite holdings are due after a week (SIP estimates cover the days between); a
-// CAS is due after about a month. Nothing is said before the first setup.
+// CAS is due once a month, from the 1st. Nothing is said before the first setup.
 export function syncNudges({ sync, hasSetup, overlapDate = null, today = null }) {
   if (!hasSetup || !sync) return [];
   const out = [];
@@ -1045,8 +1058,8 @@ export function syncNudges({ sync, hasSetup, overlapDate = null, today = null })
       out.push({ key: 'stocks', level: 'old', text: `Stocks${whose(sync.stocksByOwner)} were last synced ${sync.stocks.days} days ago. Their prices are as of then.` });
     }
   }
-  if (sync.casUsed !== false && sync.cas.level !== 'never' && sync.cas.days > CAS_DUE_DAYS) {
-    out.push({ key: 'cas', level: 'stale', text: `Funds outside Zerodha${whose(sync.casByOwner)} were last updated from a CAS ${sync.cas.days} days ago.` });
+  if (sync.casUsed !== false && sync.cas.due) {
+    out.push({ key: 'cas', level: 'stale', text: `Monthly CAS update due: funds outside Zerodha${whose(sync.casByOwner)} were last updated ${sync.cas.days} days ago.` });
   }
   // The overlap numbers come from monthly portfolio disclosures, so they go stale on their own.
   if (overlapDate && today && isIsoDate(overlapDate) && daysBetween(overlapDate, today) > OVERLAP_DUE_DAYS) {
