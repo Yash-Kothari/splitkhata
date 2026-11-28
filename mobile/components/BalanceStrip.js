@@ -337,15 +337,16 @@ export default function BalanceStrip({
 
       {isTravel
         ? cashByCurrency
-            .filter((c) => c.opening || c.withdrawn || c.spent)
+            .filter((c) => c.opening || c.withdrawn || c.exchanged || c.spent)
             .map((c) => (
               <Text key={c.currency} className="font-body text-sm text-muted-text mt-1">
-                💵 Cash left{cashByCurrency.filter((x) => x.opening || x.withdrawn || x.spent).length > 1 ? ` in ${c.currency}` : ''}:{' '}
+                💵 Cash left{cashByCurrency.filter((x) => x.opening || x.withdrawn || x.exchanged || x.spent).length > 1 ? ` in ${c.currency}` : ''}:{' '}
                 <Text className={`font-mono-bold ${c.balance < 0 ? 'text-stamp-red' : 'text-ink'}`}>
                   {c.currency} {c.balance.toFixed(2)}
                 </Text>
                 <Text className="font-mono text-2xs">
-                  {'  '}({(c.opening + c.withdrawn).toFixed(2)} in, {c.spent.toFixed(2)} spent)
+                  {'  '}({(c.opening + c.withdrawn + Math.max(c.exchanged, 0)).toFixed(2)} in, {c.spent.toFixed(2)} spent
+                  {c.exchanged < 0 ? `, ${(-c.exchanged).toFixed(2)} exchanged` : ''})
                 </Text>
               </Text>
             ))

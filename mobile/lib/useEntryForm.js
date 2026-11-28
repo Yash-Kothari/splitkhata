@@ -2,10 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   buildPaymentInstruments,
   checkCustomSharesTotal,
-  computeFifoCashAmount,
-  formatFifoBreakdownSummary,
+  formatCurrency,
   getLastEntryDefaults,
-  isCashPaid,
   isPointsCard,
   isStatementOnlyCard,
   isValidISODate,
@@ -15,6 +13,7 @@ import {
   previewTransactionReward,
   resolveStrategyParamsForDate,
   splitEntryPoints,
+  isCashExchange,
   isWithdrawalEntry,
   localCurrencyOf,
   parseAmountInput,
@@ -22,6 +21,7 @@ import {
   resolveInstrument,
   todayISO,
 } from './utils';
+import { formatCashBreakdown, priceCashPurchase } from './tripCash';
 
 // The state and rules shared by Add Entry and Edit Entry, so the two forms
 // can't drift apart: the same fields, the same defaults logic, the same
@@ -38,6 +38,7 @@ export function useEntryForm({
   currentCurrency = 'INR',
   tripCurrencies = null,
   tripEntries = [],
+  cashMovements = [],
   recentEntries = [],
   deviceName,
   extraMoreOpen = false,
@@ -183,28 +184,27 @@ export function useEntryForm({
   const localCurrency = [currencyChoice, isEdit ? null : lastEntry?.localCurrency].find((c) => c && currencyOptions.includes(c)) || currentCurrency;
   // An ATM withdrawal's currency is the one its cash record was saved with - not editable here.
   const currencyLocked = isEdit && isWithdrawalEntry(entry);
+  // A currency exchange's amounts and payer come from the cash it used (tripCash.js): only its split, date and note change here.
+  const isExchange = isEdit && isCashExchange(entry);
 
-  // Cash purchases on a trip are priced from the ATM withdrawals, oldest first - each currency is its
-  // own pool, so a purchase in one currency only ever draws on withdrawals in that same currency.
-  const tripWithdrawals = useMemo(
-    () => tripEntries.filter((e) => isWithdrawalEntry(e) && localCurrencyOf(e, currentCurrency) === localCurrency),
-    [tripEntries, localCurrency, currentCurrency],
-  );
-  const otherCashEntries = useMemo(
-    () => tripEntries.filter((e) => isCashPaid(e) && localCurrencyOf(e, currentCurrency) === localCurrency),
-    [tripEntries, localCurrency, currentCurrency],
-  );
+  // Cash purchases on a trip are priced from the trip's cash, oldest first: starting cash that has a rate, then ATM
+  // withdrawals and exchanges (see tripCash.js). Each currency is its own pool.
   const entryId = entry?.id ?? null;
   const entryCreatedAt = entry?.createdAt ?? null;
   const fifoResult = useMemo(() => {
-    // A refund does not use up any ATM withdrawal.
-    if (isRefund) return null;
+    // A refund does not use up any cash, and an exchange is not a purchase.
+    if (isRefund || isExchange) return null;
     const parsedLocal = parseAmountInput(localAmount);
     if (!parsedLocal || parsedLocal <= 0) return null;
-    return computeFifoCashAmount(tripWithdrawals, otherCashEntries, { id: entryId, date, createdAt: entryCreatedAt, localAmount: parsedLocal });
-  }, [tripWithdrawals, otherCashEntries, date, localAmount, entryId, entryCreatedAt, isRefund]);
+    return priceCashPurchase({
+      entries: tripEntries,
+      movements: cashMovements,
+      primaryCurrency: currentCurrency,
+      target: { id: entryId, date, createdAt: entryCreatedAt, localAmount: parsedLocal, localCurrency },
+    });
+  }, [tripEntries, cashMovements, currentCurrency, localCurrency, date, localAmount, entryId, entryCreatedAt, isRefund, isExchange]);
   const fifoBreakdownText = useMemo(
-    () => (fifoResult ? formatFifoBreakdownSummary(fifoResult.breakdown, localCurrency) : ''),
+    () => (fifoResult ? formatCashBreakdown(fifoResult.breakdown, localCurrency) : ''),
     [fifoResult, localCurrency],
   );
   const amountLocked = isTravel && selectedInstrument?.type === 'cash' && fifoResult != null;
@@ -214,6 +214,14 @@ export function useEntryForm({
   const [moreToggle, setMoreToggle] = useState(null);
   const moreOpen = moreToggle ?? Boolean(tagsText.trim() || rewardPoints.trim() || extraMoreOpen);
 
+  // Said under the amount when an owner's own cash pays for it, because the balance then counts it as paid by them.
+  const ownCashNote = amountLocked
+    ? fifoResult.ownParts
+        .map(({ owner, amount: part }) =>
+          `${formatCurrency(part)} is from ${owner}'s own cash: it counts now, as paid by ${owner}.${splitType === 'personal' && payer !== owner ? ` ${payer} will owe ${owner} for it.` : ''}`,
+        )
+        .join(' ')
+    : '';
   const customSharesCheck = checkCustomSharesTotal(customShares, Math.abs(amountValue || 0), splitMode);
   const customSplitInvalid = splitType === 'custom' && !customSharesCheck.ok;
 
@@ -278,6 +286,7 @@ export function useEntryForm({
   return {
     isEdit,
     isTravel,
+    exchange: isExchange ? entry : null,
     hasPoints,
     instruments,
     paymentMethodOptions,
@@ -303,7 +312,7 @@ export function useEntryForm({
     skipCardTracking, setSkipCardTracking, canSkipCard: canSkipCard && !asRedemption, cardSkipped,
     canRedeem, asRedemption, cardRedeemed, pointsValue, pointsFields, savedWorth: worthUnchanged ? savedWorth : null,
     pointsEarned, setPointsEarned, pointsRedeemed, setPointsRedeemed, earnedInvalid, redeemedInvalid, suggestedEarned,
-    fifoResult, fifoBreakdownText, amountLocked,
+    fifoResult, fifoBreakdownText, amountLocked, ownCashNote,
     moreOpen, setMoreToggle,
     amountInvalid, localAmountInvalid, pointsInvalid, dateInvalid, inputInvalid,
   };

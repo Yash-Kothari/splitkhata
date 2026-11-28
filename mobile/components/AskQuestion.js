@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
 import { usePathname } from 'expo-router';
 import { randomUUID } from 'expo-crypto';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { setAskPanelOpen } from '../lib/askPanelState';
-import { subscribeToExpenses, subscribeToCategories, subscribeToMembers, subscribeToTrips, generateStructured, generateDigest } from '../lib/firebase';
+import { subscribeToExpenses, subscribeToCategories, subscribeToMembers, subscribeToTrips, subscribeToCashMovements, generateStructured, generateDigest } from '../lib/firebase';
+import { applyCashFunding } from '../lib/tripCash';
 import { buildAskQuestionSchema, buildAskQuestionPrompt, buildAskAnswerNarrationPrompt, resolveAskQuery, todayISO } from '../lib/utils';
 import { reportError } from '../lib/errorReporting';
 import { shadowStyle } from '../lib/shadow';
@@ -38,9 +39,11 @@ export default function AskQuestion() {
   const [categories, setCategories] = useState({ household: [], travel: [] });
   const [members, setMembers] = useState([]);
   const [trips, setTrips] = useState([]);
+  const [cashMovements, setCashMovements] = useState([]);
 
   useEffect(() => subscribeToExpenses('household', setHouseholdEntries, (err) => reportError(err, 'Could not load household entries')), []);
   useEffect(() => subscribeToExpenses('travel', setTravelEntries, (err) => reportError(err, 'Could not load travel entries')), []);
+  useEffect(() => subscribeToCashMovements(setCashMovements, (err) => reportError(err, 'Could not load cash movements')), []);
   useEffect(
     () =>
       subscribeToCategories((data) => {
@@ -58,7 +61,10 @@ export default function AskQuestion() {
   );
   useEffect(() => subscribeToTrips(setTrips, (err) => reportError(err, 'Could not load trips')), []);
 
-  const allEntries = [...householdEntries, ...travelEntries];
+  const allEntries = useMemo(
+    () => [...householdEntries, ...applyCashFunding(travelEntries, cashMovements, trips)],
+    [householdEntries, travelEntries, cashMovements, trips],
+  );
   const allCategories = Array.from(new Set([...categories.household, ...categories.travel]));
   const tripNames = trips.map((t) => t.name);
 

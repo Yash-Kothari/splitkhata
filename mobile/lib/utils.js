@@ -263,85 +263,6 @@ export function searchAllEntries(entries, term, filters = {}) {
     .slice(0, GLOBAL_SEARCH_RESULT_LIMIT);
 }
 
-// Chronological order for the FIFO cash queue: date first, then createdAt
-// as a tie-break. An entry with no createdAt yet (still being composed in
-// AddEntryForm, not saved) sorts last among same-date entries, so it
-// queues behind whatever's already recorded for that day.
-function fifoSortKey(entry) {
-  return `${entry.date || ''}_${entry.createdAt || '9999-99-99'}`;
-}
-
-// Prices a cash purchase by walking the trip's withdrawals as a single
-// FIFO queue of local-currency "chunks", each at its own rate, consumed in
-// order by every cash purchase that came before this one (by date, then
-// createdAt). A purchase that straddles two withdrawals - one nearly
-// drained, a fresh one covering the rest - is billed at each withdrawal's
-// own rate for the exact portion it funds, e.g. $10 of a $90 purchase at
-// the old rate and $80 at the new one, not a blend of the two across the
-// full $90. A later withdrawal can only ever fund purchases that come
-// after it in the queue, so it never changes what an earlier purchase was
-// billed. Returns null if the known withdrawals don't yet cover this
-// purchase's full local amount (so the caller can fall back to manual
-// entry instead of guessing) - otherwise { amount, breakdown }, where
-// breakdown lists which withdrawal(s) funded which slice, for a note
-// explaining how the amount was derived.
-export function computeFifoCashAmount(withdrawals = [], otherCashEntries = [], targetEntry) {
-  const sortedWithdrawals = [...withdrawals].sort((a, b) => fifoSortKey(a).localeCompare(fifoSortKey(b)));
-  const targetKey = fifoSortKey(targetEntry);
-
-  const priorLocal = otherCashEntries
-    .filter((e) => e.id !== targetEntry.id && fifoSortKey(e) < targetKey)
-    .reduce((sum, e) => sum + Number(e.localAmount || 0), 0);
-
-  const targetLocal = Number(targetEntry.localAmount || 0);
-  if (targetLocal <= 0) return null;
-
-  const rangeStart = priorLocal;
-  const rangeEnd = priorLocal + targetLocal;
-
-  let cursor = 0;
-  let coveredLocal = 0;
-  let inrSum = 0;
-  const breakdown = [];
-
-  for (const w of sortedWithdrawals) {
-    const wLocal = Number(w.localAmount || 0);
-    if (wLocal <= 0) continue;
-    const wStart = cursor;
-    const wEnd = cursor + wLocal;
-    cursor = wEnd;
-
-    const overlapLocal = Math.min(rangeEnd, wEnd) - Math.max(rangeStart, wStart);
-    if (overlapLocal > 0) {
-      const rate = Number(w.amount || 0) / wLocal;
-      const overlapInr = overlapLocal * rate;
-      inrSum += overlapInr;
-      coveredLocal += overlapLocal;
-      breakdown.push({
-        date: w.date,
-        localAmount: Math.round(overlapLocal * 100) / 100,
-        rate,
-        inr: Math.round(overlapInr * 100) / 100,
-      });
-    }
-  }
-
-  if (coveredLocal < targetLocal - 0.01) return null;
-  return { amount: Math.round(inrSum * 100) / 100, breakdown };
-}
-
-// Turns computeFifoCashAmount's breakdown into a short human-readable
-// explanation for a hover tooltip, quoted as a standard FX rate (1 unit of
-// the local currency = so many INR), e.g. "10 TWD @ 1 TWD = ₹10.00
-// (withdrawal 2030-01-01) + 80 TWD @ 1 TWD = ₹11.00 (withdrawal 2030-01-03)".
-export function formatFifoBreakdownSummary(breakdown = [], currency = '') {
-  if (!breakdown.length) return '';
-  const unit = currency || 'unit';
-  return breakdown
-    .map((b) => `${b.localAmount} ${unit} @ 1 ${unit} = ₹${b.rate.toFixed(2)} (withdrawal ${b.date || '?'})`)
-    .join(' + ');
-}
-
 // Rupee floating-point addition isn't associative, so summing hundreds of
 // entries in whatever order Firestore happens to return them can silently
 // drift a total by a few paise depending on entry order - the same trip,
@@ -809,8 +730,23 @@ export function getDefaultYear(availableYears, today = todayISO()) {
 // and South Korea both had shared cash purchases, and both silently
 // double-counted until caught against their real Splitwise settlement
 // figures. See tests/utils.test.mjs for the regression cases.
+// The one exception is cash an owner bought before the trip (starting cash with a rupee rate, see tripCash.js): nobody was
+// charged for it, so the part of a purchase it paid for counts, as paid by its owner. An exchange of two owners' cash
+// counts as each one's own part.
 export function excludeCashSpend(entries) {
-  return entries.filter((e) => !isCashPaid(e));
+  return entries.flatMap((e) => (isCashPaid(e) || (isCashExchange(e) && e.ownCash?.length > 1) ? ownCashAsSpend(e) : [e]));
+}
+
+// `ownCash` is [{ owner, amount }] (added by applyCashFunding). Who it was for stays as entered: a shared or custom split is
+// unchanged, an "owed" purchase is still owed by the same person, and a personal one is owed by whoever it was for when
+// that is not the owner of the cash.
+function ownCashAsSpend(e) {
+  return (e.ownCash || []).map(({ owner, amount }) => {
+    const paid = { ...e, amount, payer: owner };
+    if (e.split && e.splitType === 'owed') return e.owedBy === owner ? { ...paid, split: false } : paid;
+    if (e.split || e.payer === owner) return paid;
+    return { ...paid, split: true, splitType: 'owed', owedBy: e.payer };
+  });
 }
 
 // Cash-ness comes from the instrument type saved on the entry (paymentType),
@@ -831,6 +767,11 @@ function isCashInstrumentEntry(entry) {
 // the trip) - so a cash-paid entry is never a withdrawal, whatever its flag says.
 export function isWithdrawalEntry(entry) {
   return Boolean(entry?.isWithdrawal) && !isCashInstrumentEntry(entry);
+}
+
+// A currency exchange: a withdrawal whose money came from other cash (`exchangedFrom`), not from a card.
+export function isCashExchange(entry) {
+  return Boolean(entry?.exchangedFrom?.currency) && isWithdrawalEntry(entry);
 }
 
 // A withdrawal is never "cash spend": it's the card/forex charge that carries
@@ -890,24 +831,31 @@ export function computeTripCashByCurrency(entries, cashMovements, tripId, legacy
   const tripMovements = (cashMovements || []).filter(matchesTrip);
   const pools = new Map();
   const pool = (currency) => {
-    if (!pools.has(currency)) pools.set(currency, { currency, openingP: 0, withdrawnP: 0, spentP: 0 });
+    if (!pools.has(currency)) pools.set(currency, { currency, openingP: 0, withdrawnP: 0, exchangedP: 0, spentP: 0 });
     return pools.get(currency);
   };
   pool(primaryCurrency);
   for (const m of tripMovements.filter((x) => x.type === 'opening')) pool(localCurrencyOf(m, primaryCurrency)).openingP += toPaise(m.amount);
-  const withdrawalEntries = tripEntries.filter(isWithdrawalEntry);
+  const withdrawalEntries = tripEntries.filter((e) => isWithdrawalEntry(e) && !isCashExchange(e));
   if (withdrawalEntries.length) {
     for (const e of withdrawalEntries) pool(localCurrencyOf(e, primaryCurrency)).withdrawnP += toPaise(e.localAmount);
   } else {
     for (const m of tripMovements.filter((x) => x.type === 'withdrawal')) pool(localCurrencyOf(m, primaryCurrency)).withdrawnP += toPaise(m.amount);
   }
+  for (const e of tripEntries.filter(isCashExchange)) {
+    pool(e.exchangedFrom.currency).exchangedP -= toPaise(e.exchangedFrom.amount);
+    pool(localCurrencyOf(e, primaryCurrency)).exchangedP += toPaise(e.localAmount);
+  }
   for (const e of tripEntries.filter(isCashPaid)) pool(localCurrencyOf(e, primaryCurrency)).spentP += toPaise(e.localAmount);
-  return [...pools.values()].map(({ currency, openingP, withdrawnP, spentP }) => {
-    const opening = openingP / 100;
-    const withdrawn = withdrawnP / 100;
-    const spent = spentP / 100;
-    return { currency, opening, withdrawn, spent, balance: Math.round((opening + withdrawn - spent) * 100) / 100 };
-  });
+  // `exchanged` is the net: what exchanges brought into this currency less what they took out.
+  return [...pools.values()].map(({ currency, openingP, withdrawnP, exchangedP, spentP }) => ({
+    currency,
+    opening: openingP / 100,
+    withdrawn: withdrawnP / 100,
+    exchanged: exchangedP / 100,
+    spent: spentP / 100,
+    balance: (openingP + withdrawnP + exchangedP - spentP) / 100,
+  }));
 }
 
 export function computeTripTotalSpend(entries, members = null) {

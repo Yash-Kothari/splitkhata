@@ -964,7 +964,7 @@ export async function updateTripInDb(tripId, updates) {
 }
 
 // A rename has zero cascading writes, unlike everything else that used to
-// touch a trip's name (deleteTripCascade, setOpeningCash, every travel entry)
+// touch a trip's name (deleteTripCascade, saveStartingCash, every travel entry)
 // - now that tripId is the real join key (P1-4), the name is purely a label
 // on the trip doc itself. Still guarded against colliding with another
 // trip's name, the same guard TripPicker's create form already has -
@@ -1103,10 +1103,6 @@ export function subscribeToCashMovements(onData, onError) {
   );
 }
 
-export async function addCashMovementToDb(movement) {
-  await track(addDoc(cashMovementsRef(), { ...movement, createdAt: serverTimestamp() }), 'Could not save cash record');
-}
-
 // Atomic: an ATM withdrawal is really two records at once - the cash
 // movement (what left the card/account) and the shared expense entry
 // (where that cash went) - previously two separate calls, which on a
@@ -1120,27 +1116,19 @@ export async function addWithdrawal(movement, entry) {
   await track(batch.commit(), 'Could not record the withdrawal');
 }
 
-// Starting cash is one value per trip AND currency: this replaces every earlier opening record for
-// that currency. Saving used to add another record each time, so correcting 20,000 to 25,000
-// showed 45,000.
-// Each currency's opening record lives at the deterministic id `opening_${tripId}_${currency}`, so
-// saving is just an overwrite. Records from before trips had several currencies sit at
-// `opening_${tripId}` with no currency, which means the trip's main currency (`primaryCurrency`) -
-// they are removed when that currency's opening is saved again, as is any other 'opening' record
-// for the same currency, or the trip's cash balance would double-count two of them.
-export async function setOpeningCash(tripId, amount, currency, primaryCurrency = currency) {
-  const openingRef = doc(cashMovementsRef(), `opening_${tripId}_${currency}`);
-  const existing = await getDocs(query(cashMovementsRef(), where('tripId', '==', tripId), where('type', '==', 'opening')));
+// Starting cash is one record per trip, currency and owner (without a rupee rate there is no owner: one per currency). Each
+// lives at a fixed id, so saving again corrects it instead of adding to it; `replacedIds` (see startingCashReplaced) are the
+// older records it takes the place of. The caller passes them from the records already on screen, so this works offline.
+export async function saveStartingCash(record, replacedIds = []) {
+  const id = ['opening', record.tripId, record.currency, record.owner].filter(Boolean).join('_');
   const batch = writeBatch(dbInstance);
-  existing.docs.forEach((d) => {
-    if (d.id !== openingRef.id && (d.data().currency || primaryCurrency) === currency) batch.delete(d.ref);
-  });
-  batch.set(openingRef, { tripId, type: 'opening', amount, currency, createdAt: serverTimestamp() });
-  await track(batch.commit(), 'Could not save opening cash');
+  replacedIds.filter((old) => old !== id).forEach((old) => batch.delete(docAt('cashMovements', old)));
+  batch.set(doc(cashMovementsRef(), id), { ...record, type: 'opening', createdAt: serverTimestamp() });
+  await track(batch.commit(), 'Could not save starting cash');
 }
 
 export async function deleteCashMovementFromDb(id) {
-  await deleteDoc(docAt('cashMovements', id));
+  await track(deleteDoc(docAt('cashMovements', id)), 'Could not remove the cash record');
 }
 
 // --- Payment methods (travel ledger - "Cash", "Yash Forex", "Kruti Diners", etc.) ---

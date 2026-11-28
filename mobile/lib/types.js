@@ -47,6 +47,8 @@
  * @property {boolean} [pinned] - floats this entry to the top of EntryList regardless of sort order
  * @property {string[]} [tags] - free-form labels, shown as chips and matched by search
  * @property {*} [createdAt] - a Firestore Timestamp server-side, or an ISO string once read back
+ * @property {{currency: string, amount: number}} [exchangedFrom] - a currency exchange: an isWithdrawal entry whose cash
+ *   came from this other cash; localAmount / localCurrency are what was received (see tripCash.js)
  */
 
 /**
@@ -71,16 +73,18 @@
  */
 
 /**
- * A row in the `cashMovements` collection - a trip's opening cash balance or
- * an ATM withdrawal, in one of the trip's local currencies.
+ * A row in the `cashMovements` collection - a trip's starting cash (see tripCash.js) or an ATM withdrawal.
  * @typedef {Object} CashMovement
- * @property {string} [id] - an 'opening'-type doc's id is `opening_${tripId}_${currency}` (older ones `opening_${tripId}`, see setOpeningCash)
+ * @property {string} [id] - an 'opening' doc's id is `opening_${tripId}_${currency}`, plus `_${owner}` when it has one (see saveStartingCash)
  * @property {string|null} [tripId] - the owning Trip's id (P1-4). See Entry.tripId for the same legacy-fallback caveat.
  * @property {string} [tripName] - legacy join key, see Entry.tripName
  * @property {'opening'|'withdrawal'} type
- * @property {number} amount - in `currency`
+ * @property {number} [amount] - opening and withdrawal, in `currency`
  * @property {string} [currency] - absent means the trip's main currency
- * @property {string} [date] - YYYY-MM-DD, withdrawal-type only
+ * @property {number|null} [rate] - opening: rupees paid for 1 unit; with `owner`, spending it counts as the owner's
+ * @property {string|null} [owner] - opening: whose cash it is
+ * @property {{tripId: string, tripName: string}|null} [carriedFrom] - opening: the trip whose leftover this is
+ * @property {string} [date] - YYYY-MM-DD
  * @property {*} [createdAt] - a Firestore Timestamp server-side, or an ISO string once read back
  */
 

@@ -3,13 +3,13 @@ import { View, Text, TextInput, Pressable, Modal, ScrollView, useWindowDimension
 import { notify, confirmAsync } from '../lib/dialogs';
 import PickerField from './PickerField';
 import DateField from './DateField';
+import TripCashSettings from './TripCashSettings';
 import {
   updateTripInDb,
   renameTripInDb,
   archiveTripInDb,
   deleteTripCascade,
   addWithdrawal,
-  setOpeningCash as setOpeningCashInDb,
   addGuestToDb,
   deleteGuestFromDb,
   renameGuestInDb,
@@ -68,9 +68,7 @@ export default function TripSettings({
   const [currencyDraft, setCurrencyDraft] = useState('INR');
   const [datesStart, setDatesStart] = useState('');
   const [datesEnd, setDatesEnd] = useState('');
-  const [openingCash, setOpeningCash] = useState('');
-  // Which of the trip's currencies the starting cash / ATM withdrawal below is in (null = the main one).
-  const [openingCurrencyChoice, setOpeningCurrencyChoice] = useState(null);
+  // Which of the trip's currencies the ATM withdrawal below is in (null = the main one).
   const [withdrawalCurrencyChoice, setWithdrawalCurrencyChoice] = useState(null);
   const [newCurrency, setNewCurrency] = useState('');
   const [withdrawalAmount, setWithdrawalAmount] = useState('');
@@ -114,14 +112,15 @@ export default function TripSettings({
   const tripCurrencies = getTripCurrencies(trip);
   const mainCurrency = tripCurrencies[0];
   const pickCurrency = (choice) => (choice && tripCurrencies.includes(choice) ? choice : mainCurrency);
-  const openingCurrency = pickCurrency(openingCurrencyChoice);
   const withdrawalCurrency = pickCurrency(withdrawalCurrencyChoice);
   const addableCurrencies = currencies.filter((c) => !tripCurrencies.includes(c));
   // A currency can only be taken off the trip while nothing is in it.
   const currencyInUse = (c) =>
     (entries || []).some(
       (e) => normalizeLedger(e.ledger) === 'travel' && (e.tripId ? e.tripId === trip?.id : e.tripName === trip?.name) && e.localAmount != null && localCurrencyOf(e, mainCurrency) === c,
-    ) || (cashMovements || []).some((m) => (m.tripId ? m.tripId === trip?.id : m.tripName === trip?.name) && localCurrencyOf(m, mainCurrency) === c);
+    ) || (entries || []).some((e) => e.tripId === trip?.id && e.exchangedFrom?.currency === c) || (cashMovements || []).some(
+      (m) => (m.tripId ? m.tripId === trip?.id : m.tripName === trip?.name) && localCurrencyOf(m, mainCurrency) === c,
+    );
 
   const tripCategoryTotals = useMemo(
     () =>
@@ -223,21 +222,6 @@ export default function TripSettings({
     }
     try {
       await updateTripInDb(trip.id, { startDate: datesStart || null, endDate: datesEnd || null });
-    } catch (err) {
-      onSaveError?.(err);
-    }
-  }
-
-  async function handleSaveCash() {
-    const parsed = parseAmountInput(openingCash);
-    if (!(parsed > 0)) {
-      notify('Check the amount', 'Enter an amount like 20000 or 20,000.');
-      return;
-    }
-    try {
-      await setOpeningCashInDb(trip.id, parsed, openingCurrency, mainCurrency);
-      setOpeningCash('');
-      notify('Starting cash set', `Starting cash for this trip is now ${parsed.toLocaleString('en-IN')} ${openingCurrency || ''}.`.trim());
     } catch (err) {
       onSaveError?.(err);
     }
@@ -404,7 +388,7 @@ export default function TripSettings({
           <Text className="font-body text-2xs text-muted-text mb-2">
             A trip that crosses borders can use more than one foreign currency. Add the extra ones here, then pick the
             currency on each entry, starting cash and ATM withdrawal. Each currency keeps its own cash balance, and cash
-            in one never pays for purchases in another.
+            in one pays for purchases in another only once it is recorded under Exchange Cash.
           </Text>
           <View className="flex-row flex-wrap">
             {(trip.otherCurrencies || []).map((c) => (
@@ -436,28 +420,15 @@ export default function TripSettings({
             </Text>
           </View>
 
-          <View className="border-t border-ink/10 pt-4 mt-5 mb-5">
-            <Text className={sectionTitle}>Starting Cash</Text>
-            {tripCurrencies.length > 1 && (
-              <View className="mb-2">
-                <PickerField label="Currency" value={openingCurrency} options={tripCurrencies} onChange={setOpeningCurrencyChoice} />
-              </View>
-            )}
-            <Text className={fieldLabel}>Amount ({openingCurrency || 'Local'})</Text>
-            <View className="flex-row items-center" style={{ gap: 12 }}>
-              <TextInput
-                value={openingCash}
-                onChangeText={setOpeningCash}
-                keyboardType="decimal-pad"
-                placeholder="0"
-                className={`flex-1 min-w-0 ${inputBox}`}
-                style={{ minWidth: 0 }}
-              />
-              <Pressable onPress={handleSaveCash} className="min-h-11 px-5 shrink-0 rounded-lg bg-ledger-green items-center justify-center">
-                <Text className="font-body-semibold text-sm text-white">Set Starting Cash</Text>
-              </Pressable>
-            </View>
-          </View>
+          <TripCashSettings
+            key={trip.id}
+            trip={trip}
+            trips={trips}
+            entries={entries}
+            movements={cashMovements}
+            members={[...dbMembers, ...tripGuests]}
+            onSaveError={onSaveError}
+          />
 
           <View className="border-t border-ink/10 pt-4 mb-5">
             <Text className={sectionTitle}>ATM Cash Withdrawal</Text>

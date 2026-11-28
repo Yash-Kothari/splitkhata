@@ -21,6 +21,7 @@ import { useJump } from '../../lib/JumpContext';
 import { useUndoDelete } from '../../lib/useUndoDelete';
 import { usePaymentInstruments } from '../../lib/usePaymentInstruments';
 import { DEFAULT_PERSONS, DEFAULT_TRAVEL_CATEGORIES, normalizeLedger, formatCurrency, memberForUser, pickDefaultTrip, computeTripCashByCurrency, getTripCurrencies } from '../../lib/utils';
+import { applyCashFunding, belongsToTrip } from '../../lib/tripCash';
 import { reportError } from '../../lib/errorReporting';
 import AppHeader from '../../components/AppHeader';
 import TripPicker from '../../components/TripPicker';
@@ -36,7 +37,7 @@ import UndoToast from '../../components/UndoToast';
 function TravelScreen() {
   const { user } = useAuth();
   const { pendingJump, setPendingJump } = useJump();
-  const [allTravelEntries, setAllTravelEntries] = useState(null);
+  const [storedTravelEntries, setStoredTravelEntries] = useState(null);
   const [trips, setTrips] = useState([]);
   const [cashMovements, setCashMovements] = useState([]);
   const [categories, setCategories] = useState(DEFAULT_TRAVEL_CATEGORIES);
@@ -46,6 +47,8 @@ function TravelScreen() {
   const [currencies, setCurrencies] = useState([]);
   const [creditCards, setCreditCards] = useState([]);
   const [cardTransactions, setCardTransactions] = useState([]);
+  // The entries as the trip reads them: purchases paid from someone's own starting cash carry what counts (tripCash.js).
+  const allTravelEntries = useMemo(() => applyCashFunding(storedTravelEntries, cashMovements, trips), [storedTravelEntries, cashMovements, trips]);
   const instruments = usePaymentInstruments(creditCards);
 
   const [pickedTripId, setSelectedTripId] = useState('');
@@ -77,7 +80,7 @@ function TravelScreen() {
     reportError(err, 'Could not delete entry'),
   );
 
-  useEffect(() => subscribeToExpenses('travel', setAllTravelEntries, (err) => reportError(err, 'Could not load travel entries')), []);
+  useEffect(() => subscribeToExpenses('travel', setStoredTravelEntries, (err) => reportError(err, 'Could not load travel entries')), []);
   useEffect(() => subscribeToTrips(setTrips, (err) => reportError(err, 'Could not load trips')), []);
   useEffect(() => subscribeToCashMovements(setCashMovements, (err) => reportError(err, 'Could not load cash movements')), []);
   useEffect(
@@ -134,6 +137,11 @@ function TravelScreen() {
   );
   const cashBalances = useMemo(() => Object.fromEntries(cashByCurrency.map((c) => [c.currency, c.balance])), [cashByCurrency]);
   const tripCurrencies = useMemo(() => getTripCurrencies(selectedTripObj), [selectedTripObj]);
+
+  const tripCashRecords = useMemo(
+    () => cashMovements.filter((m) => selectedTripObj && belongsToTrip(m, selectedTripObj.id, selectedTripObj.name)),
+    [cashMovements, selectedTripObj],
+  );
 
   const activeMembersList = useMemo(
     () => (selectedTripObj?.guests?.length ? [...members, ...selectedTripObj.guests] : members),
@@ -244,6 +252,7 @@ function TravelScreen() {
                   tripCurrencies={tripCurrencies}
                   instruments={instruments}
                   tripEntries={tripEntries}
+                  cashMovements={tripCashRecords}
                   cashBalances={cashBalances}
                   creditCards={creditCards}
                   cardTransactions={cardTransactions}
@@ -272,6 +281,7 @@ function TravelScreen() {
                 currentCurrency={selectedTripObj.currency}
                 tripCurrencies={tripCurrencies}
                 highlightId={highlightEntryId}
+                cashMovements={tripCashRecords}
                 pendingDeletes={pendingDeletes}
                 onDelete={handleDelete}
               />

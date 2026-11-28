@@ -2,6 +2,7 @@ import { View, Text, TextInput, Pressable, Keyboard } from 'react-native';
 import PickerField from './PickerField';
 import DateField from './DateField';
 import CustomSplitEditor from './CustomSplitEditor';
+import { formatCurrency } from '../lib/utils';
 
 // The fields of Add Entry and Edit Entry, in one place: change the layout or
 // add a field here and both forms get it. `f` is the object from useEntryForm.
@@ -64,12 +65,23 @@ export default function EntryFormFields({
   afterFields = null,
   moreExtra = null,
 }) {
-  const { isTravel } = f;
+  const { isTravel, exchange } = f;
   const moreParts = ['tags', f.hasPoints && !f.pointsFields ? 'reward points' : null, moreExtra ? 'split across months' : null].filter(Boolean);
 
   return (
     <>
       <View className="flex-row flex-wrap" style={{ gap: 14 }}>
+        {exchange ? (
+          <View className="w-full rounded-xl border border-ink/10 bg-paper px-3.5 py-2.5">
+            <Text className="font-mono-bold text-sm text-ink">
+              {formatCurrency(exchange.exchangedFrom.amount, exchange.exchangedFrom.currency)} → {formatCurrency(exchange.localAmount, exchange.localCurrency)}
+            </Text>
+            <Text className="font-body text-2xs text-muted-text mt-0.5">
+              {f.amountValue ? `Adds ${formatCurrency(f.amountValue)} to the trip, paid by ${f.payer}.` : 'Adds nothing: this cash was already counted.'} To change the amounts, delete this and record it again.
+            </Text>
+          </View>
+        ) : (
+        <>
         <View className={FIELD_HALF}>
           <Text className={labelClass}>Amount (₹){isTravel ? ' - real cost' : ''}</Text>
           <TextInput
@@ -83,6 +95,7 @@ export default function EntryFormFields({
             }`}
           />
           {f.amountLocked && f.fifoBreakdownText ? <Text className="font-body text-2xs text-muted-text mt-1">{f.fifoBreakdownText}</Text> : null}
+          {f.ownCashNote ? <Text className="font-body-semibold text-2xs text-ledger-green mt-1">{f.ownCashNote}</Text> : null}
           {f.amountInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Enter an amount like 1200 or 1200.50</Text> : null}
           <Pressable
             onPress={() => f.setRefund(!f.isRefund)}
@@ -146,6 +159,8 @@ export default function EntryFormFields({
         <View className={FIELD_HALF}>
           <PickerField label="Who Paid" value={f.payer} options={members} onChange={f.setPayer} />
         </View>
+        </>
+        )}
 
         <View className={FIELD_HALF}>
           <PickerField label="Split Type" value={f.splitType} options={SPLIT_TYPE_OPTIONS} onChange={f.setSplitType} />
@@ -162,14 +177,16 @@ export default function EntryFormFields({
           </View>
         )}
 
-        <View className={isTravel || f.showTravelMultiplier ? FIELD_HALF : FIELD_FULL}>
-          <PickerField
-            label="Payment Method"
-            value={f.paymentMethod || 'Not set'}
-            options={f.paymentMethodOptions}
-            onChange={f.handlePaymentMethodChange}
-          />
-        </View>
+        {exchange ? null : (
+          <View className={isTravel || f.showTravelMultiplier ? FIELD_HALF : FIELD_FULL}>
+            <PickerField
+              label="Payment Method"
+              value={f.paymentMethod || 'Not set'}
+              options={f.paymentMethodOptions}
+              onChange={f.handlePaymentMethodChange}
+            />
+          </View>
+        )}
 
 
         {f.showTravelMultiplier && (
@@ -194,7 +211,7 @@ export default function EntryFormFields({
             {f.dateInvalid ? <Text className="font-body text-2xs text-stamp-red mt-1">Use the format YYYY-MM-DD</Text> : null}
           </View>
         )}
-        {f.pointsFields && (
+        {f.pointsFields && !exchange && (
           <>
             <View className={FIELD_HALF}>
               <Text className={labelClass}>Points Earned (optional)</Text>

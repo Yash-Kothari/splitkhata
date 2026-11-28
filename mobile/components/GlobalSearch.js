@@ -2,7 +2,8 @@ import { FEATURES } from '../lib/edition';
 import { useEffect, useMemo, useState } from 'react';
 import { View, Text, TextInput, Pressable, Modal, ScrollView, useWindowDimensions } from 'react-native';
 import { useRouter } from 'expo-router';
-import { subscribeToExpenses, subscribeToTrips } from '../lib/firebase';
+import { subscribeToExpenses, subscribeToTrips, subscribeToCashMovements } from '../lib/firebase';
+import { applyCashFunding } from '../lib/tripCash';
 import { useJump } from '../lib/JumpContext';
 import { formatCurrency, normalizeLedger, searchAllEntries, getMonthKey } from '../lib/utils';
 import { reportError } from '../lib/errorReporting';
@@ -52,6 +53,7 @@ export default function GlobalSearch({ visible, onClose: onCloseProp }) {
   const [householdEntries, setHouseholdEntries] = useState([]);
   const [travelEntries, setTravelEntries] = useState([]);
   const [trips, setTrips] = useState([]);
+  const [cashMovements, setCashMovements] = useState([]);
 
   useEffect(() => {
     if (!visible) return undefined;
@@ -68,6 +70,11 @@ export default function GlobalSearch({ visible, onClose: onCloseProp }) {
     return subscribeToTrips(setTrips, (err) => reportError(err, 'Could not load trips'));
   }, [visible]);
 
+  useEffect(() => {
+    if (!visible || !FEATURES.travel) return undefined;
+    return subscribeToCashMovements(setCashMovements, (err) => reportError(err, 'Could not load cash movements'));
+  }, [visible]);
+
   // tripName isn't written to new travel entries any more (P1-4 - tripId is
   // the real join key) - resolve the trip's current name live here, once,
   // so both the search match below and the result rows' display text stay
@@ -75,10 +82,10 @@ export default function GlobalSearch({ visible, onClose: onCloseProp }) {
   // about tripId at all.
   const allEntries = useMemo(() => {
     const tripsById = Object.fromEntries(trips.map((t) => [t.id, t]));
-    return [...householdEntries, ...travelEntries].map((e) =>
+    return [...householdEntries, ...applyCashFunding(travelEntries, cashMovements, trips)].map((e) =>
       e.tripId ? { ...e, tripName: tripsById[e.tripId]?.name ?? e.tripName } : e,
     );
-  }, [householdEntries, travelEntries, trips]);
+  }, [householdEntries, travelEntries, trips, cashMovements]);
   // Filter option lists come straight from the loaded entries, not a
   // separate categories/members/payment-methods subscription - one fewer
   // set of listeners to keep alive just for this modal (see P1-11).

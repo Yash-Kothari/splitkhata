@@ -37,6 +37,7 @@ export default function EditEntryRow({
   currentCurrency = 'INR',
   tripCurrencies = null,
   tripEntries = [],
+  cashMovements = [],
   onCancel,
   onSaved,
   onSaveError,
@@ -54,6 +55,7 @@ export default function EditEntryRow({
     currentCurrency,
     tripCurrencies,
     tripEntries,
+    cashMovements,
   });
   const { amount, payer, category, splitType, owedBy, splitAmong, customShares, date, note, paymentMethod, selectedInstrument } = f;
   const [saving, setSaving] = useState(false);

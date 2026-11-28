@@ -4301,13 +4301,13 @@ test('trip cash is tracked separately for each currency', () => {
   ];
   const pools = computeTripCashByCurrency(entries, movements, 't', 'T', 'MYR');
   assert.deepEqual(pools.map((p) => p.currency), ['MYR', 'SGD']);
-  assert.deepEqual(pools[0], { currency: 'MYR', opening: 300, withdrawn: 1000, spent: 150, balance: 1150 });
-  assert.deepEqual(pools[1], { currency: 'SGD', opening: 80, withdrawn: 200, spent: 50, balance: 230 });
+  assert.deepEqual(pools[0], { currency: 'MYR', opening: 300, withdrawn: 1000, exchanged: 0, spent: 150, balance: 1150 });
+  assert.deepEqual(pools[1], { currency: 'SGD', opening: 80, withdrawn: 200, exchanged: 0, spent: 50, balance: 230 });
   assert.equal(computeTripCashStats(entries, movements, 't', 'T', 'MYR').balance, 1150, 'the single-currency figure is the main currency only');
 });
 
 test('a trip with no cash activity still lists its main currency, and entries with no currency need no migration', () => {
-  assert.deepEqual(computeTripCashByCurrency([], [], 't', 'T', 'MYR'), [{ currency: 'MYR', opening: 0, withdrawn: 0, spent: 0, balance: 0 }]);
+  assert.deepEqual(computeTripCashByCurrency([], [], 't', 'T', 'MYR'), [{ currency: 'MYR', opening: 0, withdrawn: 0, exchanged: 0, spent: 0, balance: 0 }]);
   const legacy = [{ tripId: 't', ledger: 'travel', isWithdrawal: true, amount: 1, localAmount: 40, paymentType: 'forex' }];
   assert.equal(computeTripCashByCurrency(legacy, [], 't', 'T', 'MYR').length, 1);
   assert.equal(getLastEntryDefaults([{ category: 'Food', payer: 'Yash', localCurrency: 'SGD', splitType: 'shared', date: '2026-10-01', createdAt: '2026-10-01T10:00:00Z' }]).localCurrency, 'SGD');

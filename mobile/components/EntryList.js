@@ -9,7 +9,7 @@ import { cardShadow } from './Card';
 import { notify, confirmAsync } from '../lib/dialogs';
 import { deleteInstallmentGroup, updateExpense } from '../lib/firebase';
 import { reportError } from '../lib/errorReporting';
-import { formatCurrency, formatMonthLabel, PERSON_COLORS, isCashPaid, entryMatchesSearch } from '../lib/utils';
+import { formatCurrency, formatMonthLabel, PERSON_COLORS, isCashExchange, isCashPaid, entryMatchesSearch } from '../lib/utils';
 import { themeRgba, themeColor } from '../lib/theme';
 
 // Rows drawn at once. "All Months" and long trips can hold hundreds of entries; drawing every
@@ -46,7 +46,10 @@ const EntryRow = memo(function EntryRow({
 }) {
     const isSettlement = item.splitType === 'settlement';
     const hasPoints = (isTravel || item.isTripRollup || isSettlement) && Number(item.rewardPoints || 0) !== 0;
-    const isCashPool = isTravel && !item.split && isCashPaid(item);
+    const isCashPool = isTravel && !item.split && isCashPaid(item) && !item.ownCash;
+    const isExchange = isTravel && isCashExchange(item);
+    // An exchange of one person's cash already says who: "Paid by".
+    const ownCashBadges = isExchange && item.ownCash?.length === 1 ? null : item.ownCash;
 
     return (
       <Fragment>
@@ -107,9 +110,21 @@ const EntryRow = memo(function EntryRow({
                   <Text className="font-body-semibold text-xs text-ink bg-paper-card border border-ink/10 rounded px-2 py-0.5">
                     {item.category}
                   </Text>
-                  <Text className="font-body text-xs text-muted-text">
-                    Paid by <Text className="font-body-semibold text-ink">{item.payer}</Text>
-                  </Text>
+                  {isExchange && !item.amount ? null : (
+                    <Text className="font-body text-xs text-muted-text">
+                      Paid by <Text className="font-body-semibold text-ink">{item.payer}</Text>
+                    </Text>
+                  )}
+                  {isExchange ? (
+                    <Text className="font-body-medium text-xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">
+                      ⇄ From {formatCurrency(item.exchangedFrom.amount, item.exchangedFrom.currency)}{item.amount ? '' : ' · already counted'}
+                    </Text>
+                  ) : null}
+                  {ownCashBadges?.map((part) => (
+                    <Text key={part.owner} className="font-body-medium text-xs text-ledger-green bg-ledger-green/15 rounded px-1.5 py-0.5">
+                      From {part.owner}'s Cash {formatCurrency(part.amount)}
+                    </Text>
+                  ))}
                   {!item.split && (
                     <Text
                       className={`font-body-medium text-xs rounded px-1.5 py-0.5 ${
@@ -246,6 +261,7 @@ export default function EntryList({
   onSaveError,
   excludePaymentEntries = false,
   highlightId = null,
+  cashMovements = [],
 }) {
   const isTravel = ledger === 'travel';
   const [searchTerm, setSearchTerm] = useState('');
@@ -411,6 +427,7 @@ export default function EntryList({
                   currentCurrency={currentCurrency}
                   tripCurrencies={tripCurrencies}
                   tripEntries={isTravel ? entries : []}
+                  cashMovements={cashMovements}
                   onCancel={() => setEditingId(null)}
                   onSaved={() => setEditingId(null)}
                   onSaveError={(err) => {

@@ -55,7 +55,7 @@ export default function TripPicker({
   const cashPools = useMemo(() => {
     if (!selectedTripId) return [];
     const pools = computeTripCashByCurrency(entries, cashMovements, selectedTripId, selectedTripObj?.name, selectedTripObj?.currency);
-    return pools.map((p) => ({ currency: p.currency, balance: p.balance, withdrawn: p.opening + p.withdrawn }));
+    return pools.map((p) => ({ currency: p.currency, balance: p.balance, received: p.opening + p.withdrawn + Math.max(p.exchanged, 0) }));
   }, [cashMovements, entries, selectedTripId, selectedTripObj]);
 
   async function handleCreate() {
@@ -297,15 +297,15 @@ export default function TripPicker({
             <View className="flex-1 rounded-lg bg-paper-card border border-ink/10 px-3.5 py-2.5">
               <Text className="font-body-semibold text-[10px] uppercase tracking-wider text-muted-text">Cash Balance</Text>
               {cashPools
-                .filter((p, i) => i === 0 || p.balance !== 0 || p.withdrawn > 0)
+                .filter((p, i) => i === 0 || p.balance !== 0 || p.received > 0)
                 .map((p) => (
                   <View key={p.currency}>
                     <Text className="font-mono-bold text-sm text-ink mt-0.5">
                       {p.balance.toFixed(2)} {p.currency}
                     </Text>
-                    {p.withdrawn > 0 && (
+                    {p.received > 0 && (
                       <Text className="font-mono text-2xs text-muted-text mt-0.5">
-                        {p.withdrawn.toFixed(2)} {p.currency} withdrawn
+                        {p.received.toFixed(2)} {p.currency} taken in
                       </Text>
                     )}
                   </View>

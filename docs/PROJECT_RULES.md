@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.27.4**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.28.0**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -105,7 +105,20 @@ and kill them if stuck. Never leave one running unattended.
   A ₹0 entry is valid (a stay paid entirely with reward points).
 - **Cash and withdrawals:** an ATM withdrawal is always charged to a card or forex
   account, never to Cash. `isWithdrawalEntry()` ignores a stale `isWithdrawal` flag on a
-  cash-paid entry. Cash purchases are priced oldest-withdrawal-first (FIFO).
+  cash-paid entry. Cash purchases are priced oldest first (FIFO) from the trip's cash.
+- **Trip cash is one queue per currency** (`lib/tripCash.js`, `tests/trip-cash.test.mjs`): starting cash that has a rupee
+  rate and an owner first, then ATM withdrawals and exchanges. **Priced starting cash charges nothing when saved**; it
+  counts when it leaves its owner's hands, as paid by them: spent on a purchase (`applyCashFunding` puts `ownCash` on the
+  entry, `excludeCashSpend` reads it; who the purchase was for stays as entered, and "personal" for someone else becomes
+  owed to the owner) or exchanged. **An exchange works like an ATM withdrawal**, so all cash received on a trip behaves the
+  same: it is a travel entry (`isWithdrawal` plus `exchangedFrom`, no payment method) whose amount is the rupee cost of the
+  owned cash handed over, paid by the owner and split equally unless edited; cash already charged (from an ATM or an
+  earlier exchange) adds nothing again, and spending the new cash adds nothing. The form refuses an exchange the recorded
+  cash does not cover. Starting cash without a rate only counts the cash, as before. Rupee figures are worked out from the
+  whole history on every read, so edits and back-dated entries re-price; anything that totals travel money must read
+  entries through `applyCashFunding`. Trips with neither priced starting cash nor an exchange read exactly as stored.
+  Unspent, unexchanged owned cash is offered to another trip (Use Leftover) once, recorded as `carriedFrom`; the form
+  stays editable.
 - **Reward points:** stored positive = spent, negative = earned. They are a separate
   balance and never mixed into rupee totals. A Travel purchase has two boxes, **Points
   Earned** and **Points Redeemed**, saved as one number, redeemed minus earned
@@ -394,9 +407,9 @@ local testing predicted.
   statement-only for now, so it has none. Add `detail` to a new engine only if its lines depend on each other.
 - **A trip can use several foreign currencies.** `trip.currency` stays the main one; `trip.otherCurrencies` holds the
   rest (`getTripCurrencies`). An entry's `localCurrency` and a cash record's `currency` say which one an amount is in;
-  absent means the main currency, so older data needs no migration. Each currency is its own pool of cash: opening cash
-  is stored per currency (`opening_${tripId}_${currency}`), ATM withdrawals only fund cash purchases in the same
-  currency (the FIFO in `useEntryForm` filters by currency), and cash balances are listed per currency
+  absent means the main currency, so older data needs no migration. Each currency is its own pool of cash: starting cash
+  is stored per currency and owner (`opening_${tripId}_${currency}[_${owner}]`), cash only pays for purchases in its own
+  currency until an exchange is recorded, and cash balances are listed per currency
   (`computeTripCashByCurrency`; `computeTripCashStats` is the main currency only). A currency can't be removed from a
   trip while anything in it exists. Rupee totals, splits and balances never look at the local currency.
 - **Settle Up only shows while something is owed** (household and trips with a guest): with a settled balance / no settlement lines the button is hidden, because it exists to pay off a balance. Two-person trips never had it (they use Add to Main Ledger).
@@ -443,8 +456,9 @@ local testing predicted.
   as a minus)" box - the same wording as a card transaction - and a typed leading "-" does the same: the amount is typed positive and saved as a minus (`parseSignedAmountInput`), local amount too. Balances,
   budgets, Monthly Spend and category totals are all net, and a card-paid one becomes a card refund. Custom-split shares
   stay positive proportions. Donuts draw only what was spent; the centre total and legend show the net. Settlements are
-  never "received", and a refund does not use up an ATM withdrawal. A refund paid with a Cash-type method (Amazon Pay and Wallet are set up
-  as Cash) is left out of Total trip expense like any cash purchase.
+  never "received", and a refund does not use up trip cash. A refund paid with a Cash-type method (Amazon Pay and Wallet are set up
+  as Cash) is left out of Total trip expense like any cash purchase, unless it puts back an owner's own cash, which comes off
+  what counted.
 - The Travel tab's "By Payment Method" donut (`PaymentMethodChart`, `groupByPaymentMethod`) counts exactly what the
   Category Breakdown counts (`isCountableSpend`), so the two totals match; entries with no method are "Not specified". Tapping a
   method (or a category) opens its entries in the shared `SpendDrilldownModal` (`getPaymentMethodEntries`,
