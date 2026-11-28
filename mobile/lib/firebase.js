@@ -485,7 +485,8 @@ export function subscribeToAuth(callback) {
 // Web only: Firebase's own popup flow, which returns through the project's
 // firebaseapp.com auth handler instead of the site's own address - the
 // expo-auth-session redirect goes to the bare origin (yash-kothari.github.io,
-// a 404 - the app lives under /splitkhata) and can never complete there.
+// a 404 - the app lives under /splitkhata) and can never complete there. The one exception is an iPhone
+// Home Screen app, where this pop-up never reports back: see lib/googleRedirect.js.
 export async function signInWithGooglePopup() {
   return signInWithPopup(auth, new GoogleAuthProvider(), browserPopupRedirectResolver);
 }

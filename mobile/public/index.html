@@ -41,6 +41,16 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="Splitkhata" />
+    <!-- Google sign-in from the iPhone Home Screen app comes back with its answer after the # (lib/googleRedirect.js).
+         It is moved out here, before any other script, so it is not left in the address, history or an error report. -->
+    <script id="google-return">
+      (function () {
+        var hash = location.hash;
+        if (!/[#&]state=/.test(hash) || !/[#&](id_token|error)=/.test(hash)) return;
+        window.__googleReturn = hash.slice(1);
+        history.replaceState(history.state, '', location.pathname + location.search);
+      })();
+    </script>
   </head>
 
   <body>

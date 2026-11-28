@@ -33,6 +33,8 @@ The web app signs in via a browser popup, which doesn't exist on iOS. The mobile
    EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=xxxxxxxx.apps.googleusercontent.com
    ```
 
+**Website added to an iPhone Home Screen:** on that same **Web client**, add `https://yash-kothari.github.io/splitkhata/` (with the trailing slash) under **Authorized redirect URIs** and save. Without it Google answers `redirect_uri_mismatch`. See `lib/googleRedirect.js`.
+
 Sign-in is gated to the same two emails as the web app (`firestore.rules`) — signing in with any other Google account will show "Not an approved account."
 
 ## Running it

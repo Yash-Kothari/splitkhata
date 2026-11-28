@@ -6,6 +6,7 @@ import { IS_SHARED_EDITION } from '../lib/edition';
 import { signInWithGoogleIdToken, signInWithGooglePopup, signInDevTestUser, IS_DEV_EMULATOR } from '../lib/firebase';
 import { themeColor } from '../lib/theme';
 import { shadowStyle } from '../lib/shadow';
+import { isIosHomeScreenApp, startHomeScreenSignIn, finishHomeScreenSignIn } from '../lib/googleRedirect';
 
 // Matches web's shadow-xl on this specific card (GoogleSignIn in App.jsx) -
 // a taller, softer shadow than .panel-card's own box-shadow, which is what
@@ -33,6 +34,21 @@ export default function SignInScreen() {
   useEffect(() => {
     if (!IS_DEV_EMULATOR) return;
     signInDevTestUser().catch((err) => setError(err?.message || 'Dev sign-in failed.'));
+  }, []);
+
+  // iPhone Home Screen app: finish a sign-in that has just come back from Google (lib/googleRedirect.js).
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const result = finishHomeScreenSignIn(window);
+    if (!result) return;
+    Promise.resolve(result)
+      .then(({ idToken, error: failure }) => {
+        if (failure) throw new Error(failure);
+        setSigningIn(true);
+        return signInWithGoogleIdToken(idToken);
+      })
+      .catch((err) => setError(err?.message || 'Sign-in failed.'))
+      .finally(() => setSigningIn(false));
   }, []);
 
   // useIdTokenAuthRequest (not the plain useAuthRequest) - the plain hook
@@ -68,6 +84,16 @@ export default function SignInScreen() {
 
   async function handleWebSignIn() {
     setError('');
+    // An iPhone Home Screen app leaves for Google in this window instead of a pop-up. No spinner: closing Google's page
+    // brings the person back here, and the button must still work.
+    if (WEB_CLIENT_ID && isIosHomeScreenApp(window)) {
+      try {
+        startHomeScreenSignIn(window, WEB_CLIENT_ID);
+      } catch (err) {
+        setError(err?.message || 'Sign-in failed.');
+      }
+      return;
+    }
     setSigningIn(true);
     try {
       await signInWithGooglePopup();

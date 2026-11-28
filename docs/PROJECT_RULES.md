@@ -1,7 +1,7 @@
 # Splitkhata: how we build and ship
 
 The working rules for this project, written from what the repo and our history
-actually do. Versions are those in `mobile/package.json` at **v3.26.0**. When a
+actually do. Versions are those in `mobile/package.json` at **v3.26.1**. When a
 rule here and the code disagree, the code is right: fix this page.
 
 ---
@@ -418,6 +418,12 @@ local testing predicted.
   waits for `firebaseapp.com/__/auth/iframe` before it will say whether you are signed in (always for the redirect check,
   proactively on Safari/phones), and when Safari left that request pending the app stayed blank forever. If startup is
   still slow the blank screen turns into a "Still starting up..." message with a Reload button (`StartupWait`).
+- **An iPhone Home Screen app signs in without a pop-up.** There (`navigator.standalone`) Firebase's popup never reports
+  back, so the window goes to Google and returns with the ID token after the `#` (`lib/googleRedirect.js`). A script in the
+  head of `public/index.html` takes it out of the address before anything else runs, and only the answer matching this
+  device's `state` and `nonce` is used. It needs the app's address (`.../splitkhata/`, trailing slash) under **Authorized
+  redirect URIs** on the Google web OAuth client, and `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` in the build. Safari, desktop and a
+  build without that id keep the popup. It can only be proved on a real iPhone.
 - **Expo packages move together, one SDK at a time.** `expo-router` 58 needs `expo-constants` 58 and the rest of SDK 58, so a
   Dependabot PR that bumps only one of them fails `npm ci` (ERESOLVE). Upgrade with `npx expo install expo@~X` then
   `npx expo install --check`, and verify the app in the browser before merging. `@sentry/react-native` stays on `^8.30` on
