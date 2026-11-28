@@ -7,7 +7,7 @@ import { arrowOf, gainClass, signedPct } from './PortfolioSummary';
 
 const num = (n, d = 3) => Number(n).toLocaleString('en-IN', { maximumFractionDigits: d });
 
-const FundRow = memo(function FundRow({ r }) {
+const FundRow = memo(function FundRow({ r, annual = null, drawdown = null }) {
   const { money, signed, units } = usePortfolioPrivacy();
   const [open, setOpen] = useState(false);
   const stock = isStock(r);
@@ -57,6 +57,8 @@ const FundRow = memo(function FundRow({ r }) {
             ['Average Cost', money(r.avgCost)],
             [stock ? 'Price' : 'Latest NAV', stock ? `₹${Number(r.nav).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : `₹${r.nav}`],
             ['Share of Portfolio', `${r.share.toFixed(1)}%`],
+            ...(annual?.xirr != null ? [['Annual Return (XIRR)', signedPct(annual.xirr)]] : []),
+            ...(drawdown ? [['Below Highest NAV', drawdown.pct > -0.05 ? 'At its high' : `${Math.abs(drawdown.pct).toFixed(1)}% since ${formatShortDate(drawdown.peakDate)}`]] : []),
             [stock ? 'Shares From' : 'Units From', `${formatShortDate(r.snapshotDate)} ${stock ? 'import' : 'snapshot'}${r.estimated ? (stock ? ' + recorded trades' : ` + ${r.sipDays} SIP days`) : ''}`],
           ].map(([k, v]) => (
             <View key={k} className="flex-row justify-between gap-3 py-0.5">
@@ -70,7 +72,7 @@ const FundRow = memo(function FundRow({ r }) {
   );
 });
 
-function Group({ title, rows, total }) {
+function Group({ title, rows, total, returns, drawdowns }) {
   const { money } = usePortfolioPrivacy();
   if (rows.length === 0) return null;
   return (
@@ -80,7 +82,7 @@ function Group({ title, rows, total }) {
         <Text className="font-mono-bold text-xs text-ink">{money(total.value)}</Text>
       </View>
       {rows.map((r) => (
-        <FundRow key={r.key} r={r} />
+        <FundRow key={r.key} r={r} annual={returns?.find((x) => x.key === r.key)} drawdown={drawdowns?.[r.key]} />
       ))}
     </View>
   );
@@ -88,7 +90,7 @@ function Group({ title, rows, total }) {
 
 // Passbook-style rows, largest first, grouped by where the units are held (and, when more than one person is in view, whose they
 // are). Tap a row for units and average cost.
-export default function PortfolioFundList({ portfolio, view = null, onTrade }) {
+export default function PortfolioFundList({ portfolio, view = null, returns = [], drawdowns = {}, onTrade }) {
   const { rows } = portfolio;
   const people = ownersOf(rows);
   const multi = people.length > 1;
@@ -98,7 +100,7 @@ export default function PortfolioFundList({ portfolio, view = null, onTrade }) {
       <View className="flex-row items-start justify-between gap-2 mb-2">
         <View className="flex-1">
           <Text className="font-display text-lg text-ink">{view ? `${view}'s Funds` : multi ? 'All Funds' : 'Your Funds'}</Text>
-          <Text className="font-body text-xs text-muted-text">Tap a fund for units and average cost</Text>
+          <Text className="font-body text-xs text-muted-text">Tap a fund for units, cost and how far it is off its high</Text>
         </View>
         <Pressable onPress={onTrade} accessibilityRole="button" className="min-h-8 px-3 rounded-lg border border-ink/15 bg-paper items-center justify-center">
           <Text className="font-body-semibold text-xs text-ink">＋ Record a Trade</Text>
@@ -112,7 +114,7 @@ export default function PortfolioFundList({ portfolio, view = null, onTrade }) {
           ['other', true, 'Stocks · Other'],
         ].map(([group, stocks, label]) => {
           const list = rows.filter((r) => r.owner === who && r.group === group && isStock(r) === stocks);
-          return <Group key={`${who}|${group}|${stocks}`} title={multi ? `${who} · ${label}` : label} rows={list} total={sum(list)} />;
+          return <Group key={`${who}|${group}|${stocks}`} title={multi ? `${who} · ${label}` : label} rows={list} total={sum(list)} returns={returns} drawdowns={drawdowns} />;
         }),
       )}
     </Card>

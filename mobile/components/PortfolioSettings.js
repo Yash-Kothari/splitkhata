@@ -8,6 +8,7 @@ import { DEFAULT_PERSONS } from '../lib/utils';
 import PortfolioShell from './PortfolioShell';
 import PortfolioSipEditor from './PortfolioSipEditor';
 import PortfolioImport from './PortfolioImport';
+import PortfolioTargets from './PortfolioTargets';
 import { PortfolioLimitsEditor } from './PortfolioLimits';
 import { NavCheckResult } from './PortfolioSyncCard';
 
@@ -55,6 +56,15 @@ export function PortfolioSettingsLimits() {
   );
 }
 
+export function PortfolioSettingsTargets() {
+  const p = usePortfolio({ autoBackfill: false });
+  return (
+    <Needs loading={p.loading} hasSetup={p.hasSetup}>
+      <PortfolioTargets targets={p.targets} slabPct={p.slabPct} />
+    </Needs>
+  );
+}
+
 export function PortfolioSettingsData() {
   const p = usePortfolio({ autoBackfill: false });
   const people = useMemo(() => importPeople(p.owners), [p.owners]);
@@ -70,7 +80,7 @@ export function PortfolioSettingsData() {
     <View className="gap-4">
       <PortfolioImport
         funds={p.funds}
-        existing={{ catalog: p.catalogDoc, overlap: p.overlapData, sip: p.sipDoc }}
+        existing={{ catalog: p.catalogDoc, overlap: p.overlapData, sip: p.sipDoc, state: p.stateDoc }}
         people={people}
         heldKeys={p.portfolio.rows.map((r) => r.key)}
         snapshots={p.snapshots}

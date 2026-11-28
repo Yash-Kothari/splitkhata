@@ -14,6 +14,9 @@ Folio numbers and PAN are never stored; only fund id, units and average cost.
 |---|---|
 | `catalog` | `{ funds: [{ key, isin, schemeCode, name, short, amc, group: 'zerodha'\|'other', category, holdingsKey, owner?, kind?, symbol?, stockId?, sector? }], benchmark: { schemeCode, name } }`. `owner` is a household member's name (absent = Yash); `kind: 'stock'` marks a share held directly (see Stocks) |
 | `sip` | `{ schedule: [{ from, plan: { [fundKey]: rupees bought per trading day } }], plan }`, the plan over time (`plan` is the latest). A setup import with a plain `sipPlan` writes `{ plan }`, read as one entry that always applied |
+| `txn_<fundKey>` | `{ fundKey, asOf, items: [{ d: 'YYYY-MM-DD', u: units (+ bought, - sold), a: rupees }] }`, a fund's full history from a detailed CAS |
+| `fundinfo` | `{ funds: { [holdingsKey]: { ter, exitLoad: [{ days, pct }], freePct?, lockInMonths?, taxClass?, asset?, asOf } } }` |
+| `targets` | `{ mix: { equity, international, debt, gold } \| null, slabPct }`, set in Settings |
 | `limits` | `{ items: [{ id, metric: 'adani'\|'amc'\|'category'\|'stock'\|'fund', name?, max }] }`, the concentration caps you saved |
 | `overlap` | `{ asOf, asOfDate: 'YYYY-MM-DD', holdings: { [holdingsKey]: { [stock]: weightPct } }, names, groups: { adani: [...] }, futures }` |
 | `snap_<date>_<source>[_<Owner>]` | one snapshot: `{ date, source: 'kite'\|'cas'\|'kite_stocks'\|'manual', owner?, positions: { [fundKey]: { units, avgCost } } }`. Yash's keep the plain id; anyone else's carries their name so two people's imports on one day never overwrite each other |
@@ -101,7 +104,7 @@ like the rest of the app (a reminder or button on the tab opens the right Settin
 - **Portfolio tab**, four short sections in the app's segmented style: **Overview** (summary with Hide amounts, sync
   status and reminders, daily P&L, value against what you put in), **Funds** (the fund list with **Record a trade**, a pop-up, and Fund vs
   Nifty 50), **Insights** (allocation donut, limits as read-only bars, overlap) and **Plan** (SIP what-if, long-term illustration).
-- **Settings -> Portfolio -> SIP plan:** edit the daily SIP plan. **Limits:** set the caps. **Import & export:** Update
+- **Settings -> Portfolio -> SIP plan:** edit the daily SIP plan. **Limits:** set the caps. **Targets & Tax:** the asset mix you want and your slab rate. **Import & export:** Update
   holdings (the setup file the first time, then Kite and CAS snapshots), Check NAVs, and the holdings CSV.
 
 ## Planning cards
@@ -139,6 +142,29 @@ All of these use the same holdings, NAVs and overlap data, and fold on a phone l
 Daily P&L uses the units held at the previous close, so a day's own SIP purchase never counts as profit. The value
 chart before the first snapshot assumes that snapshot's units (it says so under the chart).
 
+## Analysis cards
+
+Engine: `lib/portfolioLedger.js` (lots, XIRR, tax) and `lib/portfolioInsights.js` (mix, fees, drawdown, month, SIP check);
+tests in `tests/portfolioLedger.test.mjs`. Mutual funds only; direct stocks have no transaction history here.
+
+- **Ledger.** First-in-first-out lots from the imported history. After its date, `fundLedger` adds SIP and recorded trades and
+  matches each later snapshot's units: a shortfall trims the newest SIP estimates, any other difference becomes a purchase or
+  sale at that day's NAV. Those entries are estimates and the cards say so; importing a newer history replaces them.
+- **Annual Return (Insights).** XIRR per fund and overall (sold funds count in the total). Nothing under 90 days.
+- **Sell Preview and Gains This Year (Plan).** Rules in `TAX` (FY 2026-27, resident individual, before surcharge): equity funds
+  20% within 12 months, else 12.5% above ₹1.25 lakh a year; debt units bought from April 2023 at the slab rate; other funds
+  12.5% after 24 months, else slab; 4% cess. The exemption is per person. Not modelled: surcharge, STT, stamp duty, loss
+  carry-forward, pre-February-2018 grandfathering (flagged), shares sold directly, load rules that differ for older units.
+  Free units (`freePct`) are that share of the units still inside the load period, ignoring earlier use. Locked-in units
+  (`lockInMonths`, 36 for an ELSS fund by default) are left out of a redemption. **Re-check the rules
+  after each Budget.**
+- **Asset Mix (Insights).** Classes come from `fundinfo.asset`, else the category and name. Targets and the slab rate are in
+  Settings -> Portfolio -> Targets & Tax.
+- **Fund Fees (Insights).** Expense ratio times value, from `fundinfo`. Funds without one are listed.
+- **Monthly Change (Overview).** Last three months split into market movement (daily P&L) and money in or out, plus the SIP
+  check: units between the two latest imports against what the plan expects, flagged beyond 2.5 days of SIP.
+- **Off the high.** A fund's row shows how far it is below the highest stored NAV (about a year).
+
 ## Importing (the only way holdings reach the database)
 
 Production data is changed by the signed-in user, not by automation. **Settings -> Portfolio -> Import & export** takes pasted
@@ -171,6 +197,19 @@ snapshot object with `source: 'cas'` and `asOf` set to the statement date, the s
 cross-check of the Kite units. A fully redeemed fund drops off a CAS, so give it 0 units in the file: a held fund
 the file leaves out keeps its old units, and the import preview warns about it. Claude never writes to the live
 database.
+
+## Transaction history and fund details
+
+Both are pasted into the same Update Holdings box and told apart by `source`.
+
+- **History:** ask for a **detailed** CAS (CAMS / KFintech or MFCentral, from the earliest possible date, including Zerodha's
+  funds) and give Claude the PDF. It writes `portfolio-private/txn-YYYY-MM-DD.json`:
+  `{ source: 'transactions', asOf, owner?, transactions: [{ key | isin, group?, date, type: 'buy'|'sell', units, amount }] }`.
+  Switches are a sale of one fund and a purchase of the other; reinvested dividends and bonus units are purchases. Each fund's
+  rows must start at its first purchase. No folio numbers or PAN. Import replaces those funds' history and saves their closing
+  units as a snapshot.
+- **Fund details:** `{ source: 'fundinfo', asOf, funds: { [key | isin]: { ter?, exitLoad?, freePct?, lockInMonths?, taxClass?, asset? } } }`; merged by
+  fund. Refresh monthly.
 
 ## Gotchas
 

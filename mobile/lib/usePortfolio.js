@@ -25,6 +25,8 @@ import {
   computeBenchmarkTable,
   DEFAULT_LIMITS,
 } from './portfolio';
+import { buildLedgers, computeReturns, TAX } from './portfolioLedger';
+import { computeAssetMix, computeFees, computeDrawdowns, monthlyChanges, checkSips } from './portfolioInsights';
 
 // The public AMFI mirror. NAVs are free and keyless; only the fund's scheme code is ever sent.
 const NAV_API = 'https://api.mfapi.in/mf';
@@ -118,6 +120,19 @@ export default function usePortfolio({ autoBackfill = true, view = null } = {}) 
     return trades.filter((t) => keys.has(t.fundKey));
   }, [trades, viewFunds]);
 
+  const histories = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(docs || {})
+          .filter(([id]) => id.startsWith('txn_'))
+          .map(([, d]) => [d.fundKey, d]),
+      ),
+    [docs],
+  );
+  const fundInfo = useMemo(() => docs?.fundinfo?.funds || {}, [docs]);
+  const targets = docs?.targets?.mix || null;
+  const slabPct = docs?.targets?.slabPct ?? TAX.slabDefault;
+
   const portfolio = useMemo(
     () => computePortfolio({ funds: viewFunds, snapshots, navByCode, sipPlan, sipSchedule, trades }),
     [viewFunds, snapshots, navByCode, sipPlan, sipSchedule, trades],
@@ -136,6 +151,23 @@ export default function usePortfolio({ autoBackfill = true, view = null } = {}) 
   );
 
   const today = todayISO();
+  // Purchase lots per fund, for the funds whose transaction history has been imported.
+  const ledgers = useMemo(
+    () => buildLedgers({ funds, histories, snapshots, trades, navByCode, sipPlan, sipSchedule, today }),
+    [funds, histories, snapshots, trades, navByCode, sipPlan, sipSchedule, today],
+  );
+  const returns = useMemo(() => computeReturns({ rows: portfolio.rows, funds: viewFunds, ledgers, today }), [portfolio.rows, viewFunds, ledgers, today]);
+  const assetMix = useMemo(
+    () => computeAssetMix({ rows: portfolio.rows, funds: viewFunds, info: fundInfo, targets, plan: viewSipPlan }),
+    [portfolio.rows, viewFunds, fundInfo, targets, viewSipPlan],
+  );
+  const fees = useMemo(() => computeFees({ rows: portfolio.rows, info: fundInfo }), [portfolio.rows, fundInfo]);
+  const drawdowns = useMemo(() => computeDrawdowns({ rows: portfolio.rows, navByCode }), [portfolio.rows, navByCode]);
+  const months = useMemo(() => monthlyChanges(history, 3), [history]);
+  const sipChecks = useMemo(
+    () => checkSips({ funds: viewFunds, snapshots, navByCode, sipPlan, sipSchedule, trades }),
+    [viewFunds, snapshots, navByCode, sipPlan, sipSchedule, trades],
+  );
   const syncState = docs?.state;
   const sync = useMemo(() => {
     const fresh = computeSyncStatus({ funds, snapshots, state: syncState, view: activeView, today });
@@ -230,6 +262,7 @@ export default function usePortfolio({ autoBackfill = true, view = null } = {}) 
     overlapData,
     catalogDoc: docs?.catalog || null,
     sipDoc: docs?.sip || null,
+    stateDoc: docs?.state || null,
     benchmark,
     benchmarkTable,
     navByCode,
@@ -241,6 +274,17 @@ export default function usePortfolio({ autoBackfill = true, view = null } = {}) 
     overlapAsOf: overlapData?.asOf || null,
     sync,
     backfill,
+    histories,
+    ledgers,
+    returns,
+    fundInfo,
+    targets,
+    slabPct,
+    assetMix,
+    fees,
+    drawdowns,
+    months,
+    sipChecks,
     refreshNavs: () => runBackfill(true),
   };
 }

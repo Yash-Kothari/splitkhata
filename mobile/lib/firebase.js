@@ -842,6 +842,9 @@ export function subscribeToPaymentReminderConfig(callback) {
 //   catalog / overlap            the fund list (and benchmark scheme), top holdings for the overlap view
 //   sip                          { schedule: [{ from, plan }], plan }: the daily SIP plan over time (plan = the latest)
 //   limits                       { items: [...] }: the concentration limits you set
+//   txn_<fundKey>                { fundKey, asOf, items: [{ d, u, a }] }: a fund's full transaction history
+//   fundinfo                     { funds: { [holdingsKey]: { ter, exitLoad, taxClass, asset, asOf } } }
+//   targets                      { mix: { equity, international, debt, gold } | null, slabPct }
 //   state                        { lastSync: { kite|cas|manual: { date, at } }, lastNavFetchAt }
 //   snap_<date>_<source>         one imported snapshot of units and average cost per fund
 //   trade_<date>_<id>            a purchase or sale you recorded by hand: { fundKey, kind, date, units, amount }
@@ -877,6 +880,24 @@ export async function importPortfolioSnapshot({ snapshot, syncKey, syncDate, cat
   // A stock's price at the import date, saved like a NAV (merged, so earlier prices stay).
   for (const pr of prices) batch.set(docAt('portfolio', `nav_${pr.code}_${pr.year}`), { schemeCode: pr.code, year: Number(pr.year), series: pr.series }, { merge: true });
   await track(batch.commit(), 'Could not save the portfolio snapshot');
+}
+
+// A confirmed transaction history: each fund's history is replaced whole, and the units it ends on are saved as a snapshot.
+export async function importPortfolioHistory({ histories, snapshot, syncKey = null, syncDate = null }) {
+  const batch = writeBatch(dbInstance);
+  histories.forEach((h) => batch.set(docAt('portfolio', `txn_${h.key}`), { fundKey: h.key, asOf: h.asOf, items: h.items, createdAt: serverTimestamp() }));
+  batch.set(docAt('portfolio', snapshot.id), { ...snapshot.data, createdAt: serverTimestamp() });
+  if (syncKey) batch.set(docAt('portfolio', 'state'), { lastSync: { [syncKey]: { date: syncDate, at: serverTimestamp() } } }, { merge: true });
+  await track(batch.commit(), 'Could not save the transaction history');
+}
+
+// Fund details (expense ratio, exit load, tax and asset class), merged by fund so a partial file keeps the rest.
+export async function savePortfolioFundInfo(funds) {
+  await track(setDoc(docAt('portfolio', 'fundinfo'), { funds, updatedAt: serverTimestamp() }, { merge: true }), 'Could not save the fund details');
+}
+
+export async function savePortfolioTargets({ mix, slabPct }) {
+  await track(setDoc(docAt('portfolio', 'targets'), { mix, slabPct, updatedAt: serverTimestamp() }), 'Could not save the targets');
 }
 
 // NAVs for one scheme, grouped by year: { '2026': { '2026-11-20': 49.2266 } }. Merged, so re-running is harmless.

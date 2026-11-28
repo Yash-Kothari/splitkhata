@@ -9,6 +9,9 @@ import { notify } from '../lib/dialogs';
 import { reportError } from '../lib/errorReporting';
 import { todayISO } from '../lib/utils';
 import { parseImport, diffForPreview, buildImportWrites, DEFAULT_OWNER } from '../lib/portfolio';
+import { parseTransactions } from '../lib/portfolioLedger';
+import { parseFundInfo } from '../lib/portfolioInsights';
+import PortfolioExtraImport from './PortfolioExtraImport';
 
 const input = 'font-mono text-xs text-ink border border-ink/15 rounded-xl px-3 py-2.5 bg-paper';
 
@@ -54,9 +57,29 @@ export default function PortfolioImport({ funds, existing = {}, people = [DEFAUL
   const [imported, setImported] = useState(null);
 
   const today = todayISO();
+  // A transaction history or a fund-details file, told apart by its `source`; anything else is a holdings file.
+  const extra = useMemo(() => {
+    let json;
+    try {
+      json = JSON.parse(text.trim());
+    } catch {
+      return null;
+    }
+    const list = existing.catalog?.funds || funds;
+    if (json?.source === 'transactions') return { kind: 'transactions', parsed: parseTransactions(json, { funds: list, owner: chosen, people, today }) };
+    if (json?.source === 'fundinfo') return { kind: 'fundinfo', parsed: parseFundInfo(json, { funds: list }) };
+    return null;
+  }, [text, existing.catalog, funds, chosen, people, today]);
+  const extraPreview = useMemo(
+    () =>
+      extra?.kind === 'transactions' && extra.parsed.ok
+        ? diffForPreview({ funds, snapshots, navByCode, sipPlan, sipSchedule, trades, next: extra.parsed.positions, asOf: extra.parsed.asOf })
+        : [],
+    [extra, funds, snapshots, navByCode, sipPlan, sipSchedule, trades],
+  );
   const parsed = useMemo(
-    () => (text.trim() ? parseImport(text, { catalog: existing.catalog || (funds.length ? { funds } : null), asOfDefault: asOf, today, owner: chosen, people, heldKeys }) : null),
-    [text, asOf, funds, existing.catalog, chosen, people, heldKeys, today],
+    () => (text.trim() && !extra ? parseImport(text, { catalog: existing.catalog || (funds.length ? { funds } : null), asOfDefault: asOf, today, owner: chosen, people, heldKeys }) : null),
+    [text, extra, asOf, funds, existing.catalog, chosen, people, heldKeys, today],
   );
   const shownOwner = chosen || (parsed?.ok ? parsed.payload.owner : DEFAULT_OWNER);
   const preview = useMemo(() => {
@@ -111,7 +134,7 @@ export default function PortfolioImport({ funds, existing = {}, people = [DEFAUL
     <PortfolioShell
       variant={variant}
       title="Update Holdings"
-      subtitle="Paste the setup file the first time, then the holdings file Claude makes from Kite or your CAS. Nothing is saved until you confirm."
+      subtitle="Paste the setup file the first time, then the holdings, transaction history or fund details file Claude makes. Nothing is saved until you confirm."
     >
       {people.length > 1 ? (
         <View>
@@ -195,14 +218,30 @@ export default function PortfolioImport({ funds, existing = {}, people = [DEFAUL
         </View>
       ) : null}
 
+      {extra ? (
+        <PortfolioExtraImport
+          kind={extra.kind}
+          parsed={extra.parsed}
+          preview={extraPreview}
+          state={existing.state}
+          onDone={(message) => {
+            setImported(message);
+            setText('');
+            setChosen(null);
+          }}
+        />
+      ) : null}
+
       <View className="flex-row gap-2 mt-3">
-        <Pressable
-          onPress={handleConfirm}
-          disabled={!p || saving}
-          className="min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
-        >
-          {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-xs text-white">Confirm Import</Text>}
-        </Pressable>
+        {extra ? null : (
+          <Pressable
+            onPress={handleConfirm}
+            disabled={!p || saving}
+            className="min-h-9 px-3.5 rounded-lg bg-ledger-green items-center justify-center disabled:opacity-50"
+          >
+            {saving ? <ActivityIndicator color="white" /> : <Text className="font-body-semibold text-xs text-white">Confirm Import</Text>}
+          </Pressable>
+        )}
         {text ? (
           <Pressable onPress={() => setText('')} className="min-h-9 px-3.5 rounded-lg border border-ink/15 bg-paper items-center justify-center">
             <Text className="font-body-semibold text-xs text-ink">Clear</Text>

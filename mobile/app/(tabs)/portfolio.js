@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Redirect } from 'expo-router';
 import { View, Text, ScrollView, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { FEATURES } from '../../lib/edition';
@@ -19,6 +19,14 @@ import PortfolioLimits from '../../components/PortfolioLimits';
 import PortfolioOverlap from '../../components/PortfolioOverlap';
 import PortfolioWhatIf from '../../components/PortfolioWhatIf';
 import PortfolioProjection from '../../components/PortfolioProjection';
+import PortfolioMonth from '../../components/PortfolioMonth';
+import PortfolioReturns from '../../components/PortfolioReturns';
+import PortfolioAssetMix from '../../components/PortfolioAssetMix';
+import PortfolioFees from '../../components/PortfolioFees';
+import PortfolioSellPreview from '../../components/PortfolioSellPreview';
+import PortfolioGains from '../../components/PortfolioGains';
+import { fundDetails, taxClassOf, lockInMonthsOf } from '../../lib/portfolioInsights';
+import { todayISO } from '../../lib/utils';
 import PortfolioSheet from '../../components/PortfolioSheet';
 import PortfolioTradeForm from '../../components/PortfolioTradeForm';
 import { DailyPnlChart, ValueChart } from '../../components/PortfolioCharts';
@@ -79,6 +87,9 @@ function PortfolioScreen() {
   const fold = !isWide;
   const [section, setSection] = useState('overview');
   const [trading, setTrading] = useState(false);
+  const taxClassFor = useCallback((fund) => taxClassOf(fund, p.fundInfo), [p.fundInfo]);
+  const detailsFor = useCallback((fund) => fundDetails(fund, p.fundInfo), [p.fundInfo]);
+  const lockInFor = useCallback((fund) => lockInMonthsOf(fund, p.fundInfo), [p.fundInfo]);
 
   const sync = (
     <PortfolioSyncCard
@@ -137,6 +148,7 @@ function PortfolioScreen() {
             <>
               <DailyPnlChart history={p.history} collapsible={fold} />
               <ValueChart history={p.history} collapsible={fold} />
+              <PortfolioMonth months={p.months} sipChecks={p.sipChecks} collapsible={fold} />
             </>
           }
         />
@@ -144,7 +156,7 @@ function PortfolioScreen() {
       funds: (
         <Columns
           wide={isWide}
-          left={<PortfolioFundList portfolio={p.portfolio} view={p.view} onTrade={() => setTrading(true)} />}
+          left={<PortfolioFundList portfolio={p.portfolio} view={p.view} returns={p.returns.funds} drawdowns={p.drawdowns} onTrade={() => setTrading(true)} />}
           right={<PortfolioBenchmark table={p.benchmarkTable} benchmark={p.benchmark} rows={p.portfolio.rows} navByCode={p.navByCode} collapsible={fold} />}
         />
       ),
@@ -153,11 +165,18 @@ function PortfolioScreen() {
           wide={isWide}
           left={
             <>
+              <PortfolioReturns returns={p.returns} collapsible={fold} />
               <PortfolioAllocation key={p.view || 'all'} rows={p.portfolio.rows} byPerson={p.owners.length > 1 && !p.view} hasStocks={p.portfolio.byKind.stocks.count > 0} collapsible={fold} defaultOpen />
+              <PortfolioAssetMix mix={p.assetMix} collapsible={fold} onEdit={() => openSettings('portfolioTargets')} />
               <PortfolioLimits evaluated={p.evaluatedLimits} saved={p.limitsSaved} collapsible={fold} defaultOpen onEdit={() => openSettings('portfolioLimits')} />
             </>
           }
-          right={<PortfolioOverlap overlap={p.overlap} asOfDate={p.overlapData?.asOfDate} collapsible={fold} />}
+          right={
+            <>
+              <PortfolioOverlap overlap={p.overlap} asOfDate={p.overlapData?.asOfDate} collapsible={fold} />
+              <PortfolioFees fees={p.fees} collapsible={fold} />
+            </>
+          }
         />
       ),
       plan: (
@@ -175,7 +194,32 @@ function PortfolioScreen() {
               defaultOpen
             />
           }
-          right={<PortfolioProjection key={`projection:${JSON.stringify(p.viewSipPlan)}`} portfolio={p.portfolio} sipPlan={p.viewSipPlan} collapsible={fold} />}
+          right={
+            <>
+              <PortfolioSellPreview
+                key={`sell:${p.view || 'all'}`}
+                rows={p.portfolio.rows}
+                funds={p.funds}
+                ledgers={p.ledgers}
+                taxClassFor={taxClassFor}
+                detailsFor={detailsFor}
+                lockInFor={lockInFor}
+                slabPct={p.slabPct}
+                today={todayISO()}
+                collapsible={fold}
+              />
+              <PortfolioGains
+                funds={p.viewFunds}
+                owners={p.view ? [p.view] : p.owners}
+                ledgers={p.ledgers}
+                taxClassFor={taxClassFor}
+                slabPct={p.slabPct}
+                today={todayISO()}
+                collapsible={fold}
+              />
+              <PortfolioProjection key={`projection:${JSON.stringify(p.viewSipPlan)}`} portfolio={p.portfolio} sipPlan={p.viewSipPlan} collapsible={fold} />
+            </>
+          }
         />
       ),
     };

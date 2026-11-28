@@ -453,6 +453,9 @@ local testing predicted.
   never replace: `mergeCatalog`, `mergeOverlap`, `mergeSipPlan`), snapshot ids and `lastSync` keys carry the owner. A stock is a catalog
   entry with `kind: 'stock'`, priced at each import and excluded from the NAV fetch, the NAV date, SIPs and fund-only metrics
   (`docs/PORTFOLIO.md`, Whose holdings / Stocks).
+- **Portfolio tax rules live in `TAX` / `taxBucket` (`lib/portfolioLedger.js`)** and are for FY 2026-27; re-check them after
+  each Budget, and keep every tax or exit-load figure labelled an estimate. Entries filled in after a transaction statement
+  are estimates and the cards must say so (`docs/PORTFOLIO.md`, Analysis cards).
 - **Portfolio SIP plan is a dated schedule** (`normalizeSipSchedule`, `sipAmountFn`): an edit applies from its own date and
   never rewrites earlier estimated units. Every rupee amount on the tab goes through `usePortfolioPrivacy()` (the "Hide
   amounts" switch), not `formatCurrency` directly.
