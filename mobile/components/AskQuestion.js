@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView, Platform, KeyboardAvoidingView } from 'react-native';
 import { usePathname } from 'expo-router';
 import { randomUUID } from 'expo-crypto';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { setAskPanelOpen } from '../lib/askPanelState';
 import { subscribeToExpenses, subscribeToCategories, subscribeToMembers, subscribeToTrips, generateStructured, generateDigest } from '../lib/firebase';
 import { buildAskQuestionSchema, buildAskQuestionPrompt, buildAskAnswerNarrationPrompt, resolveAskQuery, todayISO } from '../lib/utils';
@@ -25,6 +26,8 @@ const DEFAULT_EXAMPLES = ['Top 3 Biggest Expense of the month', 'How is Grocery 
 // name, or household if you don't" instead of "this trip" - a minor UX
 // nicety lost, not a functional gap: naming a trip explicitly still works.
 export default function AskQuestion() {
+  // Both sit above the tab bar, which is taller by the bottom safe margin (a phone's home indicator).
+  const { bottom: safeBottom } = useSafeAreaInsets();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setAskPanelOpen(open), [open]);
@@ -106,8 +109,8 @@ export default function AskQuestion() {
     <>
       <Pressable
         onPress={() => setOpen((v) => !v)}
-        className="absolute bottom-24 right-4 w-14 h-14 rounded-full bg-ledger-green items-center justify-center"
-        style={shadowStyle({ color: '#000000', x: 0, y: 2, blur: 4, opacity: 0.2, elevation: 6 })}
+        className="absolute right-4 w-14 h-14 rounded-full bg-ledger-green items-center justify-center"
+        style={{ bottom: 96 + safeBottom, ...shadowStyle({ color: '#000000', x: 0, y: 2, blur: 4, opacity: 0.2, elevation: 6 }) }}
       >
         <Text style={{ fontSize: 22 }}>{open ? '✕' : '✨'}</Text>
       </Pressable>
@@ -115,8 +118,8 @@ export default function AskQuestion() {
       {open && (
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          className="absolute bottom-40 left-4 right-4 md:left-auto md:w-96 rounded-2xl bg-paper-card border border-ink/15 overflow-hidden"
-          style={{ maxHeight: '60%', ...shadowStyle({ color: '#000000', x: 0, y: 4, blur: 12, opacity: 0.15, elevation: 8 }) }}
+          className="absolute left-4 right-4 md:left-auto md:w-96 rounded-2xl bg-paper-card border border-ink/15 overflow-hidden"
+          style={{ bottom: 160 + safeBottom, maxHeight: '60%', ...shadowStyle({ color: '#000000', x: 0, y: 4, blur: 12, opacity: 0.15, elevation: 8 }) }}
         >
           <View className="px-4 py-3 border-b border-ink/10 flex-row items-center justify-between bg-paper/60">
             <View className="flex-1">

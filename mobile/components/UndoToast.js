@@ -10,8 +10,8 @@ export default function UndoToast({ pendingDeleteList, getLabel, onUndo }) {
   const askOpen = useAskPanelOpen();
   if (pendingDeleteList.length === 0) return null;
   return (
-    // bottom-40 clears AskQuestion's floating chat button (bottom-24, 56px
-    // tall) instead of sitting directly on top of it - both are anchored to
+    // bottom-40 clears AskQuestion's floating chat button (56px tall, just
+    // above the tab bar) instead of sitting directly on top of it - both are anchored to
     // the same corner, so any bottom offset they share collides. Capped to
     // a fixed width from md up instead of always spanning left-4 to right-4,
     // matching AskQuestion's own chat panel (md:w-96) rather than stretching

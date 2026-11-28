@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, Modal } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter, usePathname } from 'expo-router';
 import { FEATURES } from '../lib/edition';
 import { useGroup } from '../lib/GroupContext';
@@ -47,13 +46,13 @@ export default function AppHeader({ badge }) {
   }
 
   return (
-    // z-50: without an explicit z-index here, this SafeAreaView and its
+    // z-50: without an explicit z-index here, this View and its
     // account-menu dropdown share the implicit stacking order of the
     // screen's outer View - the ScrollView sibling below it paints later in
     // DOM order and covers the dropdown regardless of the dropdown's own
     // z-index, since that only wins stacking fights within its own local
     // context, not against unrelated siblings elsewhere in the tree.
-    <SafeAreaView className="bg-paper z-50 border-b border-ink/10" edges={['top']} style={{ zIndex: 50 }}>
+    <View className="bg-paper z-50 border-b border-ink/10" style={{ zIndex: 50 }}>
       <View className="flex-row items-center gap-1.5 px-3 sm:px-4 pt-4 sm:pt-6 pb-3">
         <View className="flex-row items-center gap-1.5 flex-shrink" style={{ flexShrink: 1 }}>
           <View>
@@ -156,6 +155,6 @@ export default function AppHeader({ badge }) {
       </Modal>
 
       <GlobalSearch visible={showSearch} onClose={() => setShowSearch(false)} />
-    </SafeAreaView>
+    </View>
   );
 }
