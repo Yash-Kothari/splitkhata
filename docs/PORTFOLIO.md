@@ -101,8 +101,8 @@ Mutual funds behave exactly as before; a stock differs in these ways:
 The tab only **shows**; anything you set up or change now and then is a **setting** and lives in **Settings -> Portfolio**,
 like the rest of the app (a reminder or button on the tab opens the right Settings page directly).
 
-- **Portfolio tab**, four short sections in the app's segmented style: **Overview** (summary with Hide amounts, sync
-  status and reminders, daily P&L, value against what you put in), **Funds** (the fund list with **Record a trade**, a pop-up, and Fund vs
+- **Portfolio tab**, four short sections in the app's segmented style: **Overview** (summary with Hide amounts,
+  monthly change, sync status and reminders, daily P&L, value against what you put in), **Funds** (the fund list with **Record a trade**, a pop-up, and Fund vs
   Nifty 50), **Insights** (allocation donut, limits as read-only bars, overlap) and **Plan** (SIP what-if, long-term illustration).
 - **Settings -> Portfolio -> SIP plan:** edit the daily SIP plan. **Limits:** set the caps. **Targets & Tax:** the asset mix you want and your slab rate. **Import & export:** Update
   holdings (the setup file the first time, then Kite and CAS snapshots), Check NAVs, and the holdings CSV.
