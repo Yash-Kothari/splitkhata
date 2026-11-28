@@ -17,7 +17,7 @@ const num = (n) => Number(n).toLocaleString('en-IN', { maximumFractionDigits: 3 
 
 // A purchase or sale made outside the SIPs (a lump sum, a redemption). It is counted from the day after the latest
 // snapshot, so the next Kite sync or CAS, which already contains it, never double-counts it.
-export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onClose }) {
+export default function PortfolioTradeForm({ funds, navByCode, rows, soldKeys = [], trades, onClose }) {
   const { money } = usePortfolioPrivacy();
   const [fundKey, setFundKey] = useState('');
   // Buying is the usual reason to open this (a lump sum); a sale is the exception.
@@ -30,11 +30,18 @@ export default function PortfolioTradeForm({ funds, navByCode, rows, trades, onC
   // With more than one person's funds on offer, each is labelled with whose it is (two people can hold the same fund).
   const fundOptions = useMemo(() => {
     const multi = ownersOf(funds).length > 1;
-    return funds.map((f) => ({ value: f.key, label: `${f.short || f.name}${f.group === 'other' ? ' (other)' : ''}${multi ? ` · ${ownerOf(f)}` : ''}` }));
-  }, [funds]);
-  const held = rows.find((r) => r.key === fundKey)?.units ?? null;
+    // A stock that has been sold (no row any more) is not offered; buying it again arrives with the next import.
+    const offered = funds.filter((f) => !isStock(f) || rows.some((r) => r.key === f.key));
+    return offered.map((f) => ({ value: f.key, label: `${f.short || f.name}${f.group === 'other' ? ' (other)' : ''}${multi ? ` · ${ownerOf(f)}` : ''}` }));
+  }, [funds, rows]);
+  // A sold fund has no row, but it holds nothing: a further sale is still refused.
+  const held = rows.find((r) => r.key === fundKey)?.units ?? (soldKeys.includes(fundKey) ? 0 : null);
   const stock = isStock(funds.find((f) => f.key === fundKey));
-  const shortOf = (key) => funds.find((f) => f.key === key)?.short || key;
+  const multiOwner = ownersOf(funds).length > 1;
+  const shortOf = (key) => {
+    const f = funds.find((x) => x.key === key);
+    return `${f?.short || key}${multiOwner && f ? ` · ${ownerOf(f)}` : ''}`;
+  };
 
   const built = useMemo(() => {
     // Nothing typed yet (or just saved): no hint, so a fresh form never opens on a red error.

@@ -368,6 +368,7 @@ export function estimateHolding(position, series, sipAmount, asOf, trades = []) 
 export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, sipSchedule = null, trades = [] }) {
   const positions = latestPositions(snapshots);
   const rows = [];
+  const soldKeys = [];
   for (const f of funds || []) {
     const pos = positions[f.key];
     const series = navByCode?.[String(f.schemeCode)] || [];
@@ -379,8 +380,12 @@ export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, si
     const amountOn = sipAmountFn(sipPlan, sipSchedule, f.key);
     const h = estimateHolding(pos, series, amountOn, '9999-12-31', mine);
     const before = estimateHolding(pos, series, amountOn, prev[0], mine);
-    // A stock whose units have gone to zero (sold) is left out; a stock's price only moves at imports, so it has no "today".
-    if (isStock(f) && h.units <= 0) continue;
+    // A holding whose units have gone to zero (sold) is left out. A fund stays while it still held units at the previous
+    // close, so the sale day's P&L is not lost. A stock's price only moves at imports, so it has no "today".
+    if (h.units <= 0 && (isStock(f) || before.units <= 0)) {
+      soldKeys.push(f.key);
+      continue;
+    }
     const value = h.units * nav;
     const day = isStock(f) ? 0 : before.units * (nav - prev[1]);
     rows.push({
@@ -425,6 +430,7 @@ export function computePortfolio({ funds, snapshots, navByCode, sipPlan = {}, si
   rows.sort((a, b) => b.value - a.value);
   return {
     rows,
+    soldKeys,
     total,
     byGroup: { zerodha: totalOf(rows.filter((r) => r.group === 'zerodha')), other: totalOf(rows.filter((r) => r.group === 'other')) },
     byOwner: Object.fromEntries(ownersOf(rows).map((o) => [o, totalOf(rows.filter((r) => r.owner === o))])),
@@ -454,6 +460,14 @@ export function computeHistory({ funds, snapshots, navByCode, sipPlan = {}, sipS
   for (const f of dated) for (const [d] of navByCode[String(f.schemeCode)]) counts.set(d, (counts.get(d) || 0) + 1);
   const need = Math.ceil(dated.length / 2);
   const all = [...counts.entries()].filter(([, c]) => c >= need).map(([d]) => d).sort();
+  // A stock priced at an import after the newest NAV day (a weekend, or before the evening NAV publish) still counts as the
+  // latest date, so the chart's last point carries the same prices as the summary.
+  const lastNavDay = all[all.length - 1];
+  if (lastNavDay) {
+    const later = new Set();
+    for (const f of live) if (isStock(f)) for (const [d] of navByCode[String(f.schemeCode)]) if (d > lastNavDay) later.add(d);
+    all.push(...[...later].sort());
+  }
   const dates = all.slice(-(days + 1));
   if (dates.length < 2) return { dates, value: [], invested: [], day: [], constantBefore: null };
 
@@ -564,12 +578,20 @@ function positionsToMap(positions, funds, source, owner = DEFAULT_OWNER, extraPr
     if (isStock(fund) && units > 0) {
       const price = Number(p.price ?? extraPrices?.[key]);
       if (!Number.isFinite(price) || price <= 0) {
-        problems.push(`No price for ${key}`);
+        problems.push(`No price for ${fund.symbol || fund.short || key}`);
         continue;
       }
       prices[key] = Math.round(price * 1e4) / 1e4;
     }
-    out[key] = { units: Math.round(units * 1e3) / 1e3, avgCost: Math.round(avgCost * 1e6) / 1e6 };
+    // The same holding on two rows (a share held on NSE and BSE) is one holding: the shares add up at their weighted average cost.
+    const before = out[key];
+    if (before) {
+      const total = before.units + units;
+      const cost = before.units * before.avgCost + units * avgCost;
+      out[key] = { units: Math.round(total * 1e3) / 1e3, avgCost: total > 0 ? Math.round((cost / total) * 1e6) / 1e6 : 0 };
+    } else {
+      out[key] = { units: Math.round(units * 1e3) / 1e3, avgCost: Math.round(avgCost * 1e6) / 1e6 };
+    }
   }
   return { positions: out, prices, problems };
 }
@@ -643,10 +665,15 @@ export function parseImport(text, { catalog = null, asOfDefault, today, owner = 
   }
 
   const warnings = [];
-  if (isKite) {
-    const missing = funds.filter((f) => ownerOf(f) === who && f.group === 'zerodha' && !positions[f.key]).map((f) => f.short || f.name);
+  // With more than one person and nobody chosen, a Kite list goes to the default person: say so, in case it is someone else's.
+  if (isKite && !owner && people && people.length > 1) warnings.push(`No person is chosen, so this goes to ${who}. Pick the right person above if it is someone else's.`);
+  if (isKite && !isEquity) {
+    const missing = funds.filter((f) => ownerOf(f) === who && !isStock(f) && f.group === 'zerodha' && !positions[f.key]).map((f) => f.short || f.name);
     if (missing.length) warnings.push(`Not in this Kite list (left as before): ${missing.join(', ')}`);
   }
+  // Funds and stocks this person has now that the new catalog does not list: they leave the fund list (their old positions stay in
+  // the snapshots but are no longer shown), so the preview names them.
+  const dropped = body.catalog ? (catalog?.funds || []).filter((f) => ownerOf(f) === who && !funds.some((x) => x.key === f.key)).map((f) => f.short || f.name || f.key) : [];
   if (!body.catalog) {
     replaced = 0;
     keptOthers = 0;
@@ -655,7 +682,7 @@ export function parseImport(text, { catalog = null, asOfDefault, today, owner = 
     ok: true,
     warnings,
     funds,
-    summary: { owner: who, replacedFunds: replaced, keptOtherFunds: keptOthers, removed },
+    summary: { owner: who, replacedFunds: replaced, keptOtherFunds: keptOthers, removed, dropped },
     payload: { asOf, source, owner: who, positions, prices, catalog: body.catalog || null, overlap: body.overlap || null, sipPlan: body.sipPlan || null },
   };
 }
@@ -680,6 +707,7 @@ export function mergeCatalog(existing, incoming, owner = DEFAULT_OWNER) {
     if (isStock(f)) {
       const symbol = f.symbol || f.stockId;
       if (!symbol) return { ok: false, error: `Stock ${f.key} needs a symbol.` };
+      if (/[\/\\]/.test(String(symbol))) return { ok: false, error: `The symbol ${symbol} cannot contain a slash.` };
       // The price is stored under the symbol, so two people holding the same stock share one price history.
       entry = { ...f, symbol, stockId: f.stockId || symbol, exchange: f.exchange || 'NSE', group: f.group || 'zerodha', schemeCode: String(f.schemeCode || `STK_${symbol}`), holdingsKey: f.holdingsKey || f.key };
     }
@@ -714,7 +742,8 @@ export function mergeOverlap(existing, incoming) {
   for (const f of existing.futures || []) if (!incomingNewer || !listed.has(f.fund)) futures.push(f);
   for (const f of incoming.futures || []) {
     const clash = futures.some((x) => x.fund === f.fund && x.name === f.name);
-    const storedHasFund = (existing.futures || []).some((x) => x.fund === f.fund);
+    // An older file only fills gaps: a fund already stored (its holdings or its futures) is left exactly as stored.
+    const storedHasFund = (existing.futures || []).some((x) => x.fund === f.fund) || Object.prototype.hasOwnProperty.call(existing.holdings || {}, f.fund);
     if (!clash && (incomingNewer || !storedHasFund)) futures.push(f);
   }
   const newer = incomingNewer ? incoming : existing;
@@ -731,7 +760,9 @@ export function mergeOverlap(existing, incoming) {
 // they ran under.
 export function mergeSipPlan({ existingDoc, incomingPlan, owner = DEFAULT_OWNER, funds, asOf }) {
   if (!incomingPlan) return { ok: true, sip: null };
-  const mineKeys = new Set((funds || []).filter((f) => ownerOf(f) === owner).map((f) => f.key));
+  const mineKeys = new Set((funds || []).filter((f) => ownerOf(f) === owner && !isStock(f)).map((f) => f.key));
+  const stockKeys = Object.keys(incomingPlan).filter((k) => (funds || []).some((f) => f.key === k && isStock(f)));
+  if (stockKeys.length) return { ok: false, error: `A stock has no SIP, but the plan names ${stockKeys.slice(0, 4).join(', ')}.` };
   const unknown = Object.keys(incomingPlan).filter((k) => !mineKeys.has(k));
   if (unknown.length) return { ok: false, error: `The SIP plan names funds that are not ${owner}'s: ${unknown.slice(0, 4).join(', ')}.` };
   const schedule = normalizeSipSchedule(existingDoc);

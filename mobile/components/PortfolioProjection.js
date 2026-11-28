@@ -15,11 +15,11 @@ const MARKS = [5, 10, 15, 20, 25, 30];
 
 // `width` is a share of the row; minWidth 0 lets the input shrink to it (a TextInput otherwise keeps its own
 // default width on the web and runs out of the card).
-function Field({ label: text, value, onChange, width = '47%' }) {
+function Field({ label: text, value, onChange, width = '47%', secure = false }) {
   return (
     <View style={{ width }}>
       <Text className={label} numberOfLines={1}>{text}</Text>
-      <TextInput value={value} onChangeText={onChange} keyboardType="decimal-pad" aria-label={text} className={input} style={{ minWidth: 0, width: '100%' }} />
+      <TextInput value={value} onChangeText={onChange} keyboardType="decimal-pad" secureTextEntry={secure} aria-label={text} className={input} style={{ minWidth: 0, width: '100%' }} />
     </View>
   );
 }
@@ -27,7 +27,7 @@ function Field({ label: text, value, onChange, width = '47%' }) {
 // What the SIPs and today's value could grow to over a long horizon at a low, middle and high yearly return. This is
 // compounding arithmetic on numbers you can change, an illustration of how time and return interact, not a forecast.
 export default function PortfolioProjection({ portfolio, sipPlan, collapsible = false }) {
-  const { money, compact } = usePortfolioPrivacy();
+  const { money, compact, hidden } = usePortfolioPrivacy();
   const c = useChartColors();
   const [pickedYear, setPickedYear] = useState(null);
   const [openState, setOpenState] = useState(false);
@@ -87,7 +87,7 @@ export default function PortfolioProjection({ portfolio, sipPlan, collapsible = 
       {isOpen ? (
         <View>
           <View className="flex-row flex-wrap" style={{ gap: 12 }}>
-            <Field label="SIP per Month (₹)" value={monthly} onChange={setMonthly} />
+            <Field label="SIP per Month (₹)" value={monthly} onChange={setMonthly} secure={hidden} />
             <Field label="Years" value={years} onChange={setYears} />
             <Field label="Yearly SIP Increase (%)" value={stepUp} onChange={setStepUp} />
             <Field label="Inflation (%)" value={inflation} onChange={setInflation} />

@@ -916,7 +916,7 @@ test('parseImport for a person: a setup file merges into the stored catalog and 
   assert.equal(r.payload.owner, 'Kruti');
   assert.deepEqual(r.payload.positions, { K_A: { units: 50, avgCost: 9 } });
   assert.deepEqual(r.funds.map((f) => f.key), ['A', 'B', 'K_A']);
-  assert.deepEqual(r.summary, { owner: 'Kruti', replacedFunds: 0, keptOtherFunds: 2, removed: [] });
+  assert.deepEqual(r.summary, { owner: 'Kruti', replacedFunds: 0, keptOtherFunds: 2, removed: [], dropped: [] });
   // the file's own owner is used when no one is chosen, and a different choice is refused
   assert.equal(parseImport(JSON.stringify(KRUTI_SETUP), base).payload.owner, 'Kruti');
   const mismatch = parseImport(JSON.stringify(KRUTI_SETUP), { ...base, owner: DEFAULT_OWNER });
@@ -1017,6 +1017,26 @@ test('computePortfolio: a stock is valued at its saved price, has no day change,
   assert.equal(after.rows.some((r) => r.key === 'K_Y'), false);
   // a portfolio of only stocks still has a NAV date
   assert.equal(computePortfolio({ funds: [STOCK_X], snapshots: [STOCK_SNAP], navByCode: nav }).navDate, '2026-11-20');
+});
+
+test('computePortfolio: a sold fund is left out, comes back when bought again, and keeps the sale day\'s P&L', () => {
+  const sold = { date: '2026-11-20', source: 'kite', positions: { A: { units: 0, avgCost: 0 } } };
+  const snapshots = [...SNAP, sold];
+  const gone = computePortfolio({ funds: FUNDS, snapshots, navByCode: NAV });
+  assert.deepEqual(gone.rows.map((r) => r.key), ['B']);
+  assert.deepEqual(gone.soldKeys, ['A']);
+  assert.equal(gone.total.count, 1);
+
+  const bought = { fundKey: 'A', kind: 'buy', date: '2026-11-21', units: 5, amount: 65 };
+  const back = computePortfolio({ funds: FUNDS, snapshots, navByCode: NAV, trades: [bought] });
+  assert.equal(back.rows.find((r) => r.key === 'A').units, 5);
+  assert.deepEqual(back.soldKeys, []);
+
+  // sold on the newest NAV date: the units held at the previous close still earned that day's move
+  const sale = { fundKey: 'A', kind: 'sell', date: '2026-11-20', units: 100, amount: 1300 };
+  const saleDay = computePortfolio({ funds: FUNDS, snapshots: SNAP, navByCode: NAV, trades: [sale] });
+  const a = saleDay.rows.find((r) => r.key === 'A');
+  assert.deepEqual([a.value, a.day], [0, 100]);
 });
 
 test('computeHistory: stocks are valued at their last saved price, never set the trading days, and have no daily P&L', () => {
@@ -1128,7 +1148,7 @@ test('parseImport: a Kite equity list maps by ISIN to that person\'s Zerodha sto
   assert.deepEqual(parseImport(kite, { ...base, heldKeys: ['K_X', 'K_Y'] }).summary.removed, ['YCo']);
   // a stock with no price is refused; a mutual-fund Kite list never touches stocks
   const noPrice = JSON.stringify([{ tradingsymbol: 'XCO', exchange: 'NSE', isin: 'INE000X', quantity: 1, average_price: 1 }]);
-  assert.match(parseImport(noPrice, base).error, /No price for K_X/);
+  assert.match(parseImport(noPrice, base).error, /No price for XCO/);
   const mf = JSON.stringify([{ tradingsymbol: 'INE000X', quantity: 1, average_price: 1 }]);
   assert.match(parseImport(mf, base).error, /Unknown fund/);
   // Yash cannot import a stock that is Kruti's
@@ -1200,6 +1220,69 @@ test('mergeOverlap: a newer file replaces what it lists (a closed future goes, a
   const bare = mergeOverlap({ holdings: { A: {} } }, { holdings: { B: {} } });
   assert.equal(Object.values(bare).some((v) => v === undefined), false);
   assert.equal('asOf' in bare, false);
+});
+
+test('mergeOverlap: an older file never re-opens a future that a newer file closed', () => {
+  // 15 Nov lists a future on A; 20 Nov lists A with none (closed); an older 1 Oct file still lists it
+  let m = mergeOverlap(null, { asOfDate: '2026-11-15', holdings: { A: { X: 10 } }, futures: [{ fund: 'A', name: 'FUT X', weight: 4 }] });
+  m = mergeOverlap(m, { asOfDate: '2026-11-20', holdings: { A: { X: 11 } }, futures: [] });
+  assert.deepEqual(m.futures, []);
+  m = mergeOverlap(m, { asOfDate: '2026-10-01', holdings: { A: { X: 9 } }, futures: [{ fund: 'A', name: 'FUT X', weight: 4 }] });
+  assert.deepEqual(m.futures, [], 'A is already stored, so the older file leaves it alone');
+  assert.deepEqual(m.holdings.A, { X: 11 });
+  assert.equal(m.asOfDate, '2026-11-20');
+  // but an older file's futures for a fund that was never stored are still taken
+  const filled = mergeOverlap(m, { asOfDate: '2026-10-01', holdings: { C: { Z: 1 } }, futures: [{ fund: 'C', name: 'C fut', weight: 2 }] });
+  assert.deepEqual(filled.futures.map((f) => f.fund), ['C']);
+});
+
+test('stocks, round three: warnings by kind, no SIP for a stock, rows that add up, valid symbols, what leaves the list, and the chart\'s last date', () => {
+  const funds = [...FUNDS, { ...FUNDS[0], key: 'K_D', owner: 'Kruti', isin: 'INF000D', group: 'zerodha', short: 'Delta' }, STOCK_X, STOCK_Y];
+  const base = { catalog: { funds }, asOfDefault: '2026-11-22', today: '2026-11-22', owner: 'Kruti' };
+  // a mutual-fund Kite list warns about her missing mutual funds only, and a stocks list warns about none (it lists removals)
+  const mfList = JSON.stringify([{ tradingsymbol: 'INF000D', quantity: 1, average_price: 1 }]);
+  assert.deepEqual(parseImport(mfList, base).warnings, []);
+  const mfMissing = parseImport(JSON.stringify([{ tradingsymbol: 'INF000A', quantity: 1, average_price: 1 }]), { ...base, owner: DEFAULT_OWNER, catalog: { funds: [...funds, { key: 'A2', isin: 'INF000Q', group: 'zerodha', short: 'Quiet', name: 'Quiet' }] } });
+  assert.match(mfMissing.warnings.join(' '), /Quiet/);
+  assert.equal(/XCo|YCo/.test(mfMissing.warnings.join(' ')), false, 'stocks are never "missing funds"');
+  const eq = JSON.stringify([{ tradingsymbol: 'XCO', exchange: 'NSE', isin: 'INE000X', quantity: 1, average_price: 1, last_price: 2 }]);
+  assert.equal(parseImport(eq, base).warnings.some((w) => /Not in this Kite list/.test(w)), false);
+  // a SIP plan cannot name a stock
+  assert.match(mergeSipPlan({ existingDoc: null, incomingPlan: { K_X: 100 }, owner: 'Kruti', funds, asOf: '2026-11-22' }).error, /A stock has no SIP/);
+  // the same share on two rows (NSE and BSE) adds up at the weighted cost
+  const twoRows = JSON.stringify([
+    { tradingsymbol: 'XCO', exchange: 'NSE', isin: 'INE000X', quantity: 10, average_price: 100, last_price: 150 },
+    { tradingsymbol: 'XCO', exchange: 'BSE', isin: 'INE000X', quantity: 5, average_price: 160, last_price: 151 },
+  ]);
+  assert.deepEqual(parseImport(twoRows, base).payload.positions.K_X, { units: 15, avgCost: 120 });
+  // a symbol with a slash cannot be a document id
+  assert.match(mergeCatalog(STORED_CATALOG, { funds: [{ key: 'K_S', kind: 'stock', symbol: 'A/B', name: 's' }] }, 'Kruti').error, /slash/);
+  assert.equal(mergeCatalog(STORED_CATALOG, { funds: [{ key: 'K_S', kind: 'stock', symbol: 'M&M', name: 's' }] }, 'Kruti').ok, true);
+  // a catalog that leaves out funds or stocks she has now says so
+  const stored = { funds: [...FUNDS, KRUTI_A, STOCK_X, STOCK_Y] };
+  const replace = parseImport(JSON.stringify({ ...KRUTI_SETUP, catalog: { funds: [KRUTI_SETUP.catalog.funds[0]] } }), { catalog: stored, asOfDefault: '2026-11-21', today: '2026-11-22', owner: 'Kruti' });
+  assert.deepEqual(replace.summary.dropped, ['XCo', 'YCo']);
+  assert.equal(replace.summary.replacedFunds, 3);
+  // a stock priced after the newest NAV day is the chart's last date, so its last point agrees with the summary
+  const nav = { ...NAV, STK_XCO: [['2026-11-20', 200], ['2026-11-22', 210]] };
+  const snaps = [...SNAP, { date: '2026-11-20', source: 'kite_stocks', owner: 'Kruti', positions: { K_X: { units: 10, avgCost: 150 } } }];
+  const h = computeHistory({ funds: [FUNDS[0], STOCK_X], calendarFunds: [FUNDS[0], STOCK_X], snapshots: snaps, navByCode: nav, days: 10 });
+  assert.equal(h.dates[h.dates.length - 1], '2026-11-22');
+  assert.equal(h.value[h.value.length - 1], 100 * 13 + 10 * 210);
+  assert.equal(h.day[h.day.length - 1], 0, 'no NAV moved on the extra day, and a stock has no day P&L');
+  const p = computePortfolio({ funds: [FUNDS[0], STOCK_X], snapshots: snaps, navByCode: nav });
+  assert.equal(p.total.value, h.value[h.value.length - 1], 'the chart ends where the summary does');
+});
+
+test('parseImport: a Kite list with nobody chosen says it goes to the first person when there is more than one', () => {
+  const funds = [{ key: 'A', isin: 'INF000A', schemeCode: '1', name: 'Alpha', short: 'Alpha', group: 'zerodha' }, { key: 'K_A', isin: 'INF000A', schemeCode: '1', name: 'Alpha', short: 'Alpha', group: 'zerodha', owner: 'Kruti' }];
+  const kite = JSON.stringify([{ tradingsymbol: 'INF000A', quantity: 1, average_price: 1 }]);
+  const base = { catalog: { funds }, asOfDefault: '2026-11-21', today: '2026-11-22', people: [DEFAULT_OWNER, 'Kruti'] };
+  const open = parseImport(kite, base);
+  assert.deepEqual(Object.keys(open.payload.positions), ['A']);
+  assert.match(open.warnings[0], /No person is chosen, so this goes to Yash/);
+  assert.equal(parseImport(kite, { ...base, owner: 'Kruti' }).warnings.some((w) => /No person is chosen/.test(w)), false, 'choosing silences it');
+  assert.equal(parseImport(kite, { ...base, people: [DEFAULT_OWNER] }).warnings.some((w) => /No person is chosen/.test(w)), false, 'one person: nothing to warn about');
 });
 
 test('parseImport: a setup file must say whose it is when there is more than one person, and a bad name is called a bad name', () => {

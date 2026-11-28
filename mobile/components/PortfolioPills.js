@@ -10,7 +10,7 @@ export default function PortfolioPills({ options, value, onChange }) {
           onPress={() => onChange(key)}
           accessibilityRole="button"
           aria-selected={value === key}
-          style={options.length > 4 ? { flexBasis: '30%' } : { flexBasis: 0 }}
+          style={options.length > 3 ? { flexBasis: '30%' } : { flexBasis: 0 }}
           className={`flex-1 min-h-9 rounded-xl items-center justify-center border px-1 ${value === key ? 'bg-ledger-green border-ledger-green' : 'border-ink/15 bg-paper'}`}
         >
           <Text className={`font-body-semibold text-xs ${value === key ? 'text-white' : 'text-ink'}`} numberOfLines={1}>{text}</Text>

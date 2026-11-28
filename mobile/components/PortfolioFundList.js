@@ -32,7 +32,7 @@ const FundRow = memo(function FundRow({ r }) {
             ) : null}
             {r.estimated ? (
               <View className="px-1.5 py-0.5 rounded bg-mustard/20">
-                <Text className="font-mono text-2xs text-mustard">units est.</Text>
+                <Text className="font-mono text-2xs text-mustard">{stock ? 'incl. trades' : 'units est.'}</Text>
               </View>
             ) : null}
           </View>
@@ -55,7 +55,7 @@ const FundRow = memo(function FundRow({ r }) {
           {[
             [stock ? 'Shares' : 'Units', units(num(r.units))],
             ['Average Cost', money(r.avgCost)],
-            [stock ? 'Price' : 'Latest NAV', `₹${r.nav}`],
+            [stock ? 'Price' : 'Latest NAV', stock ? `₹${Number(r.nav).toLocaleString('en-IN', { maximumFractionDigits: 2 })}` : `₹${r.nav}`],
             ['Share of Portfolio', `${r.share.toFixed(1)}%`],
             [stock ? 'Shares From' : 'Units From', `${formatShortDate(r.snapshotDate)} ${stock ? 'import' : 'snapshot'}${r.estimated ? (stock ? ' + recorded trades' : ` + ${r.sipDays} SIP days`) : ''}`],
           ].map(([k, v]) => (
