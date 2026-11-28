@@ -101,8 +101,8 @@ Mutual funds behave exactly as before; a stock differs in these ways:
 The tab only **shows**; anything you set up or change now and then is a **setting** and lives in **Settings -> Portfolio**,
 like the rest of the app (a reminder or button on the tab opens the right Settings page directly).
 
-- **Portfolio tab**, four short sections in the app's segmented style: **Overview** (summary with Hide amounts, sync
-  status and reminders, daily P&L, value against what you put in), **Funds** (the fund list with **Record a trade**, a pop-up, and Fund vs
+- **Portfolio tab**, four short sections in the app's segmented style: **Overview** (summary with Hide amounts,
+  monthly change, sync status and reminders, daily P&L, value against what you put in), **Funds** (the fund list with **Record a trade**, a pop-up, and Fund vs
   Nifty 50), **Insights** (allocation donut, limits as read-only bars, overlap) and **Plan** (SIP what-if, long-term illustration).
 - **Settings -> Portfolio -> SIP plan:** edit the daily SIP plan. **Limits:** set the caps. **Targets & Tax:** the asset mix you want and your slab rate. **Import & export:** Update
   holdings (the setup file the first time, then Kite and CAS snapshots), Check NAVs, and the holdings CSV.
@@ -161,7 +161,7 @@ tests in `tests/portfolioLedger.test.mjs`. Mutual funds only; direct stocks have
 - **Asset Mix (Insights).** Classes come from `fundinfo.asset`, else the category and name. Targets and the slab rate are in
   Settings -> Portfolio -> Targets & Tax.
 - **Fund Fees (Insights).** Expense ratio times value, from `fundinfo`. Funds without one are listed.
-- **Monthly Change (Overview).** Last three months split into market movement (daily P&L) and money in or out, plus the SIP
+- **Monthly Change (Overview).** Last three months market movement (daily P&L), SIP invested, other purchases and withdrawals (`monthlyFlows`), plus the SIP
   check: units between the two latest imports against what the plan expects, flagged beyond 2.5 days of SIP.
 - **Off the high.** A fund's row shows how far it is below the highest stored NAV (about a year).
 
@@ -202,9 +202,10 @@ database.
 
 Both are pasted into the same Update Holdings box and told apart by `source`.
 
-- **History:** ask for a **detailed** CAS (CAMS / KFintech or MFCentral, from the earliest possible date, including Zerodha's
-  funds) and give Claude the PDF. It writes `portfolio-private/txn-YYYY-MM-DD.json`:
-  `{ source: 'transactions', asOf, owner?, transactions: [{ key | isin, group?, date, type: 'buy'|'sell', units, amount }] }`.
+- **History:** request a **Detailed** CAS (camsonline.com -> "CAS - CAMS+KFintech", or MFCentral) from a date before your
+  first investment, with zero-balance folios, and give Claude the PDF. Units held in demat (Zerodha Coin) may be missing
+  from it: add Console -> Reports -> Tradebook -> Mutual funds as CSV. It writes `portfolio-private/txn-YYYY-MM-DD.json`:
+  `{ source: 'transactions', asOf, owner?, transactions: [{ key | isin, group?, date, type: 'sip'|'buy'|'sell', units, amount }] }` (`sip` marks a SIP instalment).
   Switches are a sale of one fund and a purchase of the other; reinvested dividends and bonus units are purchases. Each fund's
   rows must start at its first purchase. No folio numbers or PAN. Import replaces those funds' history and saves their closing
   units as a snapshot.

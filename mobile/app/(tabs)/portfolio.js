@@ -141,6 +141,7 @@ function PortfolioScreen() {
           left={
             <>
               <PortfolioSummary portfolio={p.portfolio} view={p.view} />
+              <PortfolioMonth months={p.months} flows={p.flows} sipChecks={p.sipChecks} collapsible={fold} />
               {sync}
             </>
           }
@@ -148,7 +149,6 @@ function PortfolioScreen() {
             <>
               <DailyPnlChart history={p.history} collapsible={fold} />
               <ValueChart history={p.history} collapsible={fold} />
-              <PortfolioMonth months={p.months} sipChecks={p.sipChecks} collapsible={fold} />
             </>
           }
         />

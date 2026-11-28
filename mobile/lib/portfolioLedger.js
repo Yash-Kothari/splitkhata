@@ -55,7 +55,9 @@ export function replayLots(events) {
 // at that day's NAV. Those entries are marked `estimated`.
 export function fundLedger({ fund, history, snapshots = [], trades = [], series = [], amountOn = (/** @type {string} */ _date) => 0, today }) {
   if (!history?.items?.length) return null;
-  const events = history.items.map((t) => ({ date: t.d, units: Number(t.u), amount: Math.abs(Number(t.a) || 0) }));
+  // `kind` says what the money was: a SIP instalment, another purchase or a sale (see monthlyFlows).
+  const kindOf = (units, sip) => (units < 0 ? 'sell' : sip ? 'sip' : 'buy');
+  const events = history.items.map((t) => ({ date: t.d, units: Number(t.u), amount: Math.abs(Number(t.a) || 0), kind: kindOf(Number(t.u), t.s) }));
   let from = history.asOf;
   const mine = trades.filter((t) => t.fundKey === fund.key);
   const unitsNow = () => events.reduce((a, e) => a + e.units, 0);
@@ -63,10 +65,10 @@ export function fundLedger({ fund, history, snapshots = [], trades = [], series 
     const added = [];
     for (const [d, nav] of series) {
       const a = d > from && d <= to ? amountOn(d) : 0;
-      if (a > 0) added.push({ date: d, units: a / nav, amount: a, estimated: true });
+      if (a > 0) added.push({ date: d, units: a / nav, amount: a, estimated: true, kind: 'sip' });
     }
     for (const t of mine) {
-      if (t.date > from && t.date <= to) added.push({ date: t.date, units: t.kind === 'sell' ? -t.units : t.units, amount: t.amount, estimated: true, trade: true });
+      if (t.date > from && t.date <= to) added.push({ date: t.date, units: t.kind === 'sell' ? -t.units : t.units, amount: t.amount, estimated: true, trade: true, kind: t.kind === 'sell' ? 'sell' : 'buy' });
     }
     events.push(...added);
     return added;
@@ -89,14 +91,17 @@ export function fundLedger({ fund, history, snapshots = [], trades = [], series 
     }
     if (Math.abs(diff) > 0.001) {
       const nav = navOnOrBefore(series, s.date)?.[1] ?? series[0]?.[1] ?? 0;
-      events.push({ date: s.date, units: diff, amount: Math.abs(diff) * nav, estimated: true });
+      const amount = Math.abs(diff) * nav;
+      // An extra of about a day's SIP is an instalment that arrived a day early or late, not a separate purchase.
+      const daily = amountOn(s.date);
+      events.push({ date: s.date, units: diff, amount, estimated: true, kind: kindOf(diff, daily > 0 && amount <= daily * 1.5) });
     }
     from = s.date;
   }
   addSince(today);
   const kept = events.filter((e) => Math.abs(e.units) > EPS);
   const replay = replayLots(kept);
-  return { ...replay, asOf: history.asOf, estimated: kept.some((e) => e.estimated) };
+  return { ...replay, events: kept, asOf: history.asOf, estimated: kept.some((e) => e.estimated) };
 }
 
 // One ledger per fund that has a history.
@@ -116,6 +121,50 @@ export function buildLedgers({ funds, histories, snapshots, trades = [], navByCo
     if (ledger) out[f.key] = ledger;
   }
   return out;
+}
+
+// ---------- money in and out ----------
+
+// Rupees put in by SIP, put in otherwise, and taken out, per calendar month. A fund with a history uses it (and what has
+// happened since). A fund without one is followed from its first import: the SIP plan, recorded trades and what later
+// imports show. `knownFrom` is the date from which every fund is covered (null when all have a history).
+export function monthlyFlows({ funds, histories, snapshots, trades = [], navByCode, sipPlan = {}, sipSchedule = null, today }) {
+  const byMonth = {};
+  let knownFrom = null;
+  const ordered = [...(snapshots || [])].filter((s) => s.source !== 'history').sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  for (const f of funds || []) {
+    if (isStock(f)) continue;
+    let history = histories?.[f.key];
+    let after = '';
+    if (!history?.items?.length) {
+      const first = ordered.find((s) => s.positions?.[f.key]);
+      if (!first) continue;
+      // A fund that first shows up after an earlier import of the same place and person was bought in between.
+      const before = [...ordered].reverse().find((s) => s.date < first.date && s.source === first.source && ownerOf(s) === ownerOf(first));
+      const p = first.positions[f.key];
+      const asOf = before ? before.date : first.date;
+      const units = before ? 0 : Number(p.units) || 0;
+      history = { asOf, items: [{ d: asOf, u: units, a: units * (Number(p.avgCost) || 0) }] };
+      after = asOf;
+      if (!knownFrom || asOf > knownFrom) knownFrom = asOf;
+    }
+    const ledger = fundLedger({
+      fund: f,
+      history,
+      snapshots,
+      trades,
+      series: navByCode?.[String(f.schemeCode)] || [],
+      amountOn: sipAmountFn(sipPlan, sipSchedule, f.key),
+      today,
+    });
+    for (const e of ledger.events) {
+      if (e.date <= after) continue; // the opening balance of a fund followed from its first import
+      const m = (byMonth[e.date.slice(0, 7)] ||= { sip: 0, other: 0, out: 0, estimated: false });
+      m[e.kind === 'sell' ? 'out' : e.kind === 'sip' ? 'sip' : 'other'] += e.amount;
+      if (e.estimated) m.estimated = true;
+    }
+  }
+  return { byMonth, knownFrom };
 }
 
 // ---------- XIRR ----------
@@ -354,7 +403,7 @@ export function previewSale({ ledger, nav, units = null, amount = null, date, ta
 // ---------- importing a history ----------
 
 // A transaction file: { source: 'transactions', asOf, owner?, transactions: [{ key | isin, date, units, amount, type }] },
-// the full history of every fund it names. `type: 'sell'` (or negative units) is units leaving. A fund whose history sells
+// the full history of every fund it names. `type: 'sell'` (or negative units) is units leaving; `type: 'sip'` is a SIP instalment. A fund whose history sells
 // more than it bought is refused: the statement does not start from the beginning.
 export function parseTransactions(json, { funds, owner = null, people = null, today }) {
   const asOf = json?.asOf;
@@ -382,7 +431,7 @@ export function parseTransactions(json, { funds, owner = null, people = null, to
       problems.push(`Bad row for ${hits[0].short || hits[0].key} dated ${t.date}`);
       continue;
     }
-    (byFund[hits[0].key] ||= []).push({ d: t.date, u: (sell ? -1 : 1) * round3(Math.abs(units)), a: Math.round(amount * 100) / 100 });
+    (byFund[hits[0].key] ||= []).push({ d: t.date, u: (sell ? -1 : 1) * round3(Math.abs(units)), a: Math.round(amount * 100) / 100, ...(!sell && t.type === 'sip' ? { s: 1 } : {}) });
   }
   const histories = [];
   const positions = {};
