@@ -9,7 +9,7 @@ const nameOf = (m) => `${MONTH[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}`;
 
 // Each recent month's change in value, split into what the market did and what you put in or took out; and whether the
 // SIP units expected between the last two imports arrived.
-export default function PortfolioMonth({ months, sipChecks = [], collapsible = false }) {
+export default function PortfolioMonth({ months, flows, sipChecks = [], collapsible = false }) {
   const { money, signed } = usePortfolioPrivacy();
   const short = sipChecks.filter((c) => c.isShort);
   if (!months.length && !sipChecks.length) return null;
@@ -17,20 +17,28 @@ export default function PortfolioMonth({ months, sipChecks = [], collapsible = f
   return (
     <FoldCard
       title="Monthly Change"
-      subtitle="Market movement against new money"
+      subtitle="Market movement, SIPs and withdrawals"
       summary={short.length ? `${short.length} SIP${short.length === 1 ? '' : 's'} may have missed` : lead ? `Market ${signed(lead.market)} this month` : null}
       collapsible={collapsible}
       defaultOpen={short.length > 0}
     >
-      {months.map((m) => (
-        <View key={m.month} className="mb-2">
-          <Heading>{nameOf(m.month)}</Heading>
-          <Line label="Value" sub={`${formatShortDate(m.from)} to ${formatShortDate(m.to)}`} value={money(m.end)} valueSub={`from ${money(m.start)}`} />
-          <Line label="Market Movement" value={signed(m.market)} tone={gainClass(m.market)} />
-          <Line label={m.added < 0 ? 'Money Out' : 'Money In'} value={signed(m.added)} />
-          {m.partial ? <Note>Starts before the first import, so money in is understated.</Note> : null}
-        </View>
-      ))}
+      {months.map((m) => {
+        const f = flows.byMonth[m.month] || { sip: 0, other: 0, out: 0 };
+        // Before this date, what went into funds without a history is not known.
+        const gap = flows.knownFrom && flows.knownFrom.slice(0, 7) >= m.month;
+        return (
+          <View key={m.month} className="mb-2">
+            <Heading>{nameOf(m.month)}</Heading>
+            <Line label="Value" sub={`${formatShortDate(m.from)} to ${formatShortDate(m.to)}`} value={money(m.end)} valueSub={`from ${money(m.start)}`} />
+            <Line label="Market Movement" value={signed(m.market)} tone={gainClass(m.market)} />
+            <Line label="SIP Invested" value={money(f.sip)} />
+            {f.other >= 1 ? <Line label="Other Purchases" value={money(f.other)} /> : null}
+            <Line label="Withdrawn" value={money(f.out)} />
+            {gap ? <Note>Counted from {formatShortDate(flows.knownFrom)} only. Import your transaction history for the whole month.</Note> : null}
+            {f.estimated ? <Note>Includes estimates from your SIP plan and later imports.</Note> : null}
+          </View>
+        );
+      })}
       {sipChecks.length ? (
         <View>
           <Heading>SIP Check</Heading>

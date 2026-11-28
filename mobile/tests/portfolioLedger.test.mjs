@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { replayLots, fundLedger, xirr, computeReturns, taxBucket, computeTax, emptyBuckets, financialYear, realisedGains, exitLoadPct, previewSale, parseTransactions, buildHistoryWrites } from '../lib/portfolioLedger.js';
+import { replayLots, fundLedger, xirr, computeReturns, taxBucket, computeTax, emptyBuckets, financialYear, realisedGains, exitLoadPct, previewSale, parseTransactions, buildHistoryWrites, monthlyFlows } from '../lib/portfolioLedger.js';
 import { assetOf, taxClassOf, lockInMonthsOf, computeAssetMix, computeFees, computeDrawdowns, monthlyChanges, checkSips, parseFundInfo, checkTargets } from '../lib/portfolioInsights.js';
 
 const near = (a, b, tol = 0.01) => assert.ok(Math.abs(a - b) <= tol, `${a} is not ${b}`);
@@ -234,4 +234,27 @@ test('lock-in comes from the file, else three years for a tax saver; free units 
   const ok = parseFundInfo({ asOf: '2026-11-01', funds: { A: { freePct: 10, lockInMonths: 36 } } }, { funds: [A] });
   assert.deepEqual(ok.funds.A, { asOf: '2026-11-01', freePct: 10, lockInMonths: 36 });
   assert.equal(parseFundInfo({ asOf: '2026-11-01', funds: { A: { freePct: 200 } } }, { funds: [A] }).ok, false);
+});
+
+test('monthlyFlows: SIP, other purchases and withdrawals are counted apart', () => {
+  const B = { ...A, key: 'B', schemeCode: '2' };
+  const series = ['2026-11-02', '2026-11-03', '2026-11-04'].map((d) => [d, 10]);
+  const history = { asOf: '2026-11-01', items: [{ d: '2026-10-05', u: 10, a: 100, s: 1 }, { d: '2026-10-06', u: 50, a: 500 }, { d: '2026-10-20', u: -5, a: 60 }] };
+  const snapshots = [
+    { date: '2026-11-01', source: 'kite', positions: { B: { units: 100, avgCost: 10 } } },
+    { date: '2026-11-04', source: 'kite', positions: { A: { units: 85, avgCost: 10 }, B: { units: 80, avgCost: 10 } } },
+  ];
+  const r = monthlyFlows({ funds: [A, B], histories: { A: history }, snapshots, navByCode: { 1: series, 2: series }, sipPlan: { A: 100 }, today: '2026-11-04' });
+  near(r.byMonth['2026-10'].sip, 100);
+  near(r.byMonth['2026-10'].other, 500);
+  near(r.byMonth['2026-10'].out, 60);
+  near(r.byMonth['2026-11'].sip, 300); // three SIP days in A; B's opening balance is not money in
+  near(r.byMonth['2026-11'].out, 200); // B went from 100 units to 80
+  near(r.byMonth['2026-11'].other, 0);
+  assert.equal(r.knownFrom, '2026-11-01');
+});
+
+test('parseTransactions keeps which purchases were SIP instalments', () => {
+  const r = parseTransactions({ source: 'transactions', asOf: '2026-11-19', transactions: [{ key: 'A', date: '2025-01-01', units: 1, amount: 10, type: 'sip' }] }, { funds: [A], today: '2026-11-20' });
+  assert.equal(r.histories[0].items[0].s, 1);
 });

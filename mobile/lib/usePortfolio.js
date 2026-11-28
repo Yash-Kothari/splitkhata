@@ -25,7 +25,7 @@ import {
   computeBenchmarkTable,
   DEFAULT_LIMITS,
 } from './portfolio';
-import { buildLedgers, computeReturns, TAX } from './portfolioLedger';
+import { buildLedgers, computeReturns, monthlyFlows, TAX } from './portfolioLedger';
 import { computeAssetMix, computeFees, computeDrawdowns, monthlyChanges, checkSips } from './portfolioInsights';
 
 // The public AMFI mirror. NAVs are free and keyless; only the fund's scheme code is ever sent.
@@ -164,6 +164,10 @@ export default function usePortfolio({ autoBackfill = true, view = null } = {}) 
   const fees = useMemo(() => computeFees({ rows: portfolio.rows, info: fundInfo }), [portfolio.rows, fundInfo]);
   const drawdowns = useMemo(() => computeDrawdowns({ rows: portfolio.rows, navByCode }), [portfolio.rows, navByCode]);
   const months = useMemo(() => monthlyChanges(history, 3), [history]);
+  const flows = useMemo(
+    () => monthlyFlows({ funds: viewFunds, histories, snapshots, trades, navByCode, sipPlan, sipSchedule, today }),
+    [viewFunds, histories, snapshots, trades, navByCode, sipPlan, sipSchedule, today],
+  );
   const sipChecks = useMemo(
     () => checkSips({ funds: viewFunds, snapshots, navByCode, sipPlan, sipSchedule, trades }),
     [viewFunds, snapshots, navByCode, sipPlan, sipSchedule, trades],
@@ -284,6 +288,7 @@ export default function usePortfolio({ autoBackfill = true, view = null } = {}) 
     fees,
     drawdowns,
     months,
+    flows,
     sipChecks,
     refreshNavs: () => runBackfill(true),
   };
