@@ -282,17 +282,31 @@ export function exitLoadPct(tiers, days) {
   return hit ? Number(hit.pct) : 0;
 }
 
+// A lot bought on `bought` can be redeemed on `date` once its lock-in is over.
+export const unlocksOn = (bought, months) => addMonthsISO(bought, months);
+
 // What redeeming `units` (or `amount` rupees) of one fund on `date` would look like: which lots go, first in first out, the
 // exit load on each, the gain in each tax bucket, and the extra tax on top of what was already realised this year.
-export function previewSale({ ledger, nav, units = null, amount = null, date, taxClass, exitLoad = null, realised = emptyBuckets(), slabPct = TAX.slabDefault }) {
+export function previewSale({ ledger, nav, units = null, amount = null, date, taxClass, exitLoad = null, freePct = 0, lockInMonths = 0, realised = emptyBuckets(), slabPct = TAX.slabDefault }) {
   if (!ledger) return { ok: false, error: 'This fund has no transaction history yet.' };
   if (!(nav > 0) || !isIsoDate(date)) return { ok: false, error: 'There is no NAV for this fund yet.' };
-  const held = ledger.units;
+  // Units still locked in cannot be redeemed at all, so only the rest are on offer.
+  const open = lockInMonths > 0 ? ledger.lots.filter((l) => unlocksOn(l.date, lockInMonths) <= date) : ledger.lots;
+  const locked = ledger.lots.filter((l) => !open.includes(l));
+  const held = open.reduce((a, l) => a + l.units, 0);
+  const nextUnlock = locked.length ? unlocksOn(locked[0].date, lockInMonths) : null;
+  if (locked.length && held <= 0.01) return { ok: false, error: `All units are locked in. The first unlock on ${nextUnlock}.` };
   let want = units != null ? Number(units) : amount != null ? Number(amount) / nav : NaN;
   if (!(want > 0)) return { ok: false, error: 'Enter an amount or units to redeem.' };
-  if (want > held + 0.01) return { ok: false, error: `That is more than the ${round3(held)} units held.` };
+  if (want > held + 0.01) {
+    return { ok: false, error: locked.length ? `Only ${round3(held)} units are out of the lock-in. The next unlock on ${nextUnlock}.` : `That is more than the ${round3(held)} units held.` };
+  }
   want = Math.min(want, held);
-  const { taken } = takeFifo(ledger.lots.map((l) => ({ ...l })), want);
+  const { taken } = takeFifo(open.map((l) => ({ ...l })), want);
+  // Some funds let a share of the units still inside the load period go free. The allowance is that share of those units,
+  // used oldest first; earlier redemptions that may have used some of it are not tracked.
+  let free = (ledger.lots.reduce((a, l) => a + (exitLoadPct(exitLoad, daysBetween(l.date, date)) > 0 ? l.units : 0), 0) * freePct) / 100;
+  let freeUsed = 0;
   const buckets = emptyBuckets();
   let load = 0;
   let loadKnown = true;
@@ -301,12 +315,15 @@ export function previewSale({ ledger, nav, units = null, amount = null, date, ta
     const value = l.units * nav;
     const pct = exitLoadPct(exitLoad, days);
     if (pct == null) loadKnown = false;
-    const fee = pct ? (value * pct) / 100 : 0;
+    const waived = pct > 0 ? Math.min(free, l.units) : 0;
+    free -= waived;
+    freeUsed += waived;
+    const fee = pct ? ((l.units - waived) * nav * pct) / 100 : 0;
     const gain = value - fee - l.cost;
     const bucket = taxBucket(taxClass, l.date, date);
     buckets[bucket] += gain;
     load += fee;
-    return { date: l.date, units: l.units, cost: l.cost, value, days, gain, bucket, load: fee, loadPct: pct, estimated: l.estimated };
+    return { date: l.date, units: l.units, cost: l.cost, value, days, gain, bucket, load: fee, loadPct: pct, freeUnits: waived, estimated: l.estimated };
   });
   const value = want * nav;
   const tax = Math.max(0, computeTax(addBuckets(realised, buckets), slabPct) - computeTax(realised, slabPct));
@@ -321,6 +338,9 @@ export function previewSale({ ledger, nav, units = null, amount = null, date, ta
     gain: lots.reduce((a, l) => a + l.gain, 0),
     exitLoad: load,
     exitLoadKnown: loadKnown,
+    freeUnits: freeUsed,
+    lockedUnits: locked.reduce((a, l) => a + l.units, 0),
+    nextUnlock,
     buckets,
     tax,
     inHand: value - load - tax,

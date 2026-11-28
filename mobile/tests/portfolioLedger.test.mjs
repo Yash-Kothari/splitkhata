@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { replayLots, fundLedger, xirr, computeReturns, taxBucket, computeTax, emptyBuckets, financialYear, realisedGains, exitLoadPct, previewSale, parseTransactions, buildHistoryWrites } from '../lib/portfolioLedger.js';
-import { assetOf, taxClassOf, computeAssetMix, computeFees, computeDrawdowns, monthlyChanges, checkSips, parseFundInfo, checkTargets } from '../lib/portfolioInsights.js';
+import { assetOf, taxClassOf, lockInMonthsOf, computeAssetMix, computeFees, computeDrawdowns, monthlyChanges, checkSips, parseFundInfo, checkTargets } from '../lib/portfolioInsights.js';
 
 const near = (a, b, tol = 0.01) => assert.ok(Math.abs(a - b) <= tol, `${a} is not ${b}`);
 const A = { key: 'A', isin: 'INF000A', schemeCode: '1', name: 'Alpha Fund', short: 'Alpha', group: 'zerodha', category: 'Diversified' };
@@ -204,4 +204,34 @@ test('buildHistoryWrites: a snapshot of the closing units, counted as a CAS only
   assert.equal(w.syncKey, 'cas:Kruti');
   assert.equal(buildHistoryWrites({ parsed: { ...parsed, groups: ['zerodha'] } }).syncKey, null);
   assert.equal(buildHistoryWrites({ parsed, state: { lastSync: { 'cas:Kruti': { date: '2026-11-25' } } } }).syncKey, null);
+});
+
+test('previewSale: a free-unit allowance cuts the load only on units still inside the load period', () => {
+  const ledger = replayLots([{ date: '2024-01-01', units: 10, amount: 1000 }, { date: '2026-11-01', units: 20, amount: 2000 }]);
+  const base = { ledger, nav: 200, date: '2026-11-20', taxClass: 'equity', exitLoad: [{ days: 365, pct: 1 }], freePct: 10 };
+  const r = previewSale({ ...base, units: 15 });
+  near(r.freeUnits, 2); // 10% of the 20 new units
+  near(r.exitLoad, (5 - 2) * 200 * 0.01);
+  near(previewSale({ ...base, units: 11 }).exitLoad, 0);
+  near(previewSale({ ...base, units: 10 }).freeUnits, 0);
+});
+
+test('previewSale: locked-in units cannot be redeemed', () => {
+  const ledger = replayLots([{ date: '2023-01-10', units: 10, amount: 1000 }, { date: '2025-01-10', units: 5, amount: 500 }]);
+  const base = { ledger, nav: 200, date: '2026-11-20', taxClass: 'equity', exitLoad: [], lockInMonths: 36 };
+  const r = previewSale({ ...base, units: 10 });
+  near(r.lockedUnits, 5);
+  assert.equal(r.nextUnlock, '2028-01-10');
+  assert.match(previewSale({ ...base, units: 11 }).error, /Only 10 units are out of the lock-in/);
+  assert.match(previewSale({ ...base, units: 1, date: '2025-06-01' }).error, /All units are locked in/);
+});
+
+test('lock-in comes from the file, else three years for a tax saver; free units and lock-in are validated', () => {
+  const elss = { ...A, name: 'Mirae Asset ELSS Tax Saver Fund' };
+  assert.equal(lockInMonthsOf(elss), 36);
+  assert.equal(lockInMonthsOf(A), 0);
+  assert.equal(lockInMonthsOf(elss, { A: { lockInMonths: 0 } }), 0);
+  const ok = parseFundInfo({ asOf: '2026-11-01', funds: { A: { freePct: 10, lockInMonths: 36 } } }, { funds: [A] });
+  assert.deepEqual(ok.funds.A, { asOf: '2026-11-01', freePct: 10, lockInMonths: 36 });
+  assert.equal(parseFundInfo({ asOf: '2026-11-01', funds: { A: { freePct: 200 } } }, { funds: [A] }).ok, false);
 });

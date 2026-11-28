@@ -25,7 +25,7 @@ import PortfolioAssetMix from '../../components/PortfolioAssetMix';
 import PortfolioFees from '../../components/PortfolioFees';
 import PortfolioSellPreview from '../../components/PortfolioSellPreview';
 import PortfolioGains from '../../components/PortfolioGains';
-import { fundDetails, taxClassOf } from '../../lib/portfolioInsights';
+import { fundDetails, taxClassOf, lockInMonthsOf } from '../../lib/portfolioInsights';
 import { todayISO } from '../../lib/utils';
 import PortfolioSheet from '../../components/PortfolioSheet';
 import PortfolioTradeForm from '../../components/PortfolioTradeForm';
@@ -89,6 +89,7 @@ function PortfolioScreen() {
   const [trading, setTrading] = useState(false);
   const taxClassFor = useCallback((fund) => taxClassOf(fund, p.fundInfo), [p.fundInfo]);
   const detailsFor = useCallback((fund) => fundDetails(fund, p.fundInfo), [p.fundInfo]);
+  const lockInFor = useCallback((fund) => lockInMonthsOf(fund, p.fundInfo), [p.fundInfo]);
 
   const sync = (
     <PortfolioSyncCard
@@ -202,6 +203,7 @@ function PortfolioScreen() {
                 ledgers={p.ledgers}
                 taxClassFor={taxClassFor}
                 detailsFor={detailsFor}
+                lockInFor={lockInFor}
                 slabPct={p.slabPct}
                 today={todayISO()}
                 collapsible={fold}

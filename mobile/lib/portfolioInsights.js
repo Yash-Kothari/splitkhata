@@ -28,6 +28,13 @@ export function assetOf(fund, info) {
   return 'equity';
 }
 
+// Months each purchase is locked in: what the file says, else three years for a tax-saver (ELSS) fund.
+export function lockInMonthsOf(fund, info) {
+  const said = fundDetails(fund, info).lockInMonths;
+  if (said != null) return Number(said);
+  return /\bELSS\b|tax saver/i.test(`${fund?.name || ''} ${fund?.category || ''}`) ? 36 : 0;
+}
+
 // How its gains are taxed: 'equity', 'debt' or 'other' (see TAX in portfolioLedger.js). A hybrid fund needs the file to say.
 export function taxClassOf(fund, info) {
   const said = fundDetails(fund, info).taxClass;
@@ -173,7 +180,8 @@ export function checkSips({ funds, snapshots, navByCode, sipPlan = {}, sipSchedu
 
 // ---------- importing fund details and targets ----------
 
-// A fund-details file: { source: 'fundinfo', asOf, funds: { [key | isin]: { ter?, exitLoad?: [{ days, pct }], taxClass?, asset? } } }.
+// A fund-details file: { source: 'fundinfo', asOf, funds: { [key | isin]: { ter?, exitLoad?: [{ days, pct }], freePct?, lockInMonths?,
+// taxClass?, asset? } } }.
 export function parseFundInfo(json, { funds }) {
   const asOf = json?.asOf;
   if (!isIsoDate(asOf)) return { ok: false, error: 'The fund details need an as-of date like 2026-11-21.' };
@@ -197,6 +205,14 @@ export function parseFundInfo(json, { funds }) {
       const ok = Array.isArray(d.exitLoad) && d.exitLoad.every((t) => Number(t.days) > 0 && Number(t.pct) >= 0 && Number(t.pct) <= 10);
       if (!ok) problems.push(`Exit load for ${id} should be a list of { days, pct }`);
       else entry.exitLoad = d.exitLoad.map((t) => ({ days: Number(t.days), pct: Number(t.pct) }));
+    }
+    if (d.freePct != null) {
+      if (!(Number(d.freePct) >= 0 && Number(d.freePct) <= 100)) problems.push(`Free units for ${id} should be between 0 and 100 percent`);
+      entry.freePct = Number(d.freePct);
+    }
+    if (d.lockInMonths != null) {
+      if (!(Number(d.lockInMonths) >= 0 && Number(d.lockInMonths) <= 120)) problems.push(`Lock-in for ${id} should be between 0 and 120 months`);
+      entry.lockInMonths = Number(d.lockInMonths);
     }
     if (d.taxClass != null) {
       if (!['equity', 'debt', 'other'].includes(d.taxClass)) problems.push(`Tax class for ${id} should be equity, debt or other`);

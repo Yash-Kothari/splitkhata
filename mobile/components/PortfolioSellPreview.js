@@ -5,7 +5,7 @@ import PickerField from './PickerField';
 import PortfolioPills from './PortfolioPills';
 import { usePortfolioPrivacy } from '../lib/PortfolioPrivacyContext';
 import { formatShortDate, ownerOf, ownersOf } from '../lib/portfolio';
-import { previewSale, realisedGains, emptyBuckets } from '../lib/portfolioLedger';
+import { previewSale, realisedGains, emptyBuckets, unlocksOn } from '../lib/portfolioLedger';
 import { parseAmountInput } from '../lib/utils';
 import { gainClass } from './PortfolioSummary';
 
@@ -21,7 +21,7 @@ const date = (iso) => `${formatShortDate(iso)} ${iso.slice(0, 4)}`;
 
 // "What if I redeemed this today?": which units go (oldest first), the exit load, the gain and the extra tax. Nothing is
 // recorded or sent anywhere.
-export default function PortfolioSellPreview({ rows, funds, ledgers, taxClassFor, detailsFor, slabPct, today, collapsible = false }) {
+export default function PortfolioSellPreview({ rows, funds, ledgers, taxClassFor, detailsFor, lockInFor, slabPct, today, collapsible = false }) {
   const { money, signed, units } = usePortfolioPrivacy();
   const [key, setKey] = useState('');
   const [mode, setMode] = useState('amount');
@@ -42,15 +42,18 @@ export default function PortfolioSellPreview({ rows, funds, ledgers, taxClassFor
     return previewSale({
       ledger,
       nav: row.nav,
-      units: mode === 'all' ? ledger.units : mode === 'units' ? typed : null,
+      // "Everything" means everything that can be redeemed: locked-in units stay behind.
+      units: mode === 'all' ? ledger.lots.filter((l) => !lockInFor(row) || unlocksOn(l.date, lockInFor(row)) <= today).reduce((a, l) => a + l.units, 0) || ledger.units : mode === 'units' ? typed : null,
       amount: mode === 'amount' ? typed : null,
       date: today,
       taxClass: taxClassFor(row),
       exitLoad: detailsFor(row).exitLoad,
+      freePct: detailsFor(row).freePct || 0,
+      lockInMonths: lockInFor(row),
       realised: realised || emptyBuckets(),
       slabPct,
     });
-  }, [row, ledger, mode, text, funds, ledgers, taxClassFor, detailsFor, slabPct, today]);
+  }, [row, ledger, mode, text, funds, ledgers, taxClassFor, detailsFor, lockInFor, slabPct, today]);
 
   const lots = result?.ok ? (showLots === 'all' ? result.lots : result.lots.slice(0, 5)) : [];
 
@@ -82,6 +85,12 @@ export default function PortfolioSellPreview({ rows, funds, ledgers, taxClassFor
               <Line label="Exit Load" value={result.exitLoadKnown ? money(result.exitLoad) : 'Not on file'} tone={result.exitLoadKnown ? 'text-ink' : 'text-mustard'} />
               <Line label="Estimated Extra Tax" value={money(result.tax)} />
               <Line strong label="Left in Hand" value={money(result.inHand)} />
+              {result.freeUnits > 0 ? (
+                <Note>{units(num(result.freeUnits))} units are counted free of exit load. If you redeemed from this fund recently, less of that allowance may be left.</Note>
+              ) : null}
+              {result.lockedUnits > 0 ? (
+                <Note tone="text-mustard">{units(num(result.lockedUnits))} units are still locked in and left out. The next unlock on {date(result.nextUnlock)}.</Note>
+              ) : null}
               {result.nextLongTerm ? <Note tone="text-mustard">Some units are short term. The oldest of them turns long term on {date(result.nextLongTerm)}.</Note> : null}
               {!result.exitLoadKnown ? <Note tone="text-mustard">The exit load is left out. Import the fund details file to include it.</Note> : null}
               {result.estimated ? <Note tone="text-mustard">Some of these units are estimated entries after the statement date.</Note> : null}

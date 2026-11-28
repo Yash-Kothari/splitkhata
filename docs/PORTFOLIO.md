@@ -15,7 +15,7 @@ Folio numbers and PAN are never stored; only fund id, units and average cost.
 | `catalog` | `{ funds: [{ key, isin, schemeCode, name, short, amc, group: 'zerodha'\|'other', category, holdingsKey, owner?, kind?, symbol?, stockId?, sector? }], benchmark: { schemeCode, name } }`. `owner` is a household member's name (absent = Yash); `kind: 'stock'` marks a share held directly (see Stocks) |
 | `sip` | `{ schedule: [{ from, plan: { [fundKey]: rupees bought per trading day } }], plan }`, the plan over time (`plan` is the latest). A setup import with a plain `sipPlan` writes `{ plan }`, read as one entry that always applied |
 | `txn_<fundKey>` | `{ fundKey, asOf, items: [{ d: 'YYYY-MM-DD', u: units (+ bought, - sold), a: rupees }] }`, a fund's full history from a detailed CAS |
-| `fundinfo` | `{ funds: { [holdingsKey]: { ter, exitLoad: [{ days, pct }], taxClass?, asset?, asOf } } }` |
+| `fundinfo` | `{ funds: { [holdingsKey]: { ter, exitLoad: [{ days, pct }], freePct?, lockInMonths?, taxClass?, asset?, asOf } } }` |
 | `targets` | `{ mix: { equity, international, debt, gold } \| null, slabPct }`, set in Settings |
 | `limits` | `{ items: [{ id, metric: 'adani'\|'amc'\|'category'\|'stock'\|'fund', name?, max }] }`, the concentration caps you saved |
 | `overlap` | `{ asOf, asOfDate: 'YYYY-MM-DD', holdings: { [holdingsKey]: { [stock]: weightPct } }, names, groups: { adani: [...] }, futures }` |
@@ -154,7 +154,9 @@ tests in `tests/portfolioLedger.test.mjs`. Mutual funds only; direct stocks have
 - **Sell Preview and Gains This Year (Plan).** Rules in `TAX` (FY 2026-27, resident individual, before surcharge): equity funds
   20% within 12 months, else 12.5% above ₹1.25 lakh a year; debt units bought from April 2023 at the slab rate; other funds
   12.5% after 24 months, else slab; 4% cess. The exemption is per person. Not modelled: surcharge, STT, stamp duty, loss
-  carry-forward, pre-February-2018 grandfathering (flagged), free exit-load units, shares sold directly. **Re-check the rules
+  carry-forward, pre-February-2018 grandfathering (flagged), shares sold directly, load rules that differ for older units.
+  Free units (`freePct`) are that share of the units still inside the load period, ignoring earlier use. Locked-in units
+  (`lockInMonths`, 36 for an ELSS fund by default) are left out of a redemption. **Re-check the rules
   after each Budget.**
 - **Asset Mix (Insights).** Classes come from `fundinfo.asset`, else the category and name. Targets and the slab rate are in
   Settings -> Portfolio -> Targets & Tax.
@@ -206,7 +208,7 @@ Both are pasted into the same Update Holdings box and told apart by `source`.
   Switches are a sale of one fund and a purchase of the other; reinvested dividends and bonus units are purchases. Each fund's
   rows must start at its first purchase. No folio numbers or PAN. Import replaces those funds' history and saves their closing
   units as a snapshot.
-- **Fund details:** `{ source: 'fundinfo', asOf, funds: { [key | isin]: { ter?, exitLoad?, taxClass?, asset? } } }`; merged by
+- **Fund details:** `{ source: 'fundinfo', asOf, funds: { [key | isin]: { ter?, exitLoad?, freePct?, lockInMonths?, taxClass?, asset? } } }`; merged by
   fund. Refresh monthly.
 
 ## Gotchas
